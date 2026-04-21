@@ -1,0 +1,40 @@
+# Bullet-Point Summarization
+
+You are given the full OpenReview content for a scientific paper:
+- Reviewer summaries, strengths, weaknesses, and questions (all reviewers)
+- Author rebuttals
+- Area chair meta review
+
+Your task: produce a single consolidated list of bullet points that captures every distinct and important point made about this paper.
+
+## Rules:
+1. One atomic claim per bullet
+2. Merge duplicate points across reviewers into one bullet (keep the most specific version)
+3. Prioritize the multimodal information (exactly pointing out the table / figure / equation...)
+4. Exclude procedural comments (e.g. "thanks for the review")
+5. Categorize the bullet point into views like:
+   - contribution
+   - method/dataset
+   - experiment/result
+   - limitation/scope
+
+## Output Format:
+Output a JSON object with the following structure:
+```
+{{
+  "contribution": ["bullet point 1", "bullet point 2", ...],
+  "method_dataset": ["bullet point 1", "bullet point 2", ...],
+  "experiment_result": ["bullet point 1", "bullet point 2", ...],
+  "limitation_scope": ["bullet point 1", "bullet point 2", ...],
+  "summary": "overall summary of the paper"
+}}
+```
+
+## Paper Information:
+Title: {paper_title}
+Abstract: {paper_abstract}
+
+## Full OpenReview Content:
+{full_openreview_content}
+
+## Output (JSON):

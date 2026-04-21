@@ -1,0 +1,42 @@
+accepted:
+  accept_keywords:
+    - "accept"
+    - "accepted"
+    - "oral"
+    - "poster"
+    - "spotlight"
+    - "strong accept"
+    - "well qualified"
+  reject_keywords:
+    - "reject"
+    - "rejected"
+    - "strong reject"
+    - "not accept"
+
+similar_paper:
+  citation_threshold: 0.05
+  max_citations_per_word: 0.05
+  citation_patterns:
+    - "et al"
+    - "arxiv"
+    - "paper~"
+    - "proceedings"
+
+multimodal_info:
+  min_multimodal_mentions: 2
+  multimodal_keywords:
+    - "figure"
+    - "fig"
+    - "table"
+    - "diagram"
+    - "chart"
+    - "equation"
+    - "formula"
+    - "plot"
+    - "illustration"
+    - "graph"
+  content_sources:
+    - "abstract"
+    - "review"
+    - "rebuttal"
+    - "comments"
