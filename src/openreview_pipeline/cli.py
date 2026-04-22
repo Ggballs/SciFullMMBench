@@ -5,51 +5,22 @@ from pathlib import Path
 from typing import Optional
 
 import click
-import yaml
 
-from openreview_pipeline.llm import MockLLMBackend, OpenAICompatibleBackend
-from openreview_pipeline.stages import (
-    DatasetDownloader,
-    RuleBasedFilter,
-    Summarizer,
-    QueryGenerator,
-    HardNegativeMiner,
-    QueryFilter,
+from openreview_pipeline.runner import (
+    load_config,
+    run_download_stage,
+    run_filter_stage,
+    run_filter_queries_stage,
+    run_generate_queries_stage,
+    run_hard_negative_mining_stage,
+    run_selected_stages,
+    run_summarize_stage,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 CONFIG_PATH = Path(__file__).parent.parent.parent / "config.yaml"
-
-
-def load_config() -> dict:
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH) as f:
-            return yaml.safe_load(f) or {}
-    return {}
-
-
-def get_llm_backend(
-    name: str = "mock",
-    base_url: Optional[str] = None,
-    api_token: Optional[str] = None,
-    model: str = "gpt-4o-mini",
-):
-    if name == "mock":
-        return MockLLMBackend()
-    elif name == "openai-compatible" or (base_url and api_token):
-        if not base_url or not api_token:
-            logger.warning("base_url and api_token required for openai-compatible, using mock")
-            return MockLLMBackend()
-        return OpenAICompatibleBackend(
-            base_url=base_url,
-            api_token=api_token,
-            model=model,
-        )
-    else:
-        logger.warning(f"Unknown LLM backend '{name}', using mock")
-        return MockLLMBackend()
 
 
 @click.group()
@@ -68,31 +39,17 @@ def cli(verbose: bool):
 @click.option("--token", default=None, help="OpenReview API token (overrides config)")
 @click.option("--limit", default=None, type=int, help="Limit number of papers to fetch")
 def download(output: str, venue: str, year: int, username: str, password: str, token: str, limit: int):
-    from datetime import datetime
-
-    config = load_config()
-    target_year = year or datetime.now().year
-    logger.info(f"Downloading papers from {venue} {target_year}")
-
-    downloader = DatasetDownloader(venue=venue, year_threshold=target_year)
-
-    openreview_creds = config.get("openreview", {})
-    username = username or openreview_creds.get("username", "")
-    password = password or openreview_creds.get("password", "")
-    token = token or openreview_creds.get("token", "")
-
-    if username or password or token:
-        downloader.set_openreview_credentials(
-            username=username,
-            password=password,
-            token=token,
-        )
-    else:
-        logger.warning("No OpenReview credentials provided in config.yaml or arguments. Using stub data.")
-
-    output_path = Path(output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    downloader.run(output_path)
+    logger.info(f"Downloading papers from {venue} {year or 'current year'}")
+    run_download_stage(
+        output_path=Path(output),
+        venue=venue,
+        year=year,
+        config_path=CONFIG_PATH,
+        username=username,
+        password=password,
+        token=token,
+        limit=limit,
+    )
     logger.info(f"Download complete: {output}")
 
 
@@ -101,8 +58,10 @@ def download(output: str, venue: str, year: int, username: str, password: str, t
 @click.option("--output", "-o", type=click.Path(), default="data/01_filtered.json", help="Output path")
 def filter(input_path: str, output: str):
     logger.info(f"Running filter stage: {input_path} -> {output}")
-    filter_stage = RuleBasedFilter()
-    filter_stage.run(Path(input_path), Path(output))
+    run_filter_stage(
+        input_path=Path(input_path),
+        output_path=Path(output),
+    )
     logger.info(f"Filter complete: {output}")
 
 
@@ -113,22 +72,15 @@ def filter(input_path: str, output: str):
 @click.option("--api-token", default=None, help="LLM API token (overrides config)")
 @click.option("--model", default=None, help="Model name (overrides config)")
 def summarize(input_path: str, output: str, base_url: str, api_token: str, model: str):
-    config = load_config()
-    llm_config = config.get("llm", {})
-
-    base_url = base_url or llm_config.get("base_url", "")
-    api_token = api_token or llm_config.get("api_token", "")
-    model = model or llm_config.get("model", "gpt-4o-mini")
-
     logger.info(f"Running summarize stage: {input_path} -> {output}")
-    llm_backend = get_llm_backend(
-        name="openai-compatible" if base_url and api_token else "mock",
+    run_summarize_stage(
+        input_path=Path(input_path),
+        output_path=Path(output),
+        config_path=CONFIG_PATH,
         base_url=base_url,
         api_token=api_token,
         model=model,
     )
-    summarizer = Summarizer(llm=llm_backend)
-    summarizer.run(Path(input_path), Path(output))
     logger.info(f"Summarize complete: {output}")
 
 
@@ -139,22 +91,15 @@ def summarize(input_path: str, output: str, base_url: str, api_token: str, model
 @click.option("--api-token", default=None, help="LLM API token (overrides config)")
 @click.option("--model", default=None, help="Model name (overrides config)")
 def generate_queries(input_path: str, output: str, base_url: str, api_token: str, model: str):
-    config = load_config()
-    llm_config = config.get("llm", {})
-
-    base_url = base_url or llm_config.get("base_url", "")
-    api_token = api_token or llm_config.get("api_token", "")
-    model = model or llm_config.get("model", "gpt-4o-mini")
-
     logger.info(f"Running generate-queries stage: {input_path} -> {output}")
-    llm_backend = get_llm_backend(
-        name="openai-compatible" if base_url and api_token else "mock",
+    run_generate_queries_stage(
+        input_path=Path(input_path),
+        output_path=Path(output),
+        config_path=CONFIG_PATH,
         base_url=base_url,
         api_token=api_token,
         model=model,
     )
-    generator = QueryGenerator(llm=llm_backend)
-    generator.run(Path(input_path), Path(output))
     logger.info(f"Generate queries complete: {output}")
 
 
@@ -166,22 +111,16 @@ def generate_queries(input_path: str, output: str, base_url: str, api_token: str
 @click.option("--model", default=None, help="Model name (overrides config)")
 @click.option("--threshold", type=float, default=0.5, help="Quality threshold")
 def filter_queries(input_path: str, output: str, base_url: str, api_token: str, model: str, threshold: float):
-    config = load_config()
-    llm_config = config.get("llm", {})
-
-    base_url = base_url or llm_config.get("base_url", "")
-    api_token = api_token or llm_config.get("api_token", "")
-    model = model or llm_config.get("model", "gpt-4o-mini")
-
     logger.info(f"Running filter-queries stage: {input_path} -> {output}")
-    llm_backend = get_llm_backend(
-        name="openai-compatible" if base_url and api_token else "mock",
+    run_filter_queries_stage(
+        input_path=Path(input_path),
+        output_path=Path(output),
+        config_path=CONFIG_PATH,
         base_url=base_url,
         api_token=api_token,
         model=model,
+        threshold=threshold,
     )
-    query_filter = QueryFilter(llm=llm_backend, threshold=threshold)
-    query_filter.run(Path(input_path), Path(output))
     logger.info(f"Filter queries complete: {output}")
 
 
@@ -192,22 +131,15 @@ def filter_queries(input_path: str, output: str, base_url: str, api_token: str, 
 @click.option("--api-token", default=None, help="LLM API token (overrides config)")
 @click.option("--model", default=None, help="Model name (overrides config)")
 def hard_negative_mining(input_path: str, output: str, base_url: str, api_token: str, model: str):
-    config = load_config()
-    llm_config = config.get("llm", {})
-
-    base_url = base_url or llm_config.get("base_url", "")
-    api_token = api_token or llm_config.get("api_token", "")
-    model = model or llm_config.get("model", "gpt-4o-mini")
-
     logger.info(f"Running hard-negative-mining stage: {input_path} -> {output}")
-    llm_backend = get_llm_backend(
-        name="openai-compatible" if base_url and api_token else "mock",
+    run_hard_negative_mining_stage(
+        input_path=Path(input_path),
+        output_path=Path(output),
+        config_path=CONFIG_PATH,
         base_url=base_url,
         api_token=api_token,
         model=model,
     )
-    miner = HardNegativeMiner(llm=llm_backend)
-    miner.run(Path(input_path), Path(output))
     logger.info(f"Hard negative mining complete: {output}")
 
 
@@ -221,61 +153,24 @@ def hard_negative_mining(input_path: str, output: str, base_url: str, api_token:
 @click.option("--api-token", default=None, help="LLM API token (overrides config)")
 @click.option("--model", default=None, help="Model name (overrides config)")
 def run_all(output_dir: str, venue: str, year: int, max_papers: int, llm_limit: int, base_url: str, api_token: str, model: str):
-    from datetime import datetime
-
-    config = load_config()
-    llm_config = config.get("llm", {})
-    openreview_creds = config.get("openreview", {})
-
-    base_url = base_url or llm_config.get("base_url", "")
-    api_token = api_token or llm_config.get("api_token", "")
-    model = model or llm_config.get("model", "gpt-4o-mini")
-    target_year = year or datetime.now().year
-
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-
-    llm_backend = get_llm_backend(
-        name="openai-compatible" if base_url and api_token else "mock",
+    run_selected_stages(
+        "0-4",
+        output_dir=Path(output_dir),
+        venue=venue,
+        year=year,
+        download_limit=max_papers,
+        llm_limit=llm_limit,
+        config_path=CONFIG_PATH,
         base_url=base_url,
         api_token=api_token,
         model=model,
     )
-
-    download_path = output_path / "00_downloaded.json"
-    filtered_path = output_path / "01_filtered.json"
-    summarized_path = output_path / "02_summarized.json"
-    queries_path = output_path / "03_queries.json"
-    final_path = output_path / "04_filtered_queries.json"
-
-    logger.info(f"Stage 0: Downloading up to {max_papers} papers from {venue} {target_year}")
-    downloader = DatasetDownloader(venue=venue, year_threshold=target_year)
-    downloader.set_openreview_credentials(
-        username=openreview_creds.get("username"),
-        password=openreview_creds.get("password"),
-        token=openreview_creds.get("token"),
-    )
-    downloader.fetch_recent_papers(limit=max_papers)
-    downloader.run(download_path)
-
-    logger.info("Stage 1: Filtering papers")
-    filter_stage = RuleBasedFilter()
-    filter_stage.run(download_path, filtered_path)
-
-    logger.info(f"Stage 2: Summarizing papers (LLM limit: {llm_limit})")
-    summarizer = Summarizer(llm=llm_backend, llm_limit=llm_limit)
-    summarizer.run(filtered_path, summarized_path)
-
-    logger.info("Stage 3: Generating queries")
-    generator = QueryGenerator(llm=llm_backend)
-    generator.run(summarized_path, queries_path)
-
-    logger.info("Stage 4: Filtering queries")
-    query_filter = QueryFilter(llm=llm_backend)
-    query_filter.run(queries_path, final_path)
-
     logger.info("Pipeline complete!")
 
 
 def main():
     cli()
+
+
+if __name__ == "__main__":
+    main()

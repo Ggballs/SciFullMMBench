@@ -221,6 +221,12 @@ python -m query_analysis.analyze_query_style \
     --output_dir outputs/query_analysis \
     --min_tokens 2 \
     --seed 42
+
+# Also render query word-count distribution artifacts
+python -m query_analysis.analyze_query_style \
+    --litsearch_path /path/to/litsearch.csv \
+    --output_dir outputs/query_analysis \
+    --plot_length_distribution
 ```
 
 **Step 2: Generate rewrite instruction prompt**
@@ -238,7 +244,9 @@ After running both scripts:
 ```
 outputs/query_analysis/
 ├── style_analysis.json           # Detailed analysis in JSON format
-├── style_analysis.md             # Human-readable report
+├── style_analysis.md             # Markdown report
+├── query_length_distribution.png # Optional word-count histogram + boxplot
+├── query_length_distribution_summary.json # Optional plot summary stats
 └── rewrite_instruction_prompt.txt # Operational prompt for rewriting
 ```
 

@@ -27,9 +27,11 @@ from query_analysis.features import (
 )
 from query_analysis.llm_judge import (
     compute_llm_judged_metrics,
+    compute_llm_semantic_constraint_metrics,
     load_llm_config,
     summarize_judge_results,
 )
+from query_analysis.length_visualization import save_length_distribution_plot
 
 logging.basicConfig(
     level=logging.INFO,
@@ -65,6 +67,9 @@ class QueryStyleAnalyzer:
         seed: int = 42,
         config_path: str = "config.yaml",
         llm_batch_size: int = 25,
+        llm_judge_mode: str = "batch",
+        llm_max_concurrency: int = 1,
+        llm_seed: Optional[int] = None,
         use_llm_judge: bool = True,
     ):
         self.litsearch_path = litsearch_path
@@ -78,8 +83,15 @@ class QueryStyleAnalyzer:
         self.seed = seed
         self.config_path = Path(config_path)
         self.llm_batch_size = llm_batch_size
+        self.llm_judge_mode = llm_judge_mode
+        self.llm_max_concurrency = llm_max_concurrency
+        self.llm_seed = llm_seed
         self.use_llm_judge = use_llm_judge
         self.llm_config = load_llm_config(self.config_path) if use_llm_judge else None
+        if self.llm_config and self.llm_seed is None:
+            self.llm_seed = self.llm_config.pop("seed", None)
+        elif self.llm_config:
+            self.llm_config.pop("seed", None)
 
         np.random.seed(seed)
 
@@ -145,6 +157,19 @@ class QueryStyleAnalyzer:
                 compute_llm_judged_metrics(
                     queries=queries,
                     batch_size=self.llm_batch_size,
+                    judge_mode=self.llm_judge_mode,
+                    max_concurrency=self.llm_max_concurrency,
+                    seed=self.llm_seed,
+                    **self.llm_config,
+                )
+            )
+            metrics.update(
+                compute_llm_semantic_constraint_metrics(
+                    queries=queries,
+                    batch_size=self.llm_batch_size,
+                    judge_mode=self.llm_judge_mode,
+                    max_concurrency=self.llm_max_concurrency,
+                    seed=self.llm_seed,
                     **self.llm_config,
                 )
             )
@@ -181,6 +206,14 @@ class QueryStyleAnalyzer:
                     + self.pasa_analysis.metrics.get("llm_judge", {}).get("per_query", [])
                 )
                 combined_metrics.update(summarize_judge_results(combined_per_query))
+                combined_semantic_per_query = (
+                    self.litsearch_analysis.metrics.get("semantic_constraint_analysis", {}).get("per_query", [])
+                    + self.pasa_analysis.metrics.get("semantic_constraint_analysis", {}).get("per_query", [])
+                )
+                if combined_semantic_per_query:
+                    from query_analysis.llm_judge import summarize_semantic_constraints
+
+                    combined_metrics.update(summarize_semantic_constraints(combined_semantic_per_query))
             self.combined_analysis = DatasetAnalysis(
                 name="combined",
                 total_queries=len(all_queries),
@@ -273,9 +306,7 @@ class QueryStyleAnalyzer:
         """Flatten metrics dict for JSON output."""
         return {
             "length_stats": metrics.get("length_stats", {}),
-            "token_variety": metrics.get("token_variety", {}),
             "constraint_count": metrics.get("constraint_count", {}),
-            "method_dataset_mentions": metrics.get("method_dataset_mentions", {}),
             "question_templates": metrics.get("question_templates", {}),
             "qualitative_metrics": metrics.get("qualitative_metrics", {}),
             "semantic_constraint_analysis": metrics.get("semantic_constraint_analysis", {}),
@@ -340,33 +371,60 @@ class QueryStyleAnalyzer:
 
         ls_qual = ls_metrics.get("qualitative_metrics", {})
         ps_qual = ps_metrics.get("qualitative_metrics", {})
+        ls_spec_raw = ls_qual.get("specificity_calibration", {}).get("mean")
+        ps_spec_raw = ps_qual.get("specificity_calibration", {}).get("mean")
+        ls_spec_fit = ls_qual.get("specificity_calibration_fit", {}).get("mean")
+        ps_spec_fit = ps_qual.get("specificity_calibration_fit", {}).get("mean")
+        ls_lex_raw = ls_qual.get("lexical_naturalism", {}).get("mean")
+        ps_lex_raw = ps_qual.get("lexical_naturalism", {}).get("mean")
+        ls_lex_fit = ls_qual.get("lexical_naturalism_fit", {}).get("mean")
+        ps_lex_fit = ps_qual.get("lexical_naturalism_fit", {}).get("mean")
 
         findings["shared_traits"] = [
             f"Both datasets have similar avg query length (~{ls_avg_len:.0f} vs ~{ps_avg_len:.0f} tokens)",
-            f"Both show high constraint usage (~{ls_constraint:.1f} vs ~{ps_constraint:.1f} constraints/query)",
-            f"Both have high method mention ratios",
-            f"Naturalness scores are high in both (~{ls_qual.get('naturalness', {}).get('mean', 0):.2f} vs ~{ps_qual.get('naturalness', {}).get('mean', 0):.2f})",
         ]
+        if ls_metrics.get("constraint_count") and ps_metrics.get("constraint_count"):
+            findings["shared_traits"].append(
+                f"Both show comparable semantic constraint density (~{ls_constraint:.1f} vs ~{ps_constraint:.1f} constraints/query)"
+            )
+        if ls_spec_raw is not None and ps_spec_raw is not None:
+            findings["shared_traits"].append(
+                f"Both are close to the ideal specificity calibration of 3 (~{ls_spec_raw:.2f} vs ~{ps_spec_raw:.2f})"
+            )
+        if ls_lex_fit is not None and ps_lex_fit is not None:
+            findings["shared_traits"].append(
+                f"Lexical naturalism fit is strong in both (~{ls_lex_fit:.2f} vs ~{ps_lex_fit:.2f})"
+            )
 
         findings["dataset_specific"]["litsearch"] = {
             "total_queries": self.litsearch_analysis.total_queries,
             "avg_token_length": round(ls_avg_len, 1),
             "avg_constraints": round(ls_constraint, 2),
             "top_templates": dict(sorted(ls_templates.items(), key=lambda x: -x[1])[:5]),
-            "specificity_mean": round(ls_qual.get("specificity", {}).get("mean", 0), 3),
-            "naturalness_mean": round(ls_qual.get("naturalness", {}).get("mean", 0), 3),
-            "academic_tone_mean": round(ls_qual.get("academic_tone", {}).get("mean", 0), 3),
         }
+        if ls_spec_raw is not None:
+            findings["dataset_specific"]["litsearch"]["specificity_calibration_mean"] = round(ls_spec_raw, 3)
+        if ls_spec_fit is not None:
+            findings["dataset_specific"]["litsearch"]["specificity_calibration_fit_mean"] = round(ls_spec_fit, 3)
+        if ls_lex_raw is not None:
+            findings["dataset_specific"]["litsearch"]["lexical_naturalism_mean"] = round(ls_lex_raw, 3)
+        if ls_lex_fit is not None:
+            findings["dataset_specific"]["litsearch"]["lexical_naturalism_fit_mean"] = round(ls_lex_fit, 3)
 
         findings["dataset_specific"]["pasa"] = {
             "total_queries": self.pasa_analysis.total_queries,
             "avg_token_length": round(ps_avg_len, 1),
             "avg_constraints": round(ps_constraint, 2),
             "top_templates": dict(sorted(ps_templates.items(), key=lambda x: -x[1])[:5]),
-            "specificity_mean": round(ps_qual.get("specificity", {}).get("mean", 0), 3),
-            "naturalness_mean": round(ps_qual.get("naturalness", {}).get("mean", 0), 3),
-            "academic_tone_mean": round(ps_qual.get("academic_tone", {}).get("mean", 0), 3),
         }
+        if ps_spec_raw is not None:
+            findings["dataset_specific"]["pasa"]["specificity_calibration_mean"] = round(ps_spec_raw, 3)
+        if ps_spec_fit is not None:
+            findings["dataset_specific"]["pasa"]["specificity_calibration_fit_mean"] = round(ps_spec_fit, 3)
+        if ps_lex_raw is not None:
+            findings["dataset_specific"]["pasa"]["lexical_naturalism_mean"] = round(ps_lex_raw, 3)
+        if ps_lex_fit is not None:
+            findings["dataset_specific"]["pasa"]["lexical_naturalism_fit_mean"] = round(ps_lex_fit, 3)
 
         return findings
 
@@ -386,9 +444,9 @@ class QueryStyleAnalyzer:
                 "principle": "Express constraints naturally",
                 "description": "Constraints (methods, settings, datasets) are expressed through prepositional phrases",
                 "guidance": [
-                    "Use 'for X', 'with Y', 'using Z' to specify scope",
-                    "Multiple constraints are common and acceptable",
-                    "Constraints should be specific but not excessive",
+                    "Include retrieval-narrowing constraints such as task, method, dataset, or comparison when they matter",
+                    "Multiple semantic constraints are common and acceptable",
+                    "Constraints should help retrieval without turning the query into a paper reconstruction",
                 ],
             },
             "length_and_specificity": {
@@ -400,22 +458,13 @@ class QueryStyleAnalyzer:
                     "Avoid very short queries (under 5 tokens) unless very specific",
                 ],
             },
-            "natural_expression": {
-                "principle": "Sound like a real researcher",
-                "description": "Queries should feel natural, not generated or mechanical",
+            "lexical_naturalism": {
+                "principle": "Use natural researcher register",
+                "description": "Queries should sound like something a real researcher would type, not keyword dumps and not polished prose",
                 "guidance": [
-                    "Use '?' at the end for question-style queries",
-                    "Avoid 'In this paper, we propose...' framing",
-                    "Prefer active research voice over passive",
-                ],
-            },
-            "academic_tone": {
-                "principle": "Maintain academic but not overly formal tone",
-                "description": "Queries should be precise and slightly formal without being stilted",
-                "guidance": [
-                    "Include domain terms (method names, model names)",
-                    "Avoid conversational filler (hello, thanks, please)",
-                    "Be direct - researchers are efficient",
+                    "Avoid keyword-dump fragments and SEO-style noun lists",
+                    "Avoid polished abstract-like prose and polite instruction wording",
+                    "Prefer direct, query-like phrasing with natural technical vocabulary",
                 ],
             },
         }
@@ -425,6 +474,13 @@ class QueryStyleAnalyzer:
 
 def build_markdown_report(analysis: Dict[str, Any]) -> str:
     """Build markdown report from analysis results."""
+    metrics_by_dataset = analysis.get("metrics", {})
+    has_qualitative_metrics = any(
+        metrics_by_dataset.get(ds_name, {}).get("qualitative_metrics", {}).get("specificity_calibration")
+        or metrics_by_dataset.get(ds_name, {}).get("qualitative_metrics", {}).get("lexical_naturalism")
+        for ds_name in ["combined", "litsearch", "pasa"]
+    )
+
     lines = [
         "# Query Style Analysis Report",
         "",
@@ -436,9 +492,9 @@ def build_markdown_report(analysis: Dict[str, Any]) -> str:
         "## Methodology",
         "",
         "1. Load queries from each dataset (LitSearch + PASA)",
-        "2. Compute quantitative metrics (length, token variety, constraints)",
+        "2. Compute structural metrics (length, question templates)",
         "3. Identify question templates",
-        "4. Evaluate judge-based metrics (specificity, naturalness, academic tone, semantic constraints)",
+        "4. Optionally run LLM judge metrics (specificity calibration, lexical naturalism, semantic constraints)",
         "5. Compare across datasets to identify shared traits",
         "6. Derive rewrite principles for converting bullet points to human-like queries",
         "",
@@ -471,31 +527,12 @@ def build_markdown_report(analysis: Dict[str, Any]) -> str:
         lines.append(f"- Std: {length.get('std', 0):.1f}")
         lines.append("")
 
-        token_var = metrics.get("token_variety", {})
-        ttr = token_var.get("type_token_ratio", {})
-        lines.append("**Token Variety (Lexical Richness)**:")
-        lines.append(f"- Type-Token Ratio: {ttr.get('mean', 0):.3f} (higher = more varied)")
-        lines.append(f"- Unique tokens per query: {token_var.get('unique_tokens_per_query', {}).get('mean', 0):.1f}")
-        lines.append("")
-
         constraints = metrics.get("constraint_count", {})
         cpq = constraints.get("constraints_per_query", {})
-        constraint_method = constraints.get("method")
-        constraint_heading = "Semantic Constraint Count (LLM Judge)" if constraint_method == "llm_as_judge" else "Constraint Count"
-        lines.append(f"**{constraint_heading}**:")
-        lines.append(f"- Avg constraints/query: {cpq.get('mean', 0):.2f}")
-        lines.append(f"- Queries with constraints: {constraints.get('queries_with_constraints', 0)} ({constraints.get('constraint_ratio', 0):.1%})")
-        ct_dist = constraints.get("constraint_type_distribution", {})
-        if ct_dist:
-            top_constraints = sorted(ct_dist.items(), key=lambda x: -x[1])[:5]
-            lines.append(f"- Top constraints: {', '.join(f'{k}({v})' for k, v in top_constraints)}")
-        lines.append("")
-
-        method_ds = metrics.get("method_dataset_mentions", {})
-        lines.append("**Method/Dataset Mentions**:")
-        lines.append(f"- Method mention ratio: {method_ds.get('method_mention_ratio', 0):.1%}")
-        lines.append(f"- Dataset mention ratio: {method_ds.get('dataset_mention_ratio', 0):.1%}")
-        lines.append("")
+        if constraints and cpq:
+            lines.append("**Semantic Constraint Count (LLM Judge)**:")
+            lines.append(f"- Avg constraints/query: {cpq.get('mean', 0):.2f}")
+            lines.append("")
 
     lines.append("## Question Templates (>= 5 queries)")
     template_dist = analysis.get("question_template_distribution", {}).get("combined", {}).get("templates", {})
@@ -506,20 +543,44 @@ def build_markdown_report(analysis: Dict[str, Any]) -> str:
         lines.append(f"  - Example: \"{example_short}\"")
     lines.append("")
 
-    lines.append("## Qualitative Metrics")
-    lines.append("")
-    for ds_name in ["combined", "litsearch", "pasa"]:
-        metrics = analysis.get("metrics", {}).get(ds_name, {})
-        if not metrics:
-            continue
-        qual = metrics.get("qualitative_metrics", {})
-        if not qual:
-            continue
-        lines.append(f"### {ds_name.capitalize()}")
-        lines.append(f"- **Specificity**: {qual.get('specificity', {}).get('mean', 0):.3f} (0-1, higher = more specific)")
-        lines.append(f"- **Naturalness**: {qual.get('naturalness', {}).get('mean', 0):.3f} (0-1, higher = more natural)")
-        lines.append(f"- **Academic Tone**: {qual.get('academic_tone', {}).get('mean', 0):.3f} (0-1, higher = more academic)")
+    if has_qualitative_metrics:
+        lines.append("## Qualitative Metrics")
         lines.append("")
+        for ds_name in ["combined", "litsearch", "pasa"]:
+            metrics = analysis.get("metrics", {}).get(ds_name, {})
+            if not metrics:
+                continue
+            qual = metrics.get("qualitative_metrics", {})
+            if not qual:
+                continue
+            spec_raw = qual.get("specificity_calibration", {}).get("mean")
+            spec_fit = qual.get("specificity_calibration_fit", {}).get("mean")
+            lex_raw = qual.get("lexical_naturalism", {}).get("mean")
+            lex_fit = qual.get("lexical_naturalism_fit", {}).get("mean")
+            if all(value is None for value in [spec_raw, spec_fit, lex_raw, lex_fit]):
+                continue
+            lines.append(f"### {ds_name.capitalize()}")
+            if spec_raw is not None:
+                lines.append(
+                    f"- **Specificity Calibration**: {spec_raw:.3f} "
+                    "(1-5, 3 is ideal)"
+                )
+            if spec_fit is not None:
+                lines.append(
+                    f"- **Specificity Calibration Fit**: {spec_fit:.3f} "
+                    "(0-1, higher = closer to ideal)"
+                )
+            if lex_raw is not None:
+                lines.append(
+                    f"- **Lexical Naturalism**: {lex_raw:.3f} "
+                    "(1-5, 3 is ideal)"
+                )
+            if lex_fit is not None:
+                lines.append(
+                    f"- **Lexical Naturalism Fit**: {lex_fit:.3f} "
+                    "(0-1, higher = closer to ideal)"
+                )
+            lines.append("")
 
     comparative = analysis.get("comparative_findings", {})
     if comparative:
@@ -631,9 +692,33 @@ def main():
         help="Batch size for LLM-as-a-judge scoring",
     )
     parser.add_argument(
+        "--llm_judge_mode",
+        type=str,
+        choices=["batch", "single_query"],
+        default="batch",
+        help="Whether to score in multi-query batches or one query per prompt",
+    )
+    parser.add_argument(
+        "--llm_max_concurrency",
+        type=int,
+        default=1,
+        help="Maximum concurrent LLM requests for judge scoring",
+    )
+    parser.add_argument(
+        "--llm_seed",
+        type=int,
+        default=None,
+        help="Optional seed forwarded to compatible OpenAI-style backends",
+    )
+    parser.add_argument(
         "--no_llm_judge",
         action="store_true",
-        help="Disable LLM-as-a-judge metrics and keep local heuristic metrics only",
+        help="Disable LLM-as-a-judge metrics and keep only local structural metrics",
+    )
+    parser.add_argument(
+        "--plot_length_distribution",
+        action="store_true",
+        help="Generate a PNG visualization and JSON summary of query word-count distributions",
     )
 
     args = parser.parse_args()
@@ -659,6 +744,9 @@ def main():
         seed=args.seed,
         config_path=args.config,
         llm_batch_size=args.llm_batch_size,
+        llm_judge_mode=args.llm_judge_mode,
+        llm_max_concurrency=args.llm_max_concurrency,
+        llm_seed=args.llm_seed,
         use_llm_judge=not args.no_llm_judge,
     )
 
@@ -678,6 +766,23 @@ def main():
     with open(md_path, "w", encoding="utf-8") as f:
         f.write(md_content)
     logger.info(f"Saved MD report to: {md_path}")
+
+    if args.plot_length_distribution:
+        query_sets = {}
+        if analyzer.litsearch_analysis and analyzer.litsearch_analysis.queries_list:
+            query_sets["litsearch"] = analyzer.litsearch_analysis.queries_list
+        if analyzer.pasa_analysis and analyzer.pasa_analysis.queries_list:
+            query_sets["pasa"] = analyzer.pasa_analysis.queries_list
+        if analyzer.combined_analysis and analyzer.combined_analysis.queries_list:
+            query_sets["combined"] = analyzer.combined_analysis.queries_list
+
+        png_path = output_dir / "query_length_distribution.png"
+        summary_path = output_dir / "query_length_distribution_summary.json"
+        summary = save_length_distribution_plot(query_sets, png_path)
+        with open(summary_path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
+        logger.info(f"Saved query length plot to: {png_path}")
+        logger.info(f"Saved query length summary to: {summary_path}")
 
     logger.info("Analysis complete!")
 

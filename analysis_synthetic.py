@@ -4,7 +4,7 @@ from query_analysis.features import compute_all_metrics, detect_question_templat
 from collections import Counter
 
 # Load pipeline output
-with open("data/iclr_2026/pipeline_output_single.json") as f:
+with open("data/iclr_2026_single/pipeline_output_single.json") as f:
     data = json.load(f)
 
 # Extract all synthetic queries

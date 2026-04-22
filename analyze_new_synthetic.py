@@ -7,7 +7,7 @@ from query_analysis.features import compute_all_metrics, detect_question_templat
 from collections import Counter
 
 # Load the new generated queries
-with open("data/iclr_2026/03_queries_single_new.json") as f:
+with open("data/iclr_2026_single/03_queries_single_new.json") as f:
     data = json.load(f)
 
 # Extract all queries

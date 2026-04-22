@@ -55,21 +55,16 @@ class RewritePromptBuilder:
 
         constraint_stats = metrics.get("constraint_count", {})
         constraint_mean = constraint_stats.get("constraints_per_query", {}).get("mean", 1.5)
-        constraint_types = constraint_stats.get("constraint_type_distribution", {})
-        top_constraints = list(constraint_types.keys())[:4] if constraint_types else ["for", "with", "using"]
-
-        rules.append(f"3. CONSTRAINTS: Include ~{constraint_mean:.1f} constraints per query using natural prepositions: {', '.join(top_constraints)}")
-        rules.append("   Examples: 'X for Y', 'X with Y', 'X using Z', 'X based on Y'")
+        rules.append(f"3. CONSTRAINTS: Include ~{constraint_mean:.1f} semantic retrieval constraints per query when needed.")
+        rules.append("   Favor meaningful narrowing conditions such as task, method, dataset, comparison, or scope.")
 
         qual = metrics.get("qualitative_metrics", {})
-        spec = qual.get("specificity", {}).get("mean", 0.7)
-        nat = qual.get("naturalness", {}).get("mean", 0.8)
-        acad = qual.get("academic_tone", {}).get("mean", 0.7)
+        spec = qual.get("specificity_calibration", {}).get("mean", 3.0)
+        nat = qual.get("lexical_naturalism", {}).get("mean", 3.0)
 
-        rules.append(f"4. QUALITY TARGETS: Specificity ~{spec:.2f}, Naturalness ~{nat:.2f}, Academic Tone ~{acad:.2f}")
-        rules.append("   - Include enough detail (specificity)")
-        rules.append("   - Sound like a real researcher (naturalness)")
-        rules.append("   - Be precise but not overly formal (academic tone)")
+        rules.append(f"4. QUALITY TARGETS: Specificity Calibration ~{spec:.2f} (ideal near 3), Lexical Naturalism ~{nat:.2f} (ideal near 3)")
+        rules.append("   - Include enough detail to guide retrieval without reconstructing a known paper")
+        rules.append("   - Sound like a direct researcher query, not a keyword dump and not polished prose")
 
         return rules
 

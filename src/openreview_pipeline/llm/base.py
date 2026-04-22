@@ -35,6 +35,7 @@ class OpenAICompatibleBackend(LLMBackend):
         model: str = "gpt-4o-mini",
         max_tokens: int = 4096,
         temperature: float = 0.0,
+        seed: Optional[int] = None,
     ):
         from openai import OpenAI
         self.base_url = base_url.rstrip("/")
@@ -42,17 +43,36 @@ class OpenAICompatibleBackend(LLMBackend):
         self.model = model
         self.max_tokens = max_tokens
         self.temperature = temperature
+        self.seed = seed
         self._client = OpenAI(
             api_key=api_token,
             base_url=base_url,
         )
 
+    def _chat_completion_kwargs(self) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+        }
+        if self.seed is not None:
+            kwargs["seed"] = self.seed
+        return kwargs
+
+    def _responses_kwargs(self) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "max_output_tokens": self.max_tokens,
+            "temperature": self.temperature,
+        }
+        if self.seed is not None:
+            kwargs["seed"] = self.seed
+        return kwargs
+
     def generate(self, prompt: str, **kwargs) -> str:
         response = self._client.chat.completions.create(
-            model=self.model,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=self.max_tokens,
-            temperature=self.temperature,
+            **self._chat_completion_kwargs(),
         )
 
         pretty_print_response(response)
@@ -60,10 +80,8 @@ class OpenAICompatibleBackend(LLMBackend):
 
     def response(self, prompt: str, **kwargs) -> Any:
         response = self._client.responses.create(
-                model=self.model,
                 input=prompt,
-                max_output_tokens=self.max_tokens,
-                temperature=self.temperature,
+                **self._responses_kwargs(),
         )
         pretty_print_response(response)
         return response
@@ -72,10 +90,8 @@ class OpenAICompatibleBackend(LLMBackend):
         import json
         import re
         response = self._client.chat.completions.create(
-            model=self.model,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=self.max_tokens,
-            temperature=self.temperature,
+            **self._chat_completion_kwargs(),
         )
         content = response.choices[0].message.content
         json_match = re.search(r'\{[\s\S]*\}', content)
@@ -109,7 +125,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--prompt",
-        default="Who are you",
+        default="Who are you and your version",
         help="Prompt to send to the configured model",
     )
     parser.add_argument(
@@ -134,8 +150,8 @@ def main() -> None:
 
     if args.json:
         result = backend.generate_json(args.prompt)
-    elif backend.model.startswith("gpt-5.4"):
-        result = backend.completion(args.prompt)
+    # elif backend.model.startswith("gpt-5.4"):
+    #     result = backend.completion(args.prompt)
     else:
         result = backend.generate(args.prompt)
 

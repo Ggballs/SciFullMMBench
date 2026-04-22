@@ -10,9 +10,15 @@ logger = logging.getLogger(__name__)
 
 
 class QueryFilter:
-    def __init__(self, llm: LLMBackend, prompt_template: Optional[str] = None):
+    def __init__(
+        self,
+        llm: LLMBackend,
+        prompt_template: Optional[str] = None,
+        threshold: Optional[float] = None,
+    ):
         self.llm = llm
         self._prompt_template = prompt_template
+        self.threshold = threshold
 
     def _get_prompt_template(self) -> str:
         if self._prompt_template:

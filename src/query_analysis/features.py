@@ -1,11 +1,8 @@
-import logging
 import re
 from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-
-logger = logging.getLogger(__name__)
 
 STOPWORDS = {
     "a", "an", "the", "and", "or", "but", "is", "are", "was", "were", "be", "been",
@@ -78,34 +75,6 @@ QUESTION_TEMPLATES = [
     (r"^[A-Z][a-z]+( [A-Z][a-z]+)+", "Paper title/name format"),
 ]
 
-CONSTRAINT_PATTERNS = [
-    (r"\bfor\b", "for"),
-    (r"\bwith\b", "with"),
-    (r"\busing\b", "using"),
-    (r"\bbased on\b", "based on"),
-    (r"\bwithout\b", "without"),
-    (r"\bunder\b", "under"),
-    (r"\babout\b", "about"),
-    (r"\bregarding\b", "regarding"),
-    (r"\babout\b", "about"),
-    (r"\bduring\b", "during"),
-    (r"\bthrough\b", "through"),
-]
-
-METHOD_KEYWORDS = {
-    "transformer", "attention", "neural", "network", "model", "learning", "training",
-    "bert", "gpt", "llm", "clip", "diffusion", "gan", "vae", "rl", "reinforcement",
-    "supervised", "unsupervised", "semi-supervised", "self-supervised", "contrastive",
-    "encoder", "decoder", "architecture", "layer", "embedding", "token", "attention",
-    "multimodal", "vision", "language", "audio", "video", "image", "text",
-}
-
-DATASET_KEYWORDS = {
-    "imagenet", "coco", "vqa", "squad", "glue", "superglue", "arxiv", "paper",
-    "dataset", "benchmark", "training", "test", "validation", "data",
-}
-
-
 def detect_question_template(query: str) -> Tuple[Optional[str], str]:
     """Detect the question template of a query.
 
@@ -160,139 +129,6 @@ def compute_length_stats(queries: List[str]) -> Dict[str, Any]:
         },
         "total_queries": len(queries),
     }
-
-
-def compute_token_variety(queries: List[str]) -> Dict[str, Any]:
-    """Compute token variety/lexical richness metrics.
-
-    Args:
-        queries: List of query strings
-
-    Returns:
-        Dictionary with token variety statistics
-    """
-    if not queries:
-        return {}
-
-    type_token_ratios = []
-    unique_token_counts = []
-    total_token_counts = []
-
-    for q in queries:
-        words = q.lower().split()
-        words_set = set(words)
-        total_token_counts.append(len(words))
-        unique_token_counts.append(len(words_set))
-        if len(words) > 0:
-            type_token_ratios.append(len(words_set) / len(words))
-        else:
-            type_token_ratios.append(0)
-
-    return {
-        "type_token_ratio": {
-            "mean": float(np.mean(type_token_ratios)),
-            "std": float(np.std(type_token_ratios)),
-            "min": float(np.min(type_token_ratios)),
-            "max": float(np.max(type_token_ratios)),
-            "median": float(np.median(type_token_ratios)),
-        },
-        "unique_tokens_per_query": {
-            "mean": float(np.mean(unique_token_counts)),
-            "std": float(np.std(unique_token_counts)),
-            "min": int(np.min(unique_token_counts)),
-            "max": int(np.max(unique_token_counts)),
-        },
-        "avg_query_length": float(np.mean(total_token_counts)),
-    }
-
-
-def compute_constraint_count(queries: List[str]) -> Dict[str, Any]:
-    """Count explicit constraints in queries.
-
-    Args:
-        queries: List of query strings
-
-    Returns:
-        Dictionary with constraint statistics
-    """
-    if not queries:
-        return {}
-
-    constraint_counts = []
-    constraint_types_used = Counter()
-    queries_with_constraints = 0
-
-    for q in queries:
-        q_lower = q.lower()
-        count = 0
-        used_types = set()
-
-        for pattern, constraint_name in CONSTRAINT_PATTERNS:
-            matches = re.findall(pattern, q_lower)
-            if matches:
-                count += len(matches)
-                used_types.add(constraint_name)
-                constraint_types_used[constraint_name] += len(matches)
-
-        constraint_counts.append(count)
-        if count > 0:
-            queries_with_constraints += 1
-
-    return {
-        "constraints_per_query": {
-            "mean": float(np.mean(constraint_counts)),
-            "std": float(np.std(constraint_counts)),
-            "min": int(np.min(constraint_counts)),
-            "max": int(np.max(constraint_counts)),
-            "median": float(np.median(constraint_counts)),
-        },
-        "queries_with_constraints": queries_with_constraints,
-        "constraint_ratio": queries_with_constraints / len(queries) if queries else 0,
-        "constraint_type_distribution": dict(constraint_types_used),
-    }
-
-
-def compute_method_dataset_mentions(queries: List[str]) -> Dict[str, Any]:
-    """Count method and dataset mentions in queries.
-
-    Args:
-        queries: List of query strings
-
-    Returns:
-        Dictionary with method/dataset mention statistics
-    """
-    if not queries:
-        return {}
-
-    method_mentions = 0
-    dataset_mentions = 0
-    queries_with_methods = 0
-    queries_with_datasets = 0
-
-    for q in queries:
-        q_lower = q.lower()
-        words = set(q_lower.split())
-
-        has_method = any(m in words or m in q_lower for m in METHOD_KEYWORDS)
-        has_dataset = any(d in words or d in q_lower for d in DATASET_KEYWORDS)
-
-        if has_method:
-            method_mentions += 1
-            queries_with_methods += 1
-        if has_dataset:
-            dataset_mentions += 1
-            queries_with_datasets += 1
-
-    total = len(queries)
-
-    return {
-        "method_mention_ratio": method_mentions / total if total > 0 else 0,
-        "dataset_mention_ratio": dataset_mentions / total if total > 0 else 0,
-        "queries_with_methods": queries_with_methods,
-        "queries_with_datasets": queries_with_datasets,
-    }
-
-
 def compute_question_template_distribution(queries: List[str]) -> Dict[str, Any]:
     """Compute question template distribution.
 
@@ -332,104 +168,18 @@ def compute_question_template_distribution(queries: List[str]) -> Dict[str, Any]
         "template_examples": template_examples,
         "total_templates": len(template_counts),
     }
-
-
-def compute_qualitative_metrics(queries: List[str]) -> Dict[str, Any]:
-    """Compute qualitative metrics (specificity, naturalness, academic tone).
-
-    Args:
-        queries: List of query strings
-
-    Returns:
-        Dictionary with qualitative metrics
-    """
-    if not queries:
-        return {}
-
-    specificity_scores = []
-    naturalness_scores = []
-    academic_tone_scores = []
-
-    for q in queries:
-        words = q.lower().split()
-        q_stripped = q.strip()
-
-        specificity = 0.5
-        naturalness = 0.5
-        academic_tone = 0.5
-
-        specificity += len(words) / 100
-        if len(words) > 10:
-            specificity += 0.2
-        if re.search(r'\d+', q):
-            specificity += 0.1
-        if re.search(r'\bfor\b.*\busing\b|\bwith\b.*\busing\b', q_lower := q.lower()):
-            specificity += 0.15
-        specificity = min(1.0, specificity)
-
-        naturalness = 0.5
-        if q_stripped.endswith('?'):
-            naturalness += 0.2
-        if not q_stripped.startswith(('we', 'this paper', 'our')):
-            naturalness += 0.2
-        if 'in this paper' not in q.lower() and 'in our paper' not in q.lower():
-            naturalness += 0.1
-        naturalness = min(1.0, naturalness)
-
-        academic_tone = 0.5
-        if any(w in words for w in ['paper', 'research', 'study', 'method', 'approach', 'model']):
-            academic_tone += 0.2
-        if not any(w in words for w in ['hello', 'hi', 'hey', 'please help', 'thanks']):
-            academic_tone += 0.2
-        if '?' in q_stripped or 'whether' in q.lower():
-            academic_tone += 0.1
-        academic_tone = min(1.0, academic_tone)
-
-        specificity_scores.append(specificity)
-        naturalness_scores.append(naturalness)
-        academic_tone_scores.append(academic_tone)
-
-    return {
-        "specificity": {
-            "mean": float(np.mean(specificity_scores)),
-            "std": float(np.std(specificity_scores)),
-            "min": float(np.min(specificity_scores)),
-            "max": float(np.max(specificity_scores)),
-            "median": float(np.median(specificity_scores)),
-        },
-        "naturalness": {
-            "mean": float(np.mean(naturalness_scores)),
-            "std": float(np.std(naturalness_scores)),
-            "min": float(np.min(naturalness_scores)),
-            "max": float(np.max(naturalness_scores)),
-            "median": float(np.median(naturalness_scores)),
-        },
-        "academic_tone": {
-            "mean": float(np.mean(academic_tone_scores)),
-            "std": float(np.std(academic_tone_scores)),
-            "min": float(np.min(academic_tone_scores)),
-            "max": float(np.max(academic_tone_scores)),
-            "median": float(np.median(academic_tone_scores)),
-        },
-    }
-
-
 def compute_all_metrics(queries: List[str]) -> Dict[str, Any]:
-    """Compute all quantitative and qualitative metrics.
+    """Compute local non-LLM metrics.
 
     Args:
         queries: List of query strings
 
     Returns:
-        Dictionary with all computed metrics
+        Dictionary with computed local metrics
     """
     return {
         "length_stats": compute_length_stats(queries),
-        "token_variety": compute_token_variety(queries),
-        "constraint_count": compute_constraint_count(queries),
-        "method_dataset_mentions": compute_method_dataset_mentions(queries),
         "question_templates": compute_question_template_distribution(queries),
-        "qualitative_metrics": compute_qualitative_metrics(queries),
     }
 
 

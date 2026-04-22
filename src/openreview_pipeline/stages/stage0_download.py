@@ -471,10 +471,10 @@ class DatasetDownloader:
 
         return papers
 
-    def run(self, output_path: Path) -> None:
+    def run(self, output_path: Path, limit: Optional[int] = None) -> None:
         from openreview_pipeline.schemas import DownloadedPapersDataset
         from openreview_pipeline.utils import save_json
 
-        papers = self.fetch_recent_papers(limit=None)
+        papers = self.fetch_recent_papers(limit=limit)
         dataset = DownloadedPapersDataset(papers=papers, total_count=len(papers))
         save_json(output_path, dataset)

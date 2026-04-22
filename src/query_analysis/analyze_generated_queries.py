@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from query_analysis.features import compute_all_metrics, detect_question_template
 from query_analysis.llm_judge import (
     compute_llm_judged_metrics,
+    compute_llm_semantic_constraint_metrics,
     load_llm_config as load_llm_judge_config,
 )
 
@@ -58,8 +59,11 @@ def build_template_metrics(queries: List[str]) -> Dict[str, Any]:
 def build_generated_analysis(
     dataset_name: str,
     queries: List[str],
-    llm_judge_config: Optional[Dict[str, str]] = None,
+    llm_judge_config: Optional[Dict[str, Any]] = None,
     llm_judge_batch_size: int = 25,
+    llm_judge_mode: str = "batch",
+    llm_max_concurrency: int = 1,
+    llm_seed: Optional[int] = None,
 ) -> Dict[str, Any]:
     metrics = compute_all_metrics(queries)
     metrics["question_templates"] = build_template_metrics(queries)
@@ -68,6 +72,19 @@ def build_generated_analysis(
             compute_llm_judged_metrics(
                 queries=queries,
                 batch_size=llm_judge_batch_size,
+                judge_mode=llm_judge_mode,
+                max_concurrency=llm_max_concurrency,
+                seed=llm_seed,
+                **llm_judge_config,
+            )
+        )
+        metrics.update(
+            compute_llm_semantic_constraint_metrics(
+                queries=queries,
+                batch_size=llm_judge_batch_size,
+                judge_mode=llm_judge_mode,
+                max_concurrency=llm_max_concurrency,
+                seed=llm_seed,
                 **llm_judge_config,
             )
         )
@@ -84,8 +101,11 @@ def build_generated_analysis(
 def build_query_list_analysis(
     dataset_name: str,
     queries: List[str],
-    llm_judge_config: Optional[Dict[str, str]] = None,
+    llm_judge_config: Optional[Dict[str, Any]] = None,
     llm_judge_batch_size: int = 25,
+    llm_judge_mode: str = "batch",
+    llm_max_concurrency: int = 1,
+    llm_seed: Optional[int] = None,
 ) -> Dict[str, Any]:
     metrics = compute_all_metrics(queries)
     metrics["question_templates"] = build_template_metrics(queries)
@@ -94,6 +114,19 @@ def build_query_list_analysis(
             compute_llm_judged_metrics(
                 queries=queries,
                 batch_size=llm_judge_batch_size,
+                judge_mode=llm_judge_mode,
+                max_concurrency=llm_max_concurrency,
+                seed=llm_seed,
+                **llm_judge_config,
+            )
+        )
+        metrics.update(
+            compute_llm_semantic_constraint_metrics(
+                queries=queries,
+                batch_size=llm_judge_batch_size,
+                judge_mode=llm_judge_mode,
+                max_concurrency=llm_max_concurrency,
+                seed=llm_seed,
                 **llm_judge_config,
             )
         )
@@ -104,198 +137,6 @@ def build_query_list_analysis(
         "metrics": {
             "combined": metrics,
         },
-    }
-
-
-SEMANTIC_CONSTRAINT_TYPES = {
-    "task_or_setting",
-    "method_or_model",
-    "dataset_or_benchmark",
-    "comparison_or_result",
-    "scope_or_exclusion",
-    "visual_or_multimodal",
-    "other",
-}
-
-
-def build_semantic_constraint_prompt(queries: List[str]) -> str:
-    numbered_queries = "\n".join(
-        f"{idx}. {query}" for idx, query in enumerate(queries, start=1)
-    )
-    return f"""
-You are evaluating academic paper-search queries.
-
-For each query, identify semantic retrieval constraints. A constraint is any condition
-that narrows what paper should be retrieved, even if it is not expressed with words
-like "for" or "with".
-
-Count constraints semantically, not by keyword. Examples of constraints:
-- task or setting constraints
-- method/model constraints
-- dataset/benchmark constraints
-- comparison/result constraints
-- scope/exclusion constraints
-- visual/multimodal constraints
-
-Use a conservative count:
-- 0 = generic query with no real narrowing condition
-- 1 = one main narrowing condition
-- 2 = two distinct narrowing conditions
-- 3 = three or more distinct narrowing conditions
-
-Allowed constraint_types:
-- task_or_setting
-- method_or_model
-- dataset_or_benchmark
-- comparison_or_result
-- scope_or_exclusion
-- visual_or_multimodal
-- other
-
-Queries:
-{numbered_queries}
-
-Return valid JSON only in this exact shape:
-{{
-  "results": [
-    {{
-      "index": 1,
-      "query": "...",
-      "has_constraint": true,
-      "semantic_constraint_count": 2,
-      "constraint_types": ["task_or_setting", "dataset_or_benchmark"],
-      "rationale": "short reason"
-    }}
-  ]
-}}
-""".strip()
-
-
-def normalize_semantic_constraint_results(
-    queries: List[str],
-    raw_results: Dict[str, Any],
-) -> List[Dict[str, Any]]:
-    by_index: Dict[int, Dict[str, Any]] = {}
-    for item in raw_results.get("results", []):
-        if not isinstance(item, dict):
-            continue
-        try:
-            index = int(item.get("index"))
-        except (TypeError, ValueError):
-            continue
-        by_index[index] = item
-
-    normalized = []
-    for index, query in enumerate(queries, start=1):
-        item = by_index.get(index, {})
-        try:
-            count = int(item.get("semantic_constraint_count", 0))
-        except (TypeError, ValueError):
-            count = 0
-        count = max(0, min(count, 3))
-
-        raw_types = item.get("constraint_types", [])
-        if not isinstance(raw_types, list):
-            raw_types = []
-        constraint_types = [
-            constraint_type
-            for constraint_type in raw_types
-            if constraint_type in SEMANTIC_CONSTRAINT_TYPES
-        ]
-
-        has_constraint = bool(item.get("has_constraint", count > 0))
-        if count == 0:
-            has_constraint = False
-            constraint_types = []
-        elif has_constraint and not constraint_types:
-            constraint_types = ["other"]
-
-        normalized.append(
-            {
-                "index": index,
-                "query": query,
-                "has_constraint": has_constraint,
-                "semantic_constraint_count": count,
-                "constraint_types": constraint_types,
-                "rationale": str(item.get("rationale", "")).strip(),
-            }
-        )
-
-    return normalized
-
-
-def summarize_semantic_constraints(per_query: List[Dict[str, Any]]) -> Dict[str, Any]:
-    if not per_query:
-        return {
-            "method": "llm_semantic",
-            "semantic_constraints_per_query": {},
-            "queries_with_constraints": 0,
-            "constraint_ratio": 0,
-            "constraint_type_distribution": {},
-            "per_query": [],
-        }
-
-    import numpy as np
-
-    counts = [item["semantic_constraint_count"] for item in per_query]
-    type_distribution: Counter[str] = Counter()
-    for item in per_query:
-        type_distribution.update(item.get("constraint_types", []))
-
-    queries_with_constraints = sum(1 for item in per_query if item["has_constraint"])
-    return {
-        "method": "llm_semantic",
-        "scale": "0=no constraint, 1=one main constraint, 2=two constraints, 3=three or more",
-        "semantic_constraints_per_query": {
-            "mean": float(np.mean(counts)),
-            "std": float(np.std(counts)),
-            "min": int(np.min(counts)),
-            "max": int(np.max(counts)),
-            "median": float(np.median(counts)),
-        },
-        "queries_with_constraints": queries_with_constraints,
-        "constraint_ratio": queries_with_constraints / len(per_query),
-        "constraint_type_distribution": dict(type_distribution),
-        "per_query": per_query,
-    }
-
-
-def compute_semantic_constraint_analysis(
-    queries: List[str],
-    base_url: str,
-    api_token: str,
-    model: str,
-    batch_size: int = 25,
-) -> Dict[str, Any]:
-    from openreview_pipeline.llm import OpenAICompatibleBackend
-
-    backend = OpenAICompatibleBackend(
-        base_url=base_url,
-        api_token=api_token,
-        model=model,
-        temperature=0.0,
-    )
-    per_query = []
-    for start in range(0, len(queries), batch_size):
-        batch = queries[start:start + batch_size]
-        raw_results = backend.generate_json(build_semantic_constraint_prompt(batch))
-        batch_results = normalize_semantic_constraint_results(batch, raw_results)
-        for item in batch_results:
-            item["index"] = start + item["index"]
-        per_query.extend(batch_results)
-    return summarize_semantic_constraints(per_query)
-
-
-def load_llm_config(config_path: Path) -> Dict[str, str]:
-    import yaml
-
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f) or {}
-    llm_config = config.get("llm", {})
-    return {
-        "base_url": llm_config.get("base_url", ""),
-        "api_token": llm_config.get("api_token", ""),
-        "model": llm_config.get("model", "gpt-4o-mini"),
     }
 
 
@@ -318,8 +159,16 @@ def get_nested(data: Dict[str, Any], path: Tuple[str, ...], default: Any = None)
     return current
 
 
-def render_pct(value: float) -> str:
+def render_pct(value: Optional[float]) -> str:
+    if value is None:
+        return "n/a"
     return f"{value * 100:.1f}%"
+
+
+def render_score(value: Optional[float], default: str = "n/a") -> str:
+    if value is None:
+        return default
+    return f"{value:.3f}"
 
 
 def render_metric_row(name: str, human: Any, original: Any, new: Any) -> str:
@@ -356,14 +205,20 @@ def build_report(
         ("semantic_constraint_analysis", "semantic_constraints_per_query", "mean"),
         None,
     )
-    human_semantic_constraint_ratio = get_nested(
-        human,
-        ("semantic_constraint_analysis", "constraint_ratio"),
+    human_specificity_calibration = get_nested(
+        human, ("qualitative_metrics", "specificity_calibration", "mean"), None
+    )
+    human_specificity_fit = get_nested(
+        human, ("qualitative_metrics", "specificity_calibration_fit", "mean"),
         None,
     )
-    human_specificity = get_nested(human, ("qualitative_metrics", "specificity", "mean"), 0.0)
-    human_naturalness = get_nested(human, ("qualitative_metrics", "naturalness", "mean"), 0.0)
-    human_tone = get_nested(human, ("qualitative_metrics", "academic_tone", "mean"), 0.0)
+    human_lexical_naturalism = get_nested(
+        human, ("qualitative_metrics", "lexical_naturalism", "mean"), None
+    )
+    human_lexical_naturalism_fit = get_nested(
+        human, ("qualitative_metrics", "lexical_naturalism_fit", "mean"),
+        None,
+    )
     human_other_ratio = get_nested(human, ("question_templates", "unmatched_ratio"), 0.0)
 
     original_char = get_nested(original, ("length_stats", "char_length", "mean"), 0.0)
@@ -373,14 +228,20 @@ def build_report(
         ("semantic_constraint_analysis", "semantic_constraints_per_query", "mean"),
         None,
     )
-    original_semantic_constraint_ratio = get_nested(
-        original,
-        ("semantic_constraint_analysis", "constraint_ratio"),
+    original_specificity_calibration = get_nested(
+        original, ("qualitative_metrics", "specificity_calibration", "mean"), None
+    )
+    original_specificity_fit = get_nested(
+        original, ("qualitative_metrics", "specificity_calibration_fit", "mean"),
         None,
     )
-    original_specificity = get_nested(original, ("qualitative_metrics", "specificity", "mean"), 0.0)
-    original_naturalness = get_nested(original, ("qualitative_metrics", "naturalness", "mean"), 0.0)
-    original_tone = get_nested(original, ("qualitative_metrics", "academic_tone", "mean"), 0.0)
+    original_lexical_naturalism = get_nested(
+        original, ("qualitative_metrics", "lexical_naturalism", "mean"), None
+    )
+    original_lexical_naturalism_fit = get_nested(
+        original, ("qualitative_metrics", "lexical_naturalism_fit", "mean"),
+        None,
+    )
     original_other_ratio = get_nested(original, ("question_templates", "template_ratios", "other"), 0.0)
 
     new_char = get_nested(new, ("length_stats", "char_length", "mean"), 0.0)
@@ -390,15 +251,38 @@ def build_report(
         ("semantic_constraint_analysis", "semantic_constraints_per_query", "mean"),
         None,
     )
-    new_semantic_constraint_ratio = get_nested(
-        new,
-        ("semantic_constraint_analysis", "constraint_ratio"),
+    new_specificity_calibration = get_nested(
+        new, ("qualitative_metrics", "specificity_calibration", "mean"), None
+    )
+    new_specificity_fit = get_nested(
+        new, ("qualitative_metrics", "specificity_calibration_fit", "mean"),
         None,
     )
-    new_specificity = get_nested(new, ("qualitative_metrics", "specificity", "mean"), 0.0)
-    new_naturalness = get_nested(new, ("qualitative_metrics", "naturalness", "mean"), 0.0)
-    new_tone = get_nested(new, ("qualitative_metrics", "academic_tone", "mean"), 0.0)
+    new_lexical_naturalism = get_nested(
+        new, ("qualitative_metrics", "lexical_naturalism", "mean"), None
+    )
+    new_lexical_naturalism_fit = get_nested(
+        new, ("qualitative_metrics", "lexical_naturalism_fit", "mean"),
+        None,
+    )
     new_other_ratio = get_nested(new, ("question_templates", "template_ratios", "other"), 0.0)
+    has_llm_style_metrics = any(
+        value is not None
+        for value in [
+            human_specificity_calibration,
+            human_specificity_fit,
+            human_lexical_naturalism,
+            human_lexical_naturalism_fit,
+            original_specificity_calibration,
+            original_specificity_fit,
+            original_lexical_naturalism,
+            original_lexical_naturalism_fit,
+            new_specificity_calibration,
+            new_specificity_fit,
+            new_lexical_naturalism,
+            new_lexical_naturalism_fit,
+        ]
+    )
 
     new_examples = new_analysis.get("query_examples", [])[:8]
 
@@ -416,7 +300,10 @@ def build_report(
     lines.append("")
     lines.append("The new generated queries are much closer to the human-written reference than the original synthetic queries on length and template realism. The strongest improvements are that the queries are no longer overlong and they use recognizable human search openings such as `What`, `Which`, and `Is there`.")
     lines.append("")
-    lines.append("The main remaining gap is that the new set is still somewhat denser and more benchmark-specific than typical human queries, and its academic tone still trails the human reference. It is directionally better than the original synthetic set, but there is still room to reduce source-detail carryover in some queries.")
+    if has_llm_style_metrics:
+        lines.append("The main remaining gap is that some queries are still denser and more benchmark-specific than typical human searches. Under the centered LLM judge, the remaining work is to keep detail and wording closer to the human-query ideal rather than simply making them more polished.")
+    else:
+        lines.append("The main remaining gap is that some queries are still denser and more benchmark-specific than typical human searches. This report is based on structural metrics only, so style-fit conclusions require a separate LLM-judge pass.")
     lines.append("")
     lines.append("## Side-by-Side Metrics")
     lines.append("")
@@ -437,29 +324,61 @@ def build_report(
             f"{new_semantic_constraints:.2f}" if new_semantic_constraints is not None else "not LLM-scored",
         ))
     if (
-        human_semantic_constraint_ratio is not None
-        or original_semantic_constraint_ratio is not None
-        or new_semantic_constraint_ratio is not None
+        human_specificity_calibration is not None
+        or original_specificity_calibration is not None
+        or new_specificity_calibration is not None
     ):
         lines.append(render_metric_row(
-            "Queries with semantic constraints",
-            render_pct(human_semantic_constraint_ratio) if human_semantic_constraint_ratio is not None else "not LLM-scored",
-            render_pct(original_semantic_constraint_ratio) if original_semantic_constraint_ratio is not None else "not LLM-scored",
-            render_pct(new_semantic_constraint_ratio) if new_semantic_constraint_ratio is not None else "not LLM-scored",
+            "Specificity Calibration",
+            f"{human_specificity_calibration:.3f}" if human_specificity_calibration is not None else "n/a",
+            f"{original_specificity_calibration:.3f}" if original_specificity_calibration is not None else "n/a",
+            f"{new_specificity_calibration:.3f}" if new_specificity_calibration is not None else "n/a",
         ))
-    lines.append(render_metric_row("Specificity", f"{human_specificity:.3f}", f"{original_specificity:.3f}", f"{new_specificity:.3f}"))
-    lines.append(render_metric_row("Naturalness", f"{human_naturalness:.3f}", f"{original_naturalness:.3f}", f"{new_naturalness:.3f}"))
-    lines.append(render_metric_row("Academic tone", f"{human_tone:.3f}", f"{original_tone:.3f}", f"{new_tone:.3f}"))
+    if (
+        human_specificity_fit is not None
+        or original_specificity_fit is not None
+        or new_specificity_fit is not None
+    ):
+        lines.append(render_metric_row(
+            "Specificity Calibration Fit",
+            render_score(human_specificity_fit),
+            render_score(original_specificity_fit),
+            render_score(new_specificity_fit),
+        ))
+    if (
+        human_lexical_naturalism is not None
+        or original_lexical_naturalism is not None
+        or new_lexical_naturalism is not None
+    ):
+        lines.append(render_metric_row(
+            "Lexical Naturalism",
+            f"{human_lexical_naturalism:.3f}" if human_lexical_naturalism is not None else "n/a",
+            f"{original_lexical_naturalism:.3f}" if original_lexical_naturalism is not None else "n/a",
+            f"{new_lexical_naturalism:.3f}" if new_lexical_naturalism is not None else "n/a",
+        ))
+    if (
+        human_lexical_naturalism_fit is not None
+        or original_lexical_naturalism_fit is not None
+        or new_lexical_naturalism_fit is not None
+    ):
+        lines.append(render_metric_row(
+            "Lexical Naturalism Fit",
+            render_score(human_lexical_naturalism_fit),
+            render_score(original_lexical_naturalism_fit),
+            render_score(new_lexical_naturalism_fit),
+        ))
     lines.append(render_metric_row("Other / unmatched template share", render_pct(human_other_ratio), render_pct(original_other_ratio), render_pct(new_other_ratio)))
     lines.append("")
     lines.append("## Interpretation")
     lines.append("")
     lines.append(f"- Length improved sharply: the original synthetic queries averaged {original_tokens:.1f} tokens, while the new set averages {new_tokens:.1f}, much closer to the human reference at {human_tokens:.1f}.")
-    lines.append(f"- Naturalness improved from {original_naturalness:.3f} to {new_naturalness:.3f}, approaching or exceeding the human reference score of {human_naturalness:.3f}.")
+    if original_lexical_naturalism_fit is not None and new_lexical_naturalism_fit is not None:
+        lines.append(f"- Lexical naturalism fit moved from {original_lexical_naturalism_fit:.3f} to {new_lexical_naturalism_fit:.3f}; higher fit means the wording is closer to the human-query ideal.")
     lines.append(f"- Template fit improved: `other` dropped from {render_pct(original_other_ratio)} to {render_pct(new_other_ratio)}.")
-    lines.append(f"- Specificity remains high at {new_specificity:.3f}, but some queries still carry more benchmark-construction detail than a typical human search would.")
-    if new_semantic_constraints is not None and new_semantic_constraint_ratio is not None:
-        lines.append(f"- LLM semantic constraint scoring finds {new_semantic_constraints:.2f} constraints per query, with {render_pct(new_semantic_constraint_ratio)} of new queries containing at least one retrieval-narrowing condition.")
+    if new_specificity_fit is not None:
+        lines.append(f"- Specificity calibration fit is {new_specificity_fit:.3f}; higher fit means the amount of detail is closer to the human-query ideal rather than too broad or too specific.")
+    if new_semantic_constraints is not None:
+        lines.append(f"- LLM semantic constraint scoring finds {new_semantic_constraints:.2f} constraints per query.")
     lines.append("")
     lines.append("## Query Examples")
     lines.append("")
@@ -484,8 +403,26 @@ def main() -> None:
     parser.add_argument("--original-queries", default=None, help="Optional newline-delimited original synthetic queries to LLM-score.")
     parser.add_argument("--semantic-constraints", action="store_true", help="Deprecated: LLM judge metrics are enabled by default.")
     parser.add_argument("--config", default="config.yaml", help="Path to config.yaml with LLM settings.")
-    parser.add_argument("--batch-size", type=int, default=25, help="Batch size for LLM semantic constraint scoring.")
-    parser.add_argument("--no-llm-judge", action="store_true", help="Disable LLM-as-a-judge metrics and keep local heuristic metrics only.")
+    parser.add_argument("--batch-size", type=int, default=25, help="Batch size for LLM judge scoring.")
+    parser.add_argument(
+        "--llm-judge-mode",
+        choices=["batch", "single_query"],
+        default="batch",
+        help="Whether to score in multi-query batches or one query per prompt",
+    )
+    parser.add_argument(
+        "--llm-max-concurrency",
+        type=int,
+        default=1,
+        help="Maximum concurrent LLM requests for judge scoring",
+    )
+    parser.add_argument(
+        "--llm-seed",
+        type=int,
+        default=None,
+        help="Optional seed forwarded to compatible OpenAI-style backends",
+    )
+    parser.add_argument("--no-llm-judge", action="store_true", help="Disable LLM-as-a-judge metrics and keep only local structural metrics.")
     args = parser.parse_args()
 
     generated_queries_path = Path(args.generated_queries)
@@ -496,11 +433,19 @@ def main() -> None:
     queries = extract_queries(generated_data)
     use_llm_judge = args.semantic_constraints or not args.no_llm_judge
     llm_config = load_llm_judge_config(Path(args.config)) if use_llm_judge else None
+    llm_seed = args.llm_seed
+    if llm_config and llm_seed is None:
+        llm_seed = llm_config.pop("seed", None)
+    elif llm_config:
+        llm_config.pop("seed", None)
     generated_analysis = build_generated_analysis(
         args.dataset_name,
         queries,
         llm_judge_config=llm_config,
         llm_judge_batch_size=args.batch_size,
+        llm_judge_mode=args.llm_judge_mode,
+        llm_max_concurrency=args.llm_max_concurrency,
+        llm_seed=llm_seed,
     )
     human_analysis = load_json(Path(args.human_analysis))
     original_analysis = load_json(Path(args.original_analysis))
@@ -510,6 +455,19 @@ def main() -> None:
             compute_llm_judged_metrics(
                 queries=human_queries,
                 batch_size=args.batch_size,
+                judge_mode=args.llm_judge_mode,
+                max_concurrency=args.llm_max_concurrency,
+                seed=llm_seed,
+                **llm_config,
+            )
+        )
+        human_analysis["metrics"]["combined"].update(
+            compute_llm_semantic_constraint_metrics(
+                queries=human_queries,
+                batch_size=args.batch_size,
+                judge_mode=args.llm_judge_mode,
+                max_concurrency=args.llm_max_concurrency,
+                seed=llm_seed,
                 **llm_config,
             )
         )
@@ -519,6 +477,19 @@ def main() -> None:
             compute_llm_judged_metrics(
                 queries=original_queries,
                 batch_size=args.batch_size,
+                judge_mode=args.llm_judge_mode,
+                max_concurrency=args.llm_max_concurrency,
+                seed=llm_seed,
+                **llm_config,
+            )
+        )
+        original_analysis["metrics"]["combined"].update(
+            compute_llm_semantic_constraint_metrics(
+                queries=original_queries,
+                batch_size=args.batch_size,
+                judge_mode=args.llm_judge_mode,
+                max_concurrency=args.llm_max_concurrency,
+                seed=llm_seed,
                 **llm_config,
             )
         )
