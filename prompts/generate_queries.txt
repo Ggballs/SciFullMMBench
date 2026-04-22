@@ -1,214 +1,71 @@
 # Query Generation
 
-Given the consolidated bullet-point summary of a scientific paper organized by views
-(`contribution`, `method/dataset`, `experiment/result`, `limitation/scope`), generate
-**1-2 human-written-style retrieval queries per view**.
+Given the literature-review-style summary of a scientific paper organized by views (`contribution`, `method/dataset`, `experiment/result`, `limitation/scope`), where each view contains a short narrative summary and indexed bullet points, generate **1-2 human-written-style general retrieval queries per view**.
 
-The goal is to sound like a real researcher searching for a paper they partly remember,
-not like a benchmark description, annotation guideline, or paper abstract.
+The goal is to sound like a real researcher searching for a paper they partly remember / explore the new literature, not like a benchmark description, annotation guideline, or paper abstract.
 
 ## Primary Goal
-
 Write queries that are:
-
-1. **Human-like**: natural, direct, slightly informal but still academic
-2. **Specific**: precise enough to identify the paper or a very small set of papers
-3. **Concise**: usually **12-20 tokens**, ideally around **14-18 tokens**
+1. **Human-like Natural**: natural, direct, but still academic, efficient, and research-oriented in phrasing
+2. **Moderate Specific**: precise enough to identify the paper or a very small set of papers, but not so specific that it relies on exact numbers, rare phrases, or brittle details that sounds like LLM-generated query.
+3. **Concise**: usually **12-20 words**, ideally around **14-17 words**
 4. **Search-realistic**: something a person would actually type into a paper search engine
 5. **Discriminative**: centered on the paper's most distinctive idea, setup, result, or limitation
 
 ## Human Style Requirements
+### 1. Use human query templates
+Use the following template families:
+- **What/Which paper or method...**: about **50%**
+- **Is there / Are there / Any papers/methods/datasets on/about/that...**: about **30%**
+- **Give me / Show me / Provide / List / Find / Search for papers...**: about **20%*
 
-### 1. Use analyzer-compatible human query templates
+### 2. Construct constraints Requirement:
+- Discriminative Bullet Points Selection: the most distinctive constraint from the view as the main retrieval hook,  **one memorable retrieval hook** from the view, such as distinctive method or model design, an unusual task formulation, a dataset or benchmark characteristic, a striking empirical finding,a limitation, failure mode, or scope restriction.
+- Natural Phrasing: Use natural modifiers such as: `for`,`with`, `using`, `without`,  `on`, `about`
+- Best 2 constraints per query: If possible, include a second constraint that naturally fits with the first, but do not force it if it feels awkward or too specific.
 
-Use the following template families so the output matches both human-written style and
-the current query template analyzer.
-
-Target mix across all queries for one paper:
-
-- **What/Which paper or method...**: about **40%**
-- **Is there / Are there / Any papers...**: about **27%**
-- **Give me / Show me / Provide / List / Find / Search for papers...**: about **21%**
-- **Can you / Can we...**: about **3%**
-
-Start every query with one of these approved openings:
-
-- `Which paper/method/... ... `
-- `What paper/method/dataset... ...`
-- `What is...`
-- `Is there a paper/method/dataset/study that...`
-- `Are there any papers/methods on/about/that...`
-- `Any papers on/about...`
-- `Give/Show/Provide/Find/List me papers on/about/that...`
-- `Search for papers on/about...`
-- `Can you find papers that...`
-Use these as natural templates, not rigid formulas, but keep the opening compatible
-with the approved patterns above.
-
-Across all queries for one paper:
-
-- Use **template diversity**
-- Do **not** start every query the same way
-- If generating 4+ queries total, use at least **2 different template families**
-- If generating 6+ queries total, use at least **3 different template families**
-- Prefer the target family mix above when it fits naturally
-
-### 2. Match human query length
-
-- Target **12-20 tokens**
-- Prefer **one main idea** plus **0-2 natural constraints**
-- Avoid long, clause-heavy sentences
-- Avoid compressing many benchmark construction details into one query
-- Avoid stacking metadata-like facts such as exact dataset size, release type, split policy,
-  licensing, and scope in the same query
-
-### 3. Express constraints naturally
-
-Use natural modifiers such as:
-
-- `for`,`with`, `using`, `without`,  `on`, `about`
-
-Good:
-
-- `Is there a multimodal retrieval benchmark with contradiction-based negatives?`
-- `What paper studies test-time training for LLMs?`
-- `Which multimodal retrieval benchmark has expert-domain queries but no training split?`
-
-Bad:
-
-- `Identify the benchmark that defines three retrieval families, uses GPT-based search, expert verification, interleaved documents, and multiple negative construction pipelines.`
-- `Are there any evaluation-only multimodal retrieval benchmarks with around 1.5k expert queries but no training split?`
-
-### 4. Prefer conceptual paraphrases over rare exact terms
-
-Prefer the kind of wording a person would remember, not the exact internal terminology from
-bullet points.
-
-Default behavior:
-
-- paraphrase **secondary/source dataset names** into functional descriptions
-- paraphrase **internal construction labels**, niche acronyms, and benchmark ingredients
-- keep the **paper's own method or dataset name** only when it is the most natural retrieval hook
+### 3. Prefer conceptual paraphrases over rare exact terms/statics
+Prefer the kind of wording a person would remember, or topics a researcher would explore not the exact internal terminology / statics from bullet points.
+- paraphrase **secondary/source dataset names** , **internal construction labels**, niche acronyms, and benchmark ingredients into functional descriptions
 - keep a very famous top-level term only when removing it would make the query too generic
-- do **not** use exact source dataset names, corpus names, or construction acronyms that are
-  not part of the paper title unless the query becomes non-discriminative without them
 
 Good transformations:
+- `MMMU-Pro` -> `a multimodal understanding dataset`, `COCO-based negation templates` -> `object-negation image templates`, `GPT-based search` -> `LLM-assisted search`
 
-- `MMMU-Pro` -> `a multimodal understanding dataset`
-- `BRIGHT` -> `a text reasoning benchmark`
-- `COCO-based negation templates` -> `object-negation image templates`
-- `GPT-based search` -> `LLM-assisted search`
-- `PIN-14M` -> `a large image-text collection`
-
-Example:
-
-- Bad: `Which dataset repurposes MMMU-Pro into interleaved image-text retrieval tasks across many expert domains?`
-- Right: `Which dataset repurposes a multimodal understanding dataset into interleaved image-text retrieval tasks across many expert domains?`
-
-Do not preserve exact names just because they appear in the bullet points. Prefer the
-functional meaning unless the exact name is genuinely the main thing a researcher would type.
-Before returning JSON, scan every query for rare all-caps, hyphenated, or dataset-like names
-copied from the bullet points. If the name is not the target paper's own name, rewrite it as
-a short conceptual description.
-
-### 5. Sound like a real researcher
-
+### 4. Sound like a real researcher
 Queries should feel like tip-of-the-tongue search requests:
-
 - mention the **core mechanism**, **task**, **setting**, **dataset type**, **finding**, or **limitation**
 - keep only the most memorable details
 - use domain terms naturally
 - use a question mark for question-style queries
 
-Do **not** sound like:
-
-- a paper summary
-- a synthetic benchmark description
-- an annotation rubric
-- a full sentence copied from the bullet points
-
-### 6. Keep academic tone without becoming stiff
-
-The tone should be:
-
-- precise
-- efficient
-- research-oriented
-
-Avoid:
-
-- conversational filler like `please`, `thanks`, `hello`
-- marketing language like `novel`, `state-of-the-art`, `breakthrough`
-- paper-writing phrasing like `we propose`, `this paper introduces`, `the authors present`
-
-## Content Selection Rules
-
-For each query, choose **one memorable retrieval hook** from the view, such as:
-
-- a distinctive method or model design
-- an unusual task formulation
-- a dataset or benchmark characteristic
-- a striking empirical finding
-- a limitation, failure mode, or scope restriction
-
 Each query should focus on the **few details most likely to help retrieval**.
 
-Do:
-
-- surface distinctive concepts
-- preserve the paper's functional meaning
-- mention methods or datasets when they help retrieval, but usually paraphrase source ingredients
-- keep the target paper's own name only when it is a natural retrieval anchor
-- vary which aspect is emphasized across views
-
-Do not:
-
-- include exact numbers unless absolutely essential for retrieval
-- combine exact numbers with administrative details like evaluation-only release or split policy
-- copy rare method-, model-, dataset-, benchmark-, or evaluation-internal names or acronyms
-  directly from the bullet points unless needed
-- stuff multiple independent facts into one query
-- list all bullet points in one sentence
-- reproduce long appositive descriptions
-- use overly generic queries that could match many unrelated papers
-
 ## Multimodal Bonus Rule
-
 If a view contains bullet points referencing specific tables, figures, or equations,
 generate **2 additional queries** for that view.
 
 For these bonus queries:
+- do **not** describe the figure/table in exhaustive detail, do not mention the figure/table in the query, but use the figure/table as a clue to identify a distinctive aspect of the paper that can be expressed in a natural query form (in justification, explain the figure/table clue and how it inspired the query)
 
-- mark them with **`(multimodal)`** at the start
-- still keep them human-like and concise
-- refer to the visual/structural clue in a vague realistic way, for example:
-  - `Is there a paper with a comparison table on ...?`
-  - `What paper has a figure showing ...?`
-- do **not** describe the figure/table in exhaustive detail
 
-## Output Quality Checklist
-
-Before finalizing, ensure each query:
-
-- sounds like something a human would type
-- is usually within **12-20 tokens**
-- starts with an approved human query opening
-- includes only the most useful retrieval details
-- paraphrases low-recall source terminology unless the exact name is truly the key hook
-- does not read like benchmark metadata, release notes, or a dataset card
-- avoids summary-style or benchmark-inventory wording
-- is distinct from the other queries for the same paper
+##Good Query Examples:
+"What is the first paper that uses the generalized linear model to analyze multi-neural spike train data?"
+"Is there a paper that utilizes the characteristics of human evolutionary knowledge to guide language models in generating scientific ideas?"
+Give me papers which show that using a smaller dataset in large language model pre-training can result in better models than using bigger datasets.
 
 ## Output Format
-
 Output a JSON object with views as keys:
 
 ```json
 {{
   "contribution": [
-    {{"query_text": "Is there a method that achieves X without using Y?", "is_multimodal": false}},
-    {{"query_text": "(multimodal) What paper has a figure comparing X and Y?", "is_multimodal": true}}
+    {{
+      "query_text": "generated query text",
+      "is_multimodal": true/false (whether the query is inspired by a specific figure/table/equation/... non-textual element in the paper),
+      "related_bullet_indices": [list of bullet index this query is based on(e.g. [1, 3])],
+      "related_bullet_justification": "1-2 sentences justifying whether the query relates to the bullet(s) and why it is a good retrieval hook"
+    }},
   ],
   "method/dataset": [],
   "experiment/result": [],

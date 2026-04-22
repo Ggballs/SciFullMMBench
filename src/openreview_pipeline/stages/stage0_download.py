@@ -3,6 +3,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from tqdm.auto import tqdm
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_YEAR_THRESHOLD = 2021
@@ -373,7 +375,14 @@ class OpenReviewAPIDownloader:
         papers = []
         skip_counts = {"no_reviews": 0, "no_decision": 0, "not_accepted": 0}
 
-        for submission in submissions:
+        progress = tqdm(
+            submissions,
+            total=len(submissions),
+            desc="Downloading papers",
+            unit="paper",
+            dynamic_ncols=True,
+        )
+        for submission in progress:
             try:
                 paper = self._build_paper(submission)
                 forum_notes = self._collect_forum_notes(client, submission)
@@ -392,6 +401,7 @@ class OpenReviewAPIDownloader:
                     decision=note_buckets["decisions"][0],
                 )
                 papers.append(paper_with_metadata)
+                progress.set_postfix_str(f"kept={len(papers)}")
 
                 if limit is not None and len(papers) >= limit:
                     logger.info("Reached limit of %s papers", limit)
@@ -399,6 +409,7 @@ class OpenReviewAPIDownloader:
 
             except Exception as exc:
                 logger.warning("Failed to process submission %s: %s", submission.id, exc)
+        progress.close()
 
         logger.info(
             "Fetched %s papers (skipped: %s no reviews, %s no decision, %s not accepted)",

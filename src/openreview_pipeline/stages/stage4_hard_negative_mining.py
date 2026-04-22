@@ -4,6 +4,8 @@ from typing import Optional, List
 from pydantic import BaseModel, Field
 from datetime import datetime
 
+from tqdm.auto import tqdm
+
 from openreview_pipeline.llm import LLMBackend
 from openreview_pipeline.schemas.schemas_queries import FilteredQueriesDataset, FilteredQuery
 from openreview_pipeline.utils import load_json, save_json
@@ -147,10 +149,19 @@ If no suitable papers found, return an empty array []. Only return actual papers
         all_results = []
         total_hard_negatives = 0
 
-        for query in dataset.results:
+        progress = tqdm(
+            dataset.results,
+            total=len(dataset.results),
+            desc="Mining hard negatives",
+            unit="query",
+            dynamic_ncols=True,
+        )
+        for query in progress:
             result = self.mine_for_query(query)
             all_results.append(result)
             total_hard_negatives += len(result.hard_negatives)
+            progress.set_postfix_str(f"hard_negatives={total_hard_negatives}")
+        progress.close()
 
         logger.info(f"Hard negative mining complete: {total_hard_negatives} hard negatives for {len(all_results)} queries")
 

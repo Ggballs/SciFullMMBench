@@ -2,6 +2,8 @@ import logging
 from pathlib import Path
 from typing import Optional, Tuple
 
+from tqdm.auto import tqdm
+
 from openreview_pipeline.llm import LLMBackend
 from openreview_pipeline.schemas.schemas_queries import GeneratedQueriesDataset, FilteredQueriesDataset, FilteredQuery, QueryDimensions
 from openreview_pipeline.utils import load_json, save_json, load_prompt_template
@@ -100,7 +102,14 @@ class QueryFilter:
 
         all_results = []
         passed_count = 0
+        total_queries = sum(len(paper_queries.queries_by_view) for paper_queries in dataset.papers_queries)
 
+        progress = tqdm(
+            total=total_queries,
+            desc="Filtering queries",
+            unit="query",
+            dynamic_ncols=True,
+        )
         for paper_queries in dataset.papers_queries:
             queries_to_score = []
             for q in paper_queries.queries_by_view:
@@ -121,6 +130,9 @@ class QueryFilter:
                     if sq.verdict == "Keep":
                         passed_count += 1
                     all_results.append(sq)
+                progress.update(len(queries_to_score))
+                progress.set_postfix_str(f"kept={passed_count}")
+        progress.close()
 
         logger.info(f"Query filtering complete: {passed_count}/{len(all_results)} passed (Keep verdict)")
 

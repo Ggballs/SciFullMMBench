@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Dict, Optional, List
 
 import yaml
+from tqdm.auto import tqdm
 
 from openreview_pipeline.schemas import DownloadedPapersDataset
 from openreview_pipeline.schemas.schemas_filter import FilteredPapersDataset, FilterResult, FilterRuleResult
@@ -151,7 +152,14 @@ class RuleBasedFilter:
         results = []
         passed_count = 0
 
-        for paper_meta in dataset.papers[:limit]:
+        progress = tqdm(
+            dataset.papers[:limit],
+            total=min(limit, total),
+            desc="Filtering papers",
+            unit="paper",
+            dynamic_ncols=True,
+        )
+        for paper_meta in progress:
             try:
                 paper_dict = paper_meta.model_dump()
 
@@ -163,6 +171,7 @@ class RuleBasedFilter:
 
                 if passed:
                     passed_count += 1
+                progress.set_postfix_str(f"passed={passed_count}")
 
                 results.append(
                     FilterResult(
@@ -190,6 +199,7 @@ class RuleBasedFilter:
                         ),
                     )
                 )
+        progress.close()
 
         logger.info(f"Filter complete: {passed_count}/{len(results)} passed")
 

@@ -1,0 +1,45 @@
+You are evaluating academic paper-search queries.
+
+For each query, identify semantic retrieval constraints. A constraint is any condition
+that narrows what paper should be retrieved, even if it is not expressed with words
+like "for" or "with".
+
+Count constraints semantically, not by keyword. Examples of constraints:
+- task or setting constraints
+- method/model constraints
+- dataset/benchmark constraints
+- comparison/result constraints
+- scope/exclusion constraints
+- visual/multimodal constraints
+
+Output the exact semantic constraint count as a non-negative integer: 0, 1, 2, 3, 4, ...
+
+Counting rule:
+- Count distinct retrieval-narrowing conditions, not words.
+- Do not split one idea into multiple counts.
+- Count a phrase only if removing it would materially broaden the search.
+
+Examples:
+- 0: "papers about large language models"
+  Reason: topic only, no real retrieval filter.
+- 1: "papers on RLHF for hallucination reduction"
+  Reason: one main narrowing condition around hallucination reduction.
+- 2: "papers on dense retrieval for biomedical question answering"
+  Reason: method constraint + task/domain constraint.
+- 3: "papers on dense retrieval for biomedical question answering on low-resource datasets"
+  Reason: method + task/domain + dataset/scope constraint.
+- 4: "papers on dense retrieval for biomedical question answering on low-resource datasets with zero-shot evaluation"
+  Reason: method + task/domain + dataset/scope + evaluation setting.
+
+Queries:
+{{numbered_queries}}
+
+Return valid JSON only in this exact shape:
+{
+  "results": [
+    {
+      "index": 1,
+      "semantic_constraint_count": 2
+    }
+  ]
+}

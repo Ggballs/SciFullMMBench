@@ -13,6 +13,7 @@ from .schemas_filter import (
     FilteredPapersDataset,
 )
 from .schemas_summarize import (
+    BulletPoint,
     ViewBulletPoints,
     PaperSummary,
     SummarizedPapersDataset,
@@ -40,6 +41,7 @@ __all__ = [
     "FilterRuleResult",
     "FilterResult",
     "FilteredPapersDataset",
+    "BulletPoint",
     "ViewBulletPoints",
     "PaperSummary",
     "SummarizedPapersDataset",

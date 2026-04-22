@@ -13,7 +13,7 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from openreview_pipeline.runner import parse_stage_spec, run_selected_stages
+from openreview_pipeline.runner import parse_stage_spec, resolve_pipeline_paths, run_selected_stages
 
 
 def infer_queries_output_path(input_path: Path) -> Path:
@@ -23,6 +23,13 @@ def infer_queries_output_path(input_path: Path) -> Path:
     else:
         stem = f"{stem}_queries"
     return input_path.with_name(f"{stem}.json")
+
+
+def append_to_output_path(path: Path, appendix: str | None) -> Path:
+    if not appendix:
+        return path
+    separator = "" if appendix.startswith(("_", "-", ".")) else "_"
+    return path.with_name(f"{path.stem}{separator}{appendix}{path.suffix}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -69,6 +76,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--api-token", default=None, help="LLM API token override.")
     parser.add_argument("--model", default=None, help="LLM model override.")
     parser.add_argument("--threshold", type=float, default=None, help="Optional threshold forwarded to stage 4.")
+    parser.add_argument(
+        "--appendix",
+        default=None,
+        help="Optional suffix appended to every output filename before the file extension.",
+    )
     return parser
 
 
@@ -105,17 +117,37 @@ def main() -> int:
     elif stages == ["generate_queries"] and input_path is not None:
         queries_output_path = infer_queries_output_path(input_path)
 
+    pipeline_paths = resolve_pipeline_paths(
+        output_dir=output_dir,
+        downloaded_path=args.download_output,
+        filtered_path=args.filtered_output,
+        summarized_path=args.summarized_output,
+        queries_path=queries_output_path,
+        filtered_queries_path=args.filtered_queries_output,
+        hard_negatives_path=args.hard_negatives_output,
+    )
+    if args.appendix:
+        pipeline_paths = pipeline_paths.__class__(
+            output_dir=pipeline_paths.output_dir,
+            downloaded_path=append_to_output_path(pipeline_paths.downloaded_path, args.appendix),
+            filtered_path=append_to_output_path(pipeline_paths.filtered_path, args.appendix),
+            summarized_path=append_to_output_path(pipeline_paths.summarized_path, args.appendix),
+            queries_path=append_to_output_path(pipeline_paths.queries_path, args.appendix),
+            filtered_queries_path=append_to_output_path(pipeline_paths.filtered_queries_path, args.appendix),
+            hard_negatives_path=append_to_output_path(pipeline_paths.hard_negatives_path, args.appendix),
+        )
+
     try:
         paths = run_selected_stages(
             stages,
             input_path=input_path,
             output_dir=output_dir,
-            downloaded_path=args.download_output,
-            filtered_path=args.filtered_output,
-            summarized_path=args.summarized_output,
-            queries_path=queries_output_path,
-            filtered_queries_path=args.filtered_queries_output,
-            hard_negatives_path=args.hard_negatives_output,
+            downloaded_path=pipeline_paths.downloaded_path,
+            filtered_path=pipeline_paths.filtered_path,
+            summarized_path=pipeline_paths.summarized_path,
+            queries_path=pipeline_paths.queries_path,
+            filtered_queries_path=pipeline_paths.filtered_queries_path,
+            hard_negatives_path=pipeline_paths.hard_negatives_path,
             venue=args.venue,
             year=args.year,
             download_limit=args.download_limit,

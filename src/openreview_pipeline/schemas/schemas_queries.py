@@ -1,12 +1,40 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Any
 
 
 class RetrievalQuery(BaseModel):
     query_text: str
     is_multimodal: bool = False
     source_view: str
+    related_bullet_indices: List[int] = Field(default_factory=list)
+    related_bullet_justification: Optional[str] = None
+
+    @field_validator("related_bullet_indices", mode="before")
+    @classmethod
+    def normalize_related_bullet_indices(cls, value: Any) -> List[int]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            value = [value]
+
+        normalized: List[int] = []
+        for item in value:
+            try:
+                index = int(item)
+            except (TypeError, ValueError):
+                continue
+            if index > 0 and index not in normalized:
+                normalized.append(index)
+        return normalized
+
+    @field_validator("related_bullet_justification", mode="before")
+    @classmethod
+    def normalize_related_bullet_justification(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
 
 
 class GeneratedQueriesForPaper(BaseModel):

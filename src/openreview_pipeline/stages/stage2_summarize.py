@@ -1,6 +1,10 @@
 import logging
+import json
+import re
 from pathlib import Path
 from typing import Optional, List
+
+from tqdm.auto import tqdm
 
 from openreview_pipeline.llm import LLMBackend
 from openreview_pipeline.schemas.schemas_filter import FilteredPapersDataset
@@ -89,6 +93,25 @@ class Summarizer:
 
         return "\n".join(parts)
 
+    def _view_key(self, view_name: str) -> str:
+        return view_name.replace("/", "_").replace(" ", "_")
+
+    def _parse_view_output(self, view_name: str, value) -> ViewBulletPoints:
+        summary_text = None
+        bullet_points = []
+
+        if isinstance(value, dict):
+            summary_text = value.get("summary")
+            bullet_points = value.get("bullet_points", [])
+        elif isinstance(value, list):
+            bullet_points = value
+
+        return ViewBulletPoints(
+            view_name=view_name,
+            summary=summary_text,
+            bullet_points=bullet_points,
+        )
+
     def summarize_paper(self, paper_id: str, paper_title: str, paper_abstract: str, paper_meta) -> PaperSummary:
         logger.debug(f"Summarizing paper: {paper_id}")
 
@@ -103,39 +126,38 @@ class Summarizer:
         response = self.llm.generate(prompt)
 
         views = []
-        raw_summary = ""
 
         try:
-            import json
-            import re
-
             json_match = re.search(r'\{[\s\S]*\}', response)
             if json_match:
                 json_str = json_match.group()
                 data = json.loads(json_str)
 
                 for view_name in self.views:
-                    bullet_points = data.get(view_name.replace("/", "_").replace(" ", "_"), [])
-                    if isinstance(bullet_points, list):
-                        views.append(ViewBulletPoints(view_name=view_name, bullet_points=bullet_points))
-                    else:
-                        bps = data.get(view_name, [])
-                        if isinstance(bps, list):
-                            views.append(ViewBulletPoints(view_name=view_name, bullet_points=bps))
-
-                raw_summary = data.get("summary", "")
+                    key = self._view_key(view_name)
+                    views.append(
+                        self._parse_view_output(
+                            view_name=view_name,
+                            value=data.get(key, data.get(view_name)),
+                        )
+                    )
         except Exception as e:
             logger.warning(f"Failed to parse LLM response as JSON: {e}")
             logger.debug(f"Raw response: {response[:500]}")
 
         if not views:
-            views.append(ViewBulletPoints(view_name="general", bullet_points=[response[:500]]))
+            views.append(
+                ViewBulletPoints(
+                    view_name="general",
+                    summary=None,
+                    bullet_points=[response[:500]],
+                )
+            )
 
         return PaperSummary(
             paper_id=paper_id,
             paper_title=paper_title,
             views=views,
-            raw_summary=raw_summary,
         )
 
     def apply(self, dataset: FilteredPapersDataset) -> SummarizedPapersDataset:
@@ -145,8 +167,14 @@ class Summarizer:
         logger.info(f"Summarizing {min(limit, total)} of {total} passed papers (llm_limit={self.llm_limit})")
 
         summaries = []
-        for i, result in enumerate(passed_papers[:limit]):
-
+        progress = tqdm(
+            passed_papers[:limit],
+            total=min(limit, total),
+            desc="Summarizing papers",
+            unit="paper",
+            dynamic_ncols=True,
+        )
+        for result in progress:
             paper = result.paper.paper
             summary = self.summarize_paper(
                 paper_id=paper.id,
@@ -155,6 +183,8 @@ class Summarizer:
                 paper_meta=result.paper,
             )
             summaries.append(summary)
+            progress.set_postfix_str(f"done={len(summaries)}")
+        progress.close()
 
         return SummarizedPapersDataset(summaries=summaries, total_papers=len(summaries))
 
