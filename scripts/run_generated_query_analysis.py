@@ -248,6 +248,8 @@ def main() -> int:
         new_analysis=generated_analysis,
         generated_queries_path=generated_queries_path,
         generated_analysis_path=analysis_path,
+        human_analysis_path=human_analysis_path,
+        original_analysis_path=original_analysis_path,
         report_title=f"Comparison Report: {dataset_name}",
     )
     report_path = output_dir / "comparison_report.md"

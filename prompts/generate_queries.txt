@@ -22,7 +22,7 @@ Use the following template families:
 ### 2. Construct constraints Requirement:
 - Discriminative Bullet Points Selection: the most distinctive constraint from the view as the main retrieval hook,  **one memorable retrieval hook** from the view, such as distinctive method or model design, an unusual task formulation, a dataset or benchmark characteristic, a striking empirical finding,a limitation, failure mode, or scope restriction.
 - Natural Phrasing: Use natural modifiers such as: `for`,`with`, `using`, `without`,  `on`, `about`
-- Best 2 constraints per query: If possible, include a second constraint that naturally fits with the first, but do not force it if it feels awkward or too specific.
+- Constraint Budget (Hard Rule): A query may contain at most **2 semantic constraints**. Count a semantic constraint as one distinct retrieval-narrowing condition
 
 ### 3. Prefer conceptual paraphrases over rare exact terms/statics
 Prefer the kind of wording a person would remember, or topics a researcher would explore not the exact internal terminology / statics from bullet points.
@@ -62,7 +62,7 @@ Output a JSON object with views as keys:
   "contribution": [
     {{
       "query_text": "generated query text",
-      "is_multimodal": true/false (whether the query is inspired by a specific figure/table/equation/... non-textual element in the paper),
+      "is_multimodal": true/false (whether the query is inspired by a specific figure/table/equation/... non-textual element in the paper. Be RIGOROUS!),
       "related_bullet_indices": [list of bullet index this query is based on(e.g. [1, 3])],
       "related_bullet_justification": "1-2 sentences justifying whether the query relates to the bullet(s) and why it is a good retrieval hook"
     }},

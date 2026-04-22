@@ -187,6 +187,8 @@ def build_report(
     new_analysis: Dict[str, Any],
     generated_queries_path: Path,
     generated_analysis_path: Path,
+    human_analysis_path: Path,
+    original_analysis_path: Path,
     report_title: str,
 ) -> str:
     human = get_nested(human_analysis, ("metrics", "combined"), {})
@@ -293,8 +295,8 @@ def build_report(
     lines.append("")
     lines.append(f"- Generated queries: `{generated_queries_path}`")
     lines.append(f"- Generated analysis: `{generated_analysis_path}`")
-    lines.append("- Human reference: `outputs/query_analysis/human_written_style_analysis.json`")
-    lines.append("- Original synthetic reference: `outputs/query_analysis/synthetic_single_analysis.json`")
+    lines.append(f"- Human reference: `{human_analysis_path}`")
+    lines.append(f"- Original synthetic reference: `{original_analysis_path}`")
     lines.append("")
     lines.append("## Executive Summary")
     lines.append("")
