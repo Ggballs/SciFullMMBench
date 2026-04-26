@@ -81,7 +81,8 @@ config.yaml
 
 # Data and output directories
 data/
-outputs/
+outputs/*
+!outputs/display_final_pipeline_gradio.py
 test_data/
 
 # Logs
