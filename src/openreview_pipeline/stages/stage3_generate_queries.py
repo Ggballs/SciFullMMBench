@@ -36,15 +36,30 @@ class QueryGenerator:
             parts.append("")
         return "\n".join(parts)
 
-    def _extract_related_bullet_indices(self, query_data: dict) -> list[int]:
-        return (
-            query_data.get("related_bullet_indices")
-            or query_data.get("related_bulletpoint_indices")
-            or query_data.get("related_bullet_point_indices")
-            or query_data.get("bullet_indices")
-            or query_data.get("bullet_point_indices")
-            or []
-        )
+    def _extract_related_bullet_indice(self, query_data: dict) -> Optional[int]:
+        candidates = [
+            query_data.get("related_bullet_indice"),
+            query_data.get("related_bullet_indices"),
+            query_data.get("related_bulletpoint_indices"),
+            query_data.get("related_bullet_point_indices"),
+            query_data.get("bullet_indice"),
+            query_data.get("bullet_indices"),
+            query_data.get("bullet_point_indices"),
+        ]
+
+        for value in candidates:
+            if value is None:
+                continue
+            if not isinstance(value, list):
+                value = [value]
+            for item in value:
+                try:
+                    index = int(item)
+                except (TypeError, ValueError):
+                    continue
+                if index > 0:
+                    return index
+        return None
 
     def _extract_related_bullet_justification(self, query_data: dict) -> Optional[str]:
         return (
@@ -83,12 +98,12 @@ class QueryGenerator:
                             if isinstance(q, dict):
                                 query_text = q.get("query_text", q.get("Q", ""))
                                 is_multimodal = q.get("is_multimodal", "(multimodal)" in query_text)
-                                related_bullet_indices = self._extract_related_bullet_indices(q)
+                                related_bullet_indice = self._extract_related_bullet_indice(q)
                                 related_bullet_justification = self._extract_related_bullet_justification(q)
                             else:
                                 query_text = str(q)
                                 is_multimodal = "(multimodal)" in query_text
-                                related_bullet_indices = []
+                                related_bullet_indice = None
                                 related_bullet_justification = None
 
                             query_text = query_text.replace("(multimodal)", "").strip()
@@ -97,7 +112,7 @@ class QueryGenerator:
                                     query_text=query_text,
                                     is_multimodal=is_multimodal,
                                     source_view=view_name,
-                                    related_bullet_indices=related_bullet_indices,
+                                    related_bullet_indice=related_bullet_indice,
                                     related_bullet_justification=related_bullet_justification,
                                 ))
         except Exception as e:
@@ -109,7 +124,7 @@ class QueryGenerator:
                 query_text=response[:200],
                 is_multimodal=False,
                 source_view="general",
-                related_bullet_indices=[],
+                related_bullet_indice=None,
                 related_bullet_justification=None,
             ))
 

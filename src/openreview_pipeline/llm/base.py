@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import argparse
+import json
 import yaml
 
 
@@ -15,6 +16,9 @@ class LLMBackend(ABC):
     def generate_json(self, prompt: str, **kwargs) -> dict[str, Any]:
         raise NotImplementedError
 
+    def generate_with_pdf_url(self, prompt: str, pdf_url: str, **kwargs) -> str:
+        raise NotImplementedError
+
 
 class MockLLMBackend(LLMBackend):
     def __init__(self, response: str = "mock response"):
@@ -25,6 +29,9 @@ class MockLLMBackend(LLMBackend):
 
     def generate_json(self, prompt: str, **kwargs) -> dict[str, Any]:
         return {"result": self._response}
+
+    def generate_with_pdf_url(self, prompt: str, pdf_url: str, **kwargs) -> str:
+        return self._response
 
 
 class OpenAICompatibleBackend(LLMBackend):
@@ -75,7 +82,7 @@ class OpenAICompatibleBackend(LLMBackend):
             **self._chat_completion_kwargs(),
         )
 
-        pretty_print_response(response)
+        # pretty_print_response(response)
         return response.choices[0].message.content
 
     def response(self, prompt: str, **kwargs) -> Any:
@@ -87,7 +94,6 @@ class OpenAICompatibleBackend(LLMBackend):
         return response
 
     def generate_json(self, prompt: str, **kwargs) -> dict[str, Any]:
-        import json
         import re
         response = self._client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
@@ -99,8 +105,74 @@ class OpenAICompatibleBackend(LLMBackend):
             return json.loads(json_match.group())
         return {"raw": content}
 
+    def _extract_response_text(self, response: Any) -> str:
+        output_text = getattr(response, "output_text", None)
+        if output_text:
+            return output_text
 
-def _load_llm_config(config_path: Path) -> dict[str, Any]:
+        try:
+            response_dict = response.to_dict()
+        except Exception:
+            response_dict = getattr(response, "__dict__", {})
+
+        if isinstance(response_dict, dict):
+            output = response_dict.get("output") or []
+            for item in output:
+                if not isinstance(item, dict):
+                    continue
+                content = item.get("content") or []
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "output_text":
+                        text = block.get("text")
+                        if text:
+                            return str(text)
+        return ""
+
+    def build_pdf_response_payload(self, prompt: str, file_input: dict[str, Any]) -> dict[str, Any]:
+        payload = {
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": prompt},
+                        file_input,
+                    ],
+                }
+            ],
+        }
+        payload.update(self._responses_kwargs())
+        return payload
+
+    def generate_with_pdf_url(
+        self,
+        prompt: str,
+        pdf_url: str,
+        *,
+        debug: bool = False,
+        **kwargs,
+    ) -> str:
+        payload = self.build_pdf_response_payload(
+            prompt,
+            {
+                "type": "input_file",
+                "file_url": pdf_url,
+            },
+        )
+
+        if debug:
+            print("responses_payload:")
+            print(json.dumps(payload, indent=2, default=str))
+
+        response = self._client.responses.create(**payload)
+
+        if debug:
+            print("responses_raw:")
+            pretty_print_response(response)
+
+        return self._extract_response_text(response)
+
+
+def load_llm_config(config_path: Path) -> dict[str, Any]:
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f) or {}
 
@@ -114,6 +186,25 @@ def _load_llm_config(config_path: Path) -> dict[str, Any]:
         raise ValueError(f"Missing llm config keys: {', '.join(missing)}")
 
     return llm_config
+
+
+def create_openai_compatible_backend(
+    *,
+    base_url: str,
+    api_token: str,
+    model: str,
+    max_tokens: int = 4096,
+    temperature: float = 0.0,
+    seed: Optional[int] = None,
+) -> OpenAICompatibleBackend:
+    return OpenAICompatibleBackend(
+        base_url=base_url,
+        api_token=api_token,
+        model=model,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        seed=seed,
+    )
 
 
 def main() -> None:
@@ -133,10 +224,20 @@ def main() -> None:
         action="store_true",
         help="Call generate_json instead of generate",
     )
+    parser.add_argument(
+        "--debug-pdf",
+        action="store_true",
+        help="Print uploaded file metadata, request payload, and raw response for PDF tests",
+    )
+    parser.add_argument(
+        "--pdf-url",
+        default=None,
+        help="Optional remote PDF URL for testing direct file_url input through the Responses API",
+    )
     args = parser.parse_args()
 
     config_path = Path(args.config).resolve()
-    llm_config = _load_llm_config(config_path)
+    llm_config = load_llm_config(config_path)
 
     backend = OpenAICompatibleBackend(
         base_url=llm_config["base_url"],
@@ -148,7 +249,13 @@ def main() -> None:
     print(f"model: {llm_config['model']}")
     print(f"base_url: {llm_config['base_url']}")
 
-    if args.json:
+    if args.pdf_url:
+        result = backend.generate_with_pdf_url(
+            args.prompt,
+            args.pdf_url,
+            debug=args.debug_pdf,
+        )
+    elif args.json:
         result = backend.generate_json(args.prompt)
     # elif backend.model.startswith("gpt-5.4"):
     #     result = backend.completion(args.prompt)

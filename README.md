@@ -8,7 +8,7 @@ A 3-stage OpenReview processing pipeline for filtering, summarizing, and generat
 - **Stage 1**: Rule-based filtering of papers based on quality criteria
 - **Stage 2**: LLM-based bullet-point summarization from multiple views
 - **Stage 3**: LLM-based retrieval query generation
-- **Stage 4**: LLM-based query quality filtering
+- **Stage 4**: LLM-based query quality filtering, with optional style-analysis and retrieval-feature-analysis services
 
 ## Installation
 
@@ -24,7 +24,9 @@ pip install -e .
 ├── prompts/
 │   ├── summarize_by_view.txt
 │   ├── generate_queries.txt
-│   └── filter_queries.txt
+│   └── query_analysis/
+│       ├── retrieval_effectiveness.txt
+│       └── style_analysis.txt
 ├── src/openreview_pipeline/
 │   ├── __init__.py
 │   ├── cli.py
@@ -67,6 +69,9 @@ openreview-pipeline generate-queries --input data/02_summarized.json --output da
 
 # Filter queries
 openreview-pipeline filter-queries --input data/03_queries.json --output data/04_filtered_queries.json --llm mock --threshold 0.5
+
+# Filter queries and also emit stage-4 analysis artifacts
+openreview-pipeline filter-queries --input data/03_queries.json --output data/04_filtered_queries.json --llm mock --threshold 0.5 --stage4-services style_analysis,retrieval_feature_analysis
 
 # Run all stages
 openreview-pipeline run-all --output-dir data --llm mock

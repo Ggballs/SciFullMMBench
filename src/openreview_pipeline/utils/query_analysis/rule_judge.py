@@ -1,30 +1,11 @@
+from __future__ import annotations
+
 import re
 from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-STOPWORDS = {
-    "a", "an", "the", "and", "or", "but", "is", "are", "was", "were", "be", "been",
-    "being", "have", "has", "had", "do", "does", "did", "will", "would", "could",
-    "should", "may", "might", "must", "shall", "can", "need", "dare", "ought",
-    "used", "to", "of", "in", "for", "on", "with", "at", "by", "from", "as",
-    "into", "through", "during", "before", "after", "above", "below", "between",
-    "under", "again", "further", "then", "once", "here", "there", "when", "where",
-    "why", "how", "all", "each", "few", "more", "most", "other", "some", "such",
-    "no", "nor", "not", "only", "own", "same", "so", "than", "too", "very",
-    "just", "don", "now", "i", "me", "my", "myself", "we", "our", "ours",
-    "ourselves", "you", "your", "yours", "yourself", "yourselves", "he", "him",
-    "his", "himself", "she", "her", "hers", "herself", "it", "its", "itself",
-    "they", "them", "their", "theirs", "themselves", "what", "which", "who", "whom",
-    "this", "that", "these", "those", "am", "about", "against", "because", "until",
-    "while", "if", "both", "up", "down", "out", "off", "over",
-}
-
-CONNECTOR_WORDS = {
-    "for", "with", "without", "using", "based", "through", "between",
-    "among", "against", "towards", "from", "into", "during", "before", "after",
-}
 
 QUESTION_TEMPLATES = [
     (r"^is there (a |any )?(paper|work|method|model|dataset|tool|study|approach|technique|system|decoder-|knowledge graph|vision-language|backdoor|multimodal|audio|video|numerical reasoning)?( that | which | )?", "Is there a paper/method that/which..."),
@@ -78,153 +59,88 @@ QUESTION_TEMPLATES = [
     (r"^[A-Z][a-z]+( [A-Z][a-z]+)+", "Paper title/name format"),
 ]
 
+
 def detect_question_template(query: str) -> Tuple[Optional[str], str]:
-    """Detect the question template of a query.
-
-    Args:
-        query: Query string
-
-    Returns:
-        Tuple of (template_name, matched_pattern)
-    """
     query_lower = query.lower().strip()
-
     for pattern_regex, template_name in QUESTION_TEMPLATES:
         if re.match(pattern_regex, query_lower):
             return template_name, pattern_regex
-
     return None, "other"
 
 
 def compute_length_stats(queries: List[str]) -> Dict[str, Any]:
-    """Compute length statistics for queries.
-
-    Args:
-        queries: List of query strings
-
-    Returns:
-        Dictionary with length statistics
-    """
     if not queries:
-        return {}
-
+        return {"char_length": {}, "token_length": {}, "total_queries": 0}
     char_lengths = [len(q) for q in queries]
     word_counts = [len(q.split()) for q in queries]
-
     return {
-        "char_length": {
-            "mean": float(np.mean(char_lengths)),
-            "std": float(np.std(char_lengths)),
-            "min": int(np.min(char_lengths)),
-            "max": int(np.max(char_lengths)),
-            "median": float(np.median(char_lengths)),
-            "p25": float(np.percentile(char_lengths, 25)),
-            "p75": float(np.percentile(char_lengths, 75)),
-        },
-        "token_length": {
-            "mean": float(np.mean(word_counts)),
-            "std": float(np.std(word_counts)),
-            "min": int(np.min(word_counts)),
-            "max": int(np.max(word_counts)),
-            "median": float(np.median(word_counts)),
-            "p25": float(np.percentile(word_counts, 25)),
-            "p75": float(np.percentile(word_counts, 75)),
-        },
+        "char_length": {"mean": float(np.mean(char_lengths)), "std": float(np.std(char_lengths)), "min": int(np.min(char_lengths)), "max": int(np.max(char_lengths)), "median": float(np.median(char_lengths)), "p25": float(np.percentile(char_lengths, 25)), "p75": float(np.percentile(char_lengths, 75))},
+        "token_length": {"mean": float(np.mean(word_counts)), "std": float(np.std(word_counts)), "min": int(np.min(word_counts)), "max": int(np.max(word_counts)), "median": float(np.median(word_counts)), "p25": float(np.percentile(word_counts, 25)), "p75": float(np.percentile(word_counts, 75))},
         "total_queries": len(queries),
     }
+
+
 def compute_question_template_distribution(queries: List[str]) -> Dict[str, Any]:
-    """Compute question template distribution.
-
-    Args:
-        queries: List of query strings
-
-    Returns:
-        Dictionary with template statistics
-    """
     if not queries:
-        return {}
-
-    template_counts = Counter()
-    template_examples = {}
+        return {"template_distribution": {}, "template_ratios": {}, "unmatched_count": 0, "unmatched_ratio": 0.0, "template_examples": {}, "total_templates": 0}
+    template_counts: Counter[str] = Counter()
+    template_examples: Dict[str, List[str]] = {}
     unmatched_count = 0
-
-    for q in queries:
-        template_name, _ = detect_question_template(q)
-        if template_name:
-            template_counts[template_name] += 1
-            if template_name not in template_examples:
-                template_examples[template_name] = []
-            if len(template_examples[template_name]) < 3:
-                template_examples[template_name].append(q)
-        else:
+    for query in queries:
+        template_name, _ = detect_question_template(query)
+        if template_name is None:
             unmatched_count += 1
-
+            continue
+        template_counts[template_name] += 1
+        template_examples.setdefault(template_name, [])
+        if len(template_examples[template_name]) < 3:
+            template_examples[template_name].append(query)
     total = len(queries)
-
     return {
         "template_distribution": dict(template_counts),
-        "template_ratios": {
-            t: c / total for t, c in template_counts.items()
-        },
+        "template_ratios": {name: count / total for name, count in template_counts.items()},
         "unmatched_count": unmatched_count,
-        "unmatched_ratio": unmatched_count / total if total > 0 else 0,
+        "unmatched_ratio": unmatched_count / total if total else 0.0,
         "template_examples": template_examples,
         "total_templates": len(template_counts),
     }
-def compute_all_metrics(queries: List[str]) -> Dict[str, Any]:
-    """Compute local non-LLM metrics.
 
-    Args:
-        queries: List of query strings
 
-    Returns:
-        Dictionary with computed local metrics
-    """
+def extract_representative_examples(queries: List[str], n: int = 15, diversity: bool = True) -> List[Dict[str, str]]:
+    if not queries:
+        return []
+    examples = [{"query": query, "template": detect_question_template(query)[0] or "other"} for query in queries]
+    if not diversity:
+        return examples[:n]
+    buckets: Dict[str, List[Dict[str, str]]] = {}
+    for example in examples:
+        buckets.setdefault(example["template"], []).append(example)
+    result: List[Dict[str, str]] = []
+    per_template = max(1, n // len(buckets))
+    for bucket in buckets.values():
+        result.extend(bucket[:per_template])
+    return result[:n]
+
+
+def analyze_query(query: str) -> Dict[str, Any]:
+    template_name, pattern = detect_question_template(query)
+    return {"index": 1, "query": query, "char_length": len(query), "token_length": len(query.split()), "template": template_name or "other", "matched_pattern": pattern, "matched_template": template_name is not None}
+
+
+def analyze_queries(queries: List[str]) -> Dict[str, Any]:
+    per_query = []
+    for index, query in enumerate(queries, start=1):
+        row = analyze_query(query)
+        row["index"] = index
+        per_query.append(row)
     return {
+        "per_query": per_query,
         "length_stats": compute_length_stats(queries),
         "question_templates": compute_question_template_distribution(queries),
+        "representative_examples": extract_representative_examples(queries, n=20, diversity=True),
     }
 
 
-def extract_representative_examples(
-    queries: List[str],
-    n: int = 15,
-    diversity: bool = True
-) -> List[Dict[str, str]]:
-    """Extract representative examples with template labels.
-
-    Args:
-        queries: List of query strings
-        n: Number of examples to return
-        diversity: Whether to prefer diverse examples
-
-    Returns:
-        List of dicts with 'query' and 'template' keys
-    """
-    if not queries:
-        return []
-
-    examples = []
-    for q in queries:
-        template_name, _ = detect_question_template(q)
-        examples.append({
-            "query": q,
-            "template": template_name or "other"
-        })
-
-    if not diversity:
-        return examples[:n]
-
-    template_buckets = {}
-    for ex in examples:
-        t = ex["template"]
-        if t not in template_buckets:
-            template_buckets[t] = []
-        template_buckets[t].append(ex)
-
-    result = []
-    per_template = max(1, n // len(template_buckets))
-    for template, bucket in template_buckets.items():
-        result.extend(bucket[:per_template])
-
-    return result[:n]
+def compute_all_metrics(queries: List[str]) -> Dict[str, Any]:
+    results = analyze_queries(queries)
+    return {"length_stats": results["length_stats"], "question_templates": results["question_templates"]}

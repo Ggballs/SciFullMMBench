@@ -1,0 +1,12 @@
+Given the following retrieval query for a scientific paper, extract 3-5 key search keywords that could be used to find related papers on Google Scholar or arXiv.
+
+Query: {{query}}
+
+Extract the most important technical keywords, methods, or topics that would help find related but DISTINCT papers (not the same paper). Focus on:
+- Specific methods or techniques mentioned
+- Domain-specific terminology
+- Task or problem types
+- Dataset names if mentioned
+
+Output a JSON array of strings (keywords only, no explanation):
+["keyword1", "keyword2", "keyword3"]

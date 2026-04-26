@@ -12,10 +12,11 @@ from openreview_pipeline.llm import MockLLMBackend, OpenAICompatibleBackend
 from openreview_pipeline.stages import (
     DatasetDownloader,
     HardNegativeMiner,
-    QueryFilter,
     QueryGenerator,
     RuleBasedFilter,
     Summarizer,
+    build_google_scholar_client,
+    run as run_stage5_query_analysis,
 )
 
 logger = logging.getLogger(__name__)
@@ -28,8 +29,8 @@ LOGICAL_STAGE_ORDER = [
     "filter",
     "summarize",
     "generate_queries",
-    "filter_queries",
     "hard_negative_mining",
+    "query_analysis",
 ]
 
 STAGE_ALIASES = {
@@ -42,12 +43,12 @@ STAGE_ALIASES = {
     "3": "generate_queries",
     "generate_queries": "generate_queries",
     "generate-queries": "generate_queries",
-    "4": "filter_queries",
-    "filter_queries": "filter_queries",
-    "filter-queries": "filter_queries",
-    "5": "hard_negative_mining",
+    "4": "hard_negative_mining",
     "hard_negative_mining": "hard_negative_mining",
     "hard-negative-mining": "hard_negative_mining",
+    "5": "query_analysis",
+    "query_analysis": "query_analysis",
+    "query-analysis": "query_analysis",
 }
 
 DEFAULT_STAGE_FILENAMES = {
@@ -55,8 +56,7 @@ DEFAULT_STAGE_FILENAMES = {
     "filter": "01_filtered.json",
     "summarize": "02_summarized.json",
     "generate_queries": "03_queries.json",
-    "filter_queries": "04_filtered_queries.json",
-    "hard_negative_mining": "05_hard_negatives.json",
+    "hard_negative_mining": "04_hard_negatives.json",
 }
 
 
@@ -67,7 +67,7 @@ class PipelinePaths:
     filtered_path: Path
     summarized_path: Path
     queries_path: Path
-    filtered_queries_path: Path
+    query_analysis_output_dir: Path
     hard_negatives_path: Path
 
 
@@ -80,8 +80,8 @@ def _normalize_path(path: Optional[Path | str]) -> Optional[Path]:
 def load_config(config_path: Optional[Path | str] = None) -> dict:
     resolved_config_path = _normalize_path(config_path) or DEFAULT_CONFIG_PATH
     if resolved_config_path.exists():
-        with open(resolved_config_path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
+        with open(resolved_config_path, "r", encoding="utf-8") as handle:
+            return yaml.safe_load(handle) or {}
     return {}
 
 
@@ -98,6 +98,34 @@ def resolve_llm_settings(
         "base_url": base_url or llm_config.get("base_url", ""),
         "api_token": api_token or llm_config.get("api_token", ""),
         "model": model or llm_config.get("model", "gpt-4o-mini"),
+    }
+
+
+def resolve_search_settings(
+    config_path: Optional[Path | str] = None,
+    *,
+    provider: Optional[str] = None,
+    serpapi_api_key: Optional[str] = None,
+    max_results: Optional[int] = None,
+    language: Optional[str] = None,
+) -> dict[str, object]:
+    config = load_config(config_path)
+    search_config = config.get("search", {})
+    if not isinstance(search_config, dict):
+        search_config = {}
+
+    resolved_provider = provider or search_config.get("provider")
+    if not resolved_provider:
+        resolved_provider = "serpapi" if (serpapi_api_key or search_config.get("serpapi_api_key")) else "scholarly"
+
+    resolved_max_results = max_results or search_config.get("max_results", 10)
+    resolved_language = language or search_config.get("language", "en")
+
+    return {
+        "provider": resolved_provider,
+        "serpapi_api_key": serpapi_api_key or search_config.get("serpapi_api_key", ""),
+        "max_results": int(resolved_max_results),
+        "language": str(resolved_language),
     }
 
 
@@ -192,7 +220,7 @@ def resolve_pipeline_paths(
     filtered_path: Optional[Path | str] = None,
     summarized_path: Optional[Path | str] = None,
     queries_path: Optional[Path | str] = None,
-    filtered_queries_path: Optional[Path | str] = None,
+    query_analysis_output_dir: Optional[Path | str] = None,
     hard_negatives_path: Optional[Path | str] = None,
 ) -> PipelinePaths:
     normalized_overrides = [
@@ -200,7 +228,7 @@ def resolve_pipeline_paths(
         _normalize_path(filtered_path),
         _normalize_path(summarized_path),
         _normalize_path(queries_path),
-        _normalize_path(filtered_queries_path),
+        _normalize_path(query_analysis_output_dir),
         _normalize_path(hard_negatives_path),
     ]
     base_dir = _normalize_path(output_dir)
@@ -219,7 +247,7 @@ def resolve_pipeline_paths(
         filtered_path=stage_path(filtered_path, "filter"),
         summarized_path=stage_path(summarized_path, "summarize"),
         queries_path=stage_path(queries_path, "generate_queries"),
-        filtered_queries_path=stage_path(filtered_queries_path, "filter_queries"),
+        query_analysis_output_dir=_normalize_path(query_analysis_output_dir) or (base_dir / "05_query_analysis"),
         hard_negatives_path=stage_path(hard_negatives_path, "hard_negative_mining"),
     )
 
@@ -247,6 +275,7 @@ def run_download_stage(
     password: Optional[str] = None,
     token: Optional[str] = None,
     limit: Optional[int] = None,
+    forum_id: Optional[str] = None,
 ) -> Path:
     output_path = Path(output_path).expanduser().resolve()
     _ensure_parent(output_path)
@@ -273,7 +302,7 @@ def run_download_stage(
     else:
         logger.warning("No OpenReview credentials configured. Using stub download data.")
 
-    downloader.run(output_path, limit=limit)
+    downloader.run(output_path, limit=limit, forum_id=forum_id)
     return output_path
 
 
@@ -347,32 +376,6 @@ def run_generate_queries_stage(
     return output_path
 
 
-def run_filter_queries_stage(
-    *,
-    input_path: Path | str,
-    output_path: Path | str,
-    config_path: Optional[Path | str] = None,
-    base_url: Optional[str] = None,
-    api_token: Optional[str] = None,
-    model: Optional[str] = None,
-    threshold: Optional[float] = None,
-    llm_backend=None,
-) -> Path:
-    input_path = _require_input("filter_queries", _normalize_path(input_path))
-    output_path = Path(output_path).expanduser().resolve()
-    _ensure_parent(output_path)
-
-    llm_backend = llm_backend or build_llm_backend(
-        config_path,
-        base_url=base_url,
-        api_token=api_token,
-        model=model,
-    )
-    query_filter = QueryFilter(llm=llm_backend, threshold=threshold)
-    query_filter.run(input_path, output_path)
-    return output_path
-
-
 def run_hard_negative_mining_stage(
     *,
     input_path: Path | str,
@@ -381,6 +384,10 @@ def run_hard_negative_mining_stage(
     base_url: Optional[str] = None,
     api_token: Optional[str] = None,
     model: Optional[str] = None,
+    scholar_provider: Optional[str] = None,
+    serpapi_api_key: Optional[str] = None,
+    scholar_max_results: Optional[int] = None,
+    scholar_language: Optional[str] = None,
     llm_backend=None,
 ) -> Path:
     input_path = _require_input("hard_negative_mining", _normalize_path(input_path))
@@ -393,9 +400,67 @@ def run_hard_negative_mining_stage(
         api_token=api_token,
         model=model,
     )
-    miner = HardNegativeMiner(llm=llm_backend)
+    search_settings = resolve_search_settings(
+        config_path,
+        provider=scholar_provider,
+        serpapi_api_key=serpapi_api_key,
+        max_results=scholar_max_results,
+        language=scholar_language,
+    )
+    scholar_client = build_google_scholar_client(
+        str(search_settings["provider"]),
+        serpapi_api_key=str(search_settings["serpapi_api_key"]),
+        language=str(search_settings["language"]),
+    )
+    miner = HardNegativeMiner(
+        llm=llm_backend,
+        scholar_client=scholar_client,
+        scholar_max_results=int(search_settings["max_results"]),
+    )
     miner.run(input_path, output_path)
     return output_path
+
+
+def run_query_analysis_stage(
+    *,
+    summarized_path: Path | str,
+    queries_path: Path | str,
+    output_dir: Path | str,
+    config_path: Optional[Path | str] = None,
+    downloaded_path: Optional[Path | str] = None,
+    hard_negatives_path: Optional[Path | str] = None,
+    base_url: Optional[str] = None,
+    api_token: Optional[str] = None,
+    model: Optional[str] = None,
+    llm_batch_size: int = 25,
+    llm_judge_mode: str = "batch",
+    llm_max_concurrency: int = 1,
+    llm_backend=None,
+) -> Path:
+    summarized_path = _require_input("query_analysis", _normalize_path(summarized_path))
+    queries_path = _require_input("query_analysis", _normalize_path(queries_path))
+    output_dir = Path(output_dir).expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    llm_backend = llm_backend or build_llm_backend(
+        config_path,
+        base_url=base_url,
+        api_token=api_token,
+        model=model,
+    )
+    run_stage5_query_analysis(
+        llm=llm_backend,
+        summarized_path=summarized_path,
+        queries_path=queries_path,
+        output_dir=output_dir,
+        config_path=_normalize_path(config_path) or DEFAULT_CONFIG_PATH,
+        downloaded_path=_normalize_path(downloaded_path),
+        hard_negatives_path=_normalize_path(hard_negatives_path),
+        llm_batch_size=llm_batch_size,
+        llm_judge_mode=llm_judge_mode,
+        llm_max_concurrency=llm_max_concurrency,
+    )
+    return output_dir
 
 
 def run_selected_stages(
@@ -407,10 +472,11 @@ def run_selected_stages(
     filtered_path: Optional[Path | str] = None,
     summarized_path: Optional[Path | str] = None,
     queries_path: Optional[Path | str] = None,
-    filtered_queries_path: Optional[Path | str] = None,
+    query_analysis_output_dir: Optional[Path | str] = None,
     hard_negatives_path: Optional[Path | str] = None,
     venue: str = "ICLR",
     year: Optional[int] = None,
+    forum_id: Optional[str] = None,
     download_limit: Optional[int] = None,
     filter_limit: Optional[int] = None,
     llm_limit: Optional[int] = None,
@@ -422,7 +488,13 @@ def run_selected_stages(
     username: Optional[str] = None,
     password: Optional[str] = None,
     token: Optional[str] = None,
-    threshold: Optional[float] = None,
+    scholar_provider: Optional[str] = None,
+    serpapi_api_key: Optional[str] = None,
+    scholar_max_results: Optional[int] = None,
+    scholar_language: Optional[str] = None,
+    llm_batch_size: int = 25,
+    llm_judge_mode: str = "batch",
+    llm_max_concurrency: int = 1,
 ) -> PipelinePaths:
     stages = parse_stage_spec(stage_spec)
     current_input = _normalize_path(input_path)
@@ -437,12 +509,12 @@ def run_selected_stages(
         filtered_path=filtered_path,
         summarized_path=summarized_path,
         queries_path=queries_path,
-        filtered_queries_path=filtered_queries_path,
+        query_analysis_output_dir=query_analysis_output_dir,
         hard_negatives_path=hard_negatives_path,
     )
 
     needs_llm = any(
-        stage in {"summarize", "generate_queries", "filter_queries", "hard_negative_mining"}
+        stage in {"summarize", "generate_queries", "hard_negative_mining", "query_analysis"}
         for stage in stages
     )
     llm_backend = None
@@ -453,6 +525,11 @@ def run_selected_stages(
             api_token=api_token,
             model=model,
         )
+
+    downloaded_source = paths.downloaded_path if paths.downloaded_path.is_file() else None
+    filtered_source = paths.filtered_path if paths.filtered_path.is_file() else None
+    summarized_source = paths.summarized_path if paths.summarized_path.is_file() else None
+    queries_source = paths.queries_path if paths.queries_path.is_file() else None
 
     for stage in stages:
         if stage == "download":
@@ -465,7 +542,9 @@ def run_selected_stages(
                 password=password,
                 token=token,
                 limit=download_limit,
+                forum_id=forum_id,
             )
+            downloaded_source = current_input
         elif stage == "filter":
             current_input = run_filter_stage(
                 input_path=_require_input(stage, current_input),
@@ -473,6 +552,7 @@ def run_selected_stages(
                 rules_config_path=rules_config_path,
                 limit=filter_limit,
             )
+            filtered_source = current_input
         elif stage == "summarize":
             current_input = run_summarize_stage(
                 input_path=_require_input(stage, current_input),
@@ -484,6 +564,7 @@ def run_selected_stages(
                 llm_limit=llm_limit,
                 llm_backend=llm_backend,
             )
+            summarized_source = current_input
         elif stage == "generate_queries":
             current_input = run_generate_queries_stage(
                 input_path=_require_input(stage, current_input),
@@ -494,26 +575,41 @@ def run_selected_stages(
                 model=model,
                 llm_backend=llm_backend,
             )
-        elif stage == "filter_queries":
-            current_input = run_filter_queries_stage(
-                input_path=_require_input(stage, current_input),
-                output_path=paths.filtered_queries_path,
-                config_path=config_path,
-                base_url=base_url,
-                api_token=api_token,
-                model=model,
-                threshold=threshold,
-                llm_backend=llm_backend,
-            )
+            queries_source = current_input
         elif stage == "hard_negative_mining":
-            current_input = run_hard_negative_mining_stage(
-                input_path=_require_input(stage, current_input),
+            query_input = _require_input(stage, queries_source or current_input or paths.queries_path)
+            run_hard_negative_mining_stage(
+                input_path=query_input,
                 output_path=paths.hard_negatives_path,
                 config_path=config_path,
                 base_url=base_url,
                 api_token=api_token,
                 model=model,
+                scholar_provider=scholar_provider,
+                serpapi_api_key=serpapi_api_key,
+                scholar_max_results=scholar_max_results,
+                scholar_language=scholar_language,
                 llm_backend=llm_backend,
             )
+            current_input = query_input
+        elif stage == "query_analysis":
+            summary_input = summarized_source or paths.summarized_path
+            query_input = queries_source or paths.queries_path
+            run_query_analysis_stage(
+                summarized_path=_require_input(stage, summary_input),
+                queries_path=_require_input(stage, query_input),
+                output_dir=paths.query_analysis_output_dir,
+                downloaded_path=downloaded_source,
+                hard_negatives_path=paths.hard_negatives_path if paths.hard_negatives_path.is_file() else None,
+                config_path=config_path,
+                base_url=base_url,
+                api_token=api_token,
+                model=model,
+                llm_batch_size=llm_batch_size,
+                llm_judge_mode=llm_judge_mode,
+                llm_max_concurrency=llm_max_concurrency,
+                llm_backend=llm_backend,
+            )
+            current_input = query_input
 
     return paths

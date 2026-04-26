@@ -1,32 +1,57 @@
-from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
-from typing import Optional, List, Any
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from .schemas_summarize import ViewBulletPoints
 
 
 class RetrievalQuery(BaseModel):
     query_text: str
     is_multimodal: bool = False
     source_view: str
-    related_bullet_indices: List[int] = Field(default_factory=list)
+    related_bullet_indice: Optional[int] = None
     related_bullet_justification: Optional[str] = None
 
-    @field_validator("related_bullet_indices", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def normalize_related_bullet_indices(cls, value: Any) -> List[int]:
+    def normalize_legacy_related_bullet_fields(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        if "related_bullet_indice" in data:
+            return data
+
+        legacy_keys = (
+            "related_bullet_indices",
+            "related_bulletpoint_indices",
+            "related_bullet_point_indices",
+            "bullet_indice",
+            "bullet_indices",
+            "bullet_point_indices",
+        )
+        for key in legacy_keys:
+            if key in data:
+                normalized = dict(data)
+                normalized["related_bullet_indice"] = data.get(key)
+                return normalized
+        return data
+
+    @field_validator("related_bullet_indice", mode="before")
+    @classmethod
+    def normalize_related_bullet_indice(cls, value: Any) -> Optional[int]:
         if value is None:
-            return []
+            return None
         if not isinstance(value, list):
             value = [value]
 
-        normalized: List[int] = []
         for item in value:
             try:
                 index = int(item)
             except (TypeError, ValueError):
                 continue
-            if index > 0 and index not in normalized:
-                normalized.append(index)
-        return normalized
+            if index > 0:
+                return index
+        return None
 
     @field_validator("related_bullet_justification", mode="before")
     @classmethod
@@ -51,27 +76,71 @@ class GeneratedQueriesDataset(BaseModel):
     generated_at: datetime = Field(default_factory=datetime.now)
 
 
-class QueryDimensions(BaseModel):
+class RetrievalEvaluation(BaseModel):
     full_paper_reliance: str = Field(description="PASS | FAIL")
-    authenticity: str = Field(description="PASS | FAIL")
-    relevance: str = Field(description="PASS | FAIL")
-    difficulty: str = Field(description="PASS | TOO_EASY | TOO_HARD")
     false_negative_risk: str = Field(description="LOW | HIGH")
+    reasoning: str = ""
 
 
-class FilteredQuery(BaseModel):
-    original_query: str
-    is_multimodal: bool = False
+class RuleBasedStyleEvaluation(BaseModel):
+    char_length: int
+    token_length: int
+    question_template: str
+    matched_pattern: str
+    matched_template: bool
+
+
+class LLMStyleEvaluation(BaseModel):
+    specificity_calibration_score: Optional[int] = None
+    specificity_calibration_rationale: str = ""
+    lexical_naturalism_score: Optional[int] = None
+    lexical_naturalism_rationale: str = ""
+    semantic_constraint_count: int = 0
+    semantic_constraint_rationale: str = ""
+
+
+class StyleEvaluation(BaseModel):
+    rule_based: RuleBasedStyleEvaluation
+    llm_based: LLMStyleEvaluation
+
+
+class QueryHardNegativeContext(BaseModel):
+    hard_negatives: List[Dict[str, Any]] = Field(default_factory=list)
+    positives: List[Dict[str, Any]] = Field(default_factory=list)
+    keywords_extracted: List[str] = Field(default_factory=list)
+    search_queries_used: List[str] = Field(default_factory=list)
+    retrieved_candidates: int = 0
+    mining_method: Optional[str] = None
+
+
+class QueryAnalysisEntry(BaseModel):
+    query_text: str
     source_view: str
-    dimensions: QueryDimensions
-    reasoning: str
-    verdict: str = Field(description="Keep | Revise | Hard Reject")
-    revised_query: Optional[str] = None
+    is_multimodal: bool = False
+    related_bullet_indice: Optional[int] = None
+    related_bullet_justification: Optional[str] = None
+    hard_negative_context: Optional[QueryHardNegativeContext] = None
+    retrieval_evaluation: RetrievalEvaluation
+    style_evaluation: StyleEvaluation
+    decision: str = Field(description="Keep | Hard Reject")
 
 
-class FilteredQueriesDataset(BaseModel):
-    results: List[FilteredQuery]
-    total_input: int
-    total_passed: int
-    total_filtered: int
-    filtered_at: datetime = Field(default_factory=datetime.now)
+class PaperQueryAnalysis(BaseModel):
+    paper_id: str
+    paper_title: str
+    abstract: Optional[str] = None
+    pdf_url: Optional[str] = None
+    openreview_url: Optional[str] = None
+    venue: Optional[str] = None
+    year: Optional[int] = None
+    authors: List[str] = Field(default_factory=list)
+    summary_views: List[ViewBulletPoints] = Field(default_factory=list)
+    queries: List[QueryAnalysisEntry] = Field(default_factory=list)
+
+
+class QueryAnalysisDataset(BaseModel):
+    papers: List[PaperQueryAnalysis]
+    total_papers: int
+    total_queries: int
+    dataset_summary: Dict[str, Any] = Field(default_factory=dict)
+    generated_at: datetime = Field(default_factory=datetime.now)

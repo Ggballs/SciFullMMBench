@@ -22,12 +22,19 @@ from .schemas_queries import (
     RetrievalQuery,
     GeneratedQueriesForPaper,
     GeneratedQueriesDataset,
-    FilteredQuery,
-    FilteredQueriesDataset,
+    RetrievalEvaluation,
+    RuleBasedStyleEvaluation,
+    LLMStyleEvaluation,
+    StyleEvaluation,
+    QueryHardNegativeContext,
+    QueryAnalysisEntry,
+    PaperQueryAnalysis,
+    QueryAnalysisDataset,
 )
 from .schemas_pipeline import (
     PipelineOutput,
     PipelinePaper,
+    PipelineQuery,
 )
 
 __all__ = [
@@ -48,8 +55,15 @@ __all__ = [
     "RetrievalQuery",
     "GeneratedQueriesForPaper",
     "GeneratedQueriesDataset",
-    "FilteredQuery",
-    "FilteredQueriesDataset",
+    "RetrievalEvaluation",
+    "RuleBasedStyleEvaluation",
+    "LLMStyleEvaluation",
+    "StyleEvaluation",
+    "QueryHardNegativeContext",
+    "QueryAnalysisEntry",
+    "PaperQueryAnalysis",
+    "QueryAnalysisDataset",
     "PipelineOutput",
     "PipelinePaper",
+    "PipelineQuery",
 ]

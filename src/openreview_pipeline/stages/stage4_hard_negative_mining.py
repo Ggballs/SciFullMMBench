@@ -1,16 +1,41 @@
+import json
+import hashlib
 import logging
-from pathlib import Path
-from typing import Optional, List
-from pydantic import BaseModel, Field
+import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from abc import ABC, abstractmethod
 from datetime import datetime
+from pathlib import Path
+from typing import Any, List, Optional, Union
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
+from pydantic import BaseModel, Field
 from tqdm.auto import tqdm
 
 from openreview_pipeline.llm import LLMBackend
-from openreview_pipeline.schemas.schemas_queries import FilteredQueriesDataset, FilteredQuery
-from openreview_pipeline.utils import load_json, save_json
+from openreview_pipeline.schemas.schemas_queries import GeneratedQueriesDataset, RetrievalQuery
+from openreview_pipeline.utils import load_json, load_prompt_template, save_json
 
 logger = logging.getLogger(__name__)
+PROMPT_DIR = Path(__file__).resolve().parents[3] / "prompts"
+
+
+class ScholarCandidatePaper(BaseModel):
+    paper_title: str
+    arxiv_id: Optional[str] = None
+    abstract: Optional[str] = None
+    venue: Optional[str] = None
+    year: Optional[int] = None
+    authors: List[str] = Field(default_factory=list)
+    url: Optional[str] = None
+    pdf_url: Optional[str] = None
+    pdf_path: Optional[str] = None
+    pdf_download_status: Optional[str] = None
+    pdf_download_error: Optional[str] = None
+    citations: Optional[int] = None
+    source: str = "google_scholar"
 
 
 class HardNegativePaper(BaseModel):
@@ -20,17 +45,47 @@ class HardNegativePaper(BaseModel):
     venue: Optional[str] = None
     year: Optional[int] = None
     authors: List[str] = Field(default_factory=list)
-    relevance_score: float = 0.0
     hard_negative_reason: str = ""
     source_query: str = ""
+    url: Optional[str] = None
+    pdf_url: Optional[str] = None
+    pdf_path: Optional[str] = None
+    pdf_download_status: Optional[str] = None
+    pdf_download_error: Optional[str] = None
+    citations: Optional[int] = None
+
+
+class PositivePaper(BaseModel):
+    paper_title: str
+    arxiv_id: Optional[str] = None
+    abstract: Optional[str] = None
+    venue: Optional[str] = None
+    year: Optional[int] = None
+    authors: List[str] = Field(default_factory=list)
+    positive_reason: str = ""
+    source_query: str = ""
+    url: Optional[str] = None
+    pdf_url: Optional[str] = None
+    pdf_path: Optional[str] = None
+    pdf_download_status: Optional[str] = None
+    pdf_download_error: Optional[str] = None
+    citations: Optional[int] = None
 
 
 class HardNegativeMiningResult(BaseModel):
+    paper_id: str
+    paper_title: str
     query: str
     source_view: str
+    is_multimodal: bool = False
+    related_bullet_indice: Optional[int] = None
+    related_bullet_justification: Optional[str] = None
     hard_negatives: List[HardNegativePaper]
+    positives: List[PositivePaper] = Field(default_factory=list)
     keywords_extracted: List[str]
-    mining_method: str = "gpt_keyword_google_scholar"
+    search_queries_used: List[str] = Field(default_factory=list)
+    retrieved_candidates: int = 0
+    mining_method: str = "google_scholar_real_search"
 
 
 class HardNegativeMiningDataset(BaseModel):
@@ -38,142 +93,669 @@ class HardNegativeMiningDataset(BaseModel):
     total_queries: int
     total_mined: int
     total_hard_negatives: int
+    total_positives: int
     mined_at: datetime = Field(default_factory=datetime.now)
 
 
+class GoogleScholarClient(ABC):
+    @abstractmethod
+    def search(self, query: str, limit: int) -> List[ScholarCandidatePaper]:
+        raise NotImplementedError
+
+
+class SerpApiGoogleScholarClient(GoogleScholarClient):
+    def __init__(self, api_key: str, language: str = "en"):
+        self.api_key = api_key
+        self.language = language
+
+    def search(self, query: str, limit: int) -> List[ScholarCandidatePaper]:
+        params = {
+            "engine": "google_scholar",
+            "q": query,
+            "hl": self.language,
+            "num": max(1, min(int(limit), 20)),
+            "api_key": self.api_key,
+        }
+        url = f"https://serpapi.com/search.json?{urlencode(params)}"
+        try:
+            with urlopen(url, timeout=30) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"SerpAPI Google Scholar search failed: {exc}") from exc
+
+        results: List[ScholarCandidatePaper] = []
+        for item in payload.get("organic_results", [])[:limit]:
+            if not isinstance(item, dict):
+                continue
+
+            publication_info = item.get("publication_info") or {}
+            authors = []
+            if isinstance(publication_info, dict):
+                raw_authors = publication_info.get("authors") or []
+                if isinstance(raw_authors, list):
+                    authors = [
+                        author.get("name", "").strip()
+                        for author in raw_authors
+                        if isinstance(author, dict) and author.get("name")
+                    ]
+                summary = publication_info.get("summary") or ""
+            else:
+                summary = str(publication_info)
+
+            year = _extract_year(summary)
+            results.append(
+                ScholarCandidatePaper(
+                    paper_title=str(item.get("title", "")).strip(),
+                    arxiv_id=_extract_arxiv_id(
+                        item.get("link"),
+                        item.get("resources"),
+                        item.get("publication_info"),
+                    ),
+                    abstract=str(item.get("snippet", "")).strip() or None,
+                    venue=_extract_venue(summary),
+                    year=year,
+                    authors=authors,
+                    url=item.get("link"),
+                    pdf_url=(
+                        _extract_pdf_url(item.get("resources"), item.get("link"))
+                        or _build_arxiv_pdf_url(
+                            _extract_arxiv_id(
+                                item.get("link"),
+                                item.get("resources"),
+                                item.get("publication_info"),
+                            )
+                        )
+                    ),
+                    citations=_extract_serpapi_citations(item),
+                    source="google_scholar_serpapi",
+                )
+            )
+        return [paper for paper in results if paper.paper_title]
+
+
+class ScholarlyGoogleScholarClient(GoogleScholarClient):
+    def search(self, query: str, limit: int) -> List[ScholarCandidatePaper]:
+        try:
+            from scholarly import scholarly
+        except ImportError as exc:
+            raise RuntimeError(
+                "scholarly is not installed. Install the scholar extra or configure SerpAPI."
+            ) from exc
+
+        results: List[ScholarCandidatePaper] = []
+        try:
+            search_iter = scholarly.search_pubs(query)
+            for _ in range(max(1, int(limit))):
+                pub = next(search_iter, None)
+                if pub is None:
+                    break
+                parsed = _parse_scholarly_publication(pub)
+                if parsed is not None:
+                    results.append(parsed)
+        except Exception as exc:
+            raise RuntimeError(f"scholarly Google Scholar search failed: {exc}") from exc
+
+        return results
+
+
+def _extract_year(text: Any) -> Optional[int]:
+    if text is None:
+        return None
+    match = re.search(r"\b(19|20)\d{2}\b", str(text))
+    if not match:
+        return None
+    try:
+        return int(match.group(0))
+    except ValueError:
+        return None
+
+
+def _extract_venue(summary: str) -> Optional[str]:
+    if not summary:
+        return None
+    parts = [part.strip() for part in summary.split(" - ") if part.strip()]
+    if len(parts) < 2:
+        return None
+    venue_part = parts[-1]
+    venue = re.sub(r"\b(19|20)\d{2}\b", "", venue_part).strip(" ,")
+    return venue or None
+
+
+def _extract_arxiv_id(*values: Any) -> Optional[str]:
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, list):
+            for item in value:
+                found = _extract_arxiv_id(item)
+                if found:
+                    return found
+            continue
+        if isinstance(value, dict):
+            for item in value.values():
+                found = _extract_arxiv_id(item)
+                if found:
+                    return found
+            continue
+
+        match = re.search(r"arxiv\.org/(abs|pdf)/([0-9]+\.[0-9]+)", str(value), re.IGNORECASE)
+        if match:
+            return match.group(2)
+        match = re.search(r"\b([0-9]{4}\.[0-9]{4,5})(v\d+)?\b", str(value))
+        if match:
+            return match.group(1)
+    return None
+
+
+def _build_arxiv_pdf_url(arxiv_id: Optional[str]) -> Optional[str]:
+    if not arxiv_id:
+        return None
+    return f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+
+
+def _extract_pdf_url(*values: Any) -> Optional[str]:
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, list):
+            for item in value:
+                found = _extract_pdf_url(item)
+                if found:
+                    return found
+            continue
+        if isinstance(value, dict):
+            for item in value.values():
+                found = _extract_pdf_url(item)
+                if found:
+                    return found
+            continue
+
+        text = str(value).strip()
+        if re.search(r"https?://\S+\.pdf(\?.*)?$", text, re.IGNORECASE):
+            return text
+    return None
+
+
+def _extract_serpapi_citations(item: dict[str, Any]) -> Optional[int]:
+    inline_links = item.get("inline_links") or {}
+    cited_by = inline_links.get("cited_by") if isinstance(inline_links, dict) else None
+    total = cited_by.get("total") if isinstance(cited_by, dict) else None
+    try:
+        return int(total) if total is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_scholarly_publication(pub: Any) -> Optional[ScholarCandidatePaper]:
+    data = pub if isinstance(pub, dict) else getattr(pub, "__dict__", {})
+    if not isinstance(data, dict):
+        return None
+
+    bib = data.get("bib") if isinstance(data.get("bib"), dict) else {}
+    title = str(bib.get("title", "")).strip() or str(data.get("title", "")).strip()
+    if not title:
+        return None
+
+    authors = []
+    raw_authors = bib.get("author")
+    if isinstance(raw_authors, str):
+        authors = [part.strip() for part in raw_authors.split(" and ") if part.strip()]
+    elif isinstance(raw_authors, list):
+        authors = [str(part).strip() for part in raw_authors if str(part).strip()]
+
+    year = None
+    try:
+        if bib.get("pub_year"):
+            year = int(str(bib.get("pub_year")))
+    except (TypeError, ValueError):
+        year = None
+
+    return ScholarCandidatePaper(
+        paper_title=title,
+        arxiv_id=_extract_arxiv_id(
+            data.get("pub_url"),
+            data.get("eprint_url"),
+            bib.get("url"),
+        ),
+        abstract=str(bib.get("abstract", "")).strip() or None,
+        venue=(
+            str(bib.get("venue", "")).strip()
+            or str(bib.get("journal", "")).strip()
+            or None
+        ),
+        year=year,
+        authors=authors,
+        url=data.get("pub_url") or bib.get("url"),
+        pdf_url=(
+            _extract_pdf_url(
+                data.get("eprint_url"),
+                data.get("pub_url"),
+                bib.get("url"),
+            )
+            or _build_arxiv_pdf_url(
+                _extract_arxiv_id(
+                    data.get("pub_url"),
+                    data.get("eprint_url"),
+                    bib.get("url"),
+                )
+            )
+        ),
+        citations=_safe_int(data.get("num_citations")),
+        source="google_scholar_scholarly",
+    )
+
+
+def _safe_int(value: Any) -> Optional[int]:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _slugify(text: str, max_length: int = 80) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    if not slug:
+        slug = "item"
+    return slug[:max_length].rstrip("-") or "item"
+
+
 class HardNegativeMiner:
-    def __init__(self, llm: LLMBackend):
+    def __init__(
+        self,
+        llm: LLMBackend,
+        scholar_client: GoogleScholarClient,
+        scholar_max_results: int = 10,
+        download_selected_pdfs: bool = True,
+        pdf_output_dir: Optional[Path] = None,
+        review_max_workers: int = 4,
+    ):
         self.llm = llm
+        self.scholar_client = scholar_client
+        self.scholar_max_results = max(3, int(scholar_max_results))
+        self.download_selected_pdfs = download_selected_pdfs
+        self.pdf_output_dir = pdf_output_dir.resolve() if pdf_output_dir else None
+        self.review_max_workers = max(1, int(review_max_workers))
+
+    def _load_prompt(self, filename: str) -> str:
+        return load_prompt_template(PROMPT_DIR / filename)
+
+    def _render_prompt(self, filename: str, **replacements: str) -> str:
+        prompt = self._load_prompt(filename)
+        for key, value in replacements.items():
+            prompt = prompt.replace(f"{{{{{key}}}}}", value)
+        return prompt
 
     def extract_keywords(self, query: str) -> List[str]:
-        prompt = f"""Given the following retrieval query for a scientific paper, extract 3-5 key search keywords that could be used to find related papers on Google Scholar or arXiv.
-
-Query: {query}
-
-Extract the most important technical keywords, methods, or topics that would help find related but DISTINCT papers (not the same paper). Focus on:
-- Specific methods or techniques mentioned
-- Domain-specific terminology
-- Task or problem types
-- Dataset names if mentioned
-
-Output a JSON array of strings (keywords only, no explanation):
-["keyword1", "keyword2", "keyword3"]
-"""
+        prompt = self._render_prompt(
+            "hard_negative_extract_keywords.txt",
+            query=query,
+        )
         response = self.llm.generate(prompt)
         try:
-            import json
-            import re
-            json_match = re.search(r'\[[\s\S]*\]', response)
+            json_match = re.search(r"\[[\s\S]*\]", response)
             if json_match:
                 keywords = json.loads(json_match.group())
                 if isinstance(keywords, list):
-                    return [k for k in keywords if isinstance(k, str)][:5]
-        except Exception as e:
-            logger.warning(f"Failed to parse keywords from response: {e}")
+                    return [str(k).strip() for k in keywords if str(k).strip()][:5]
+        except Exception as exc:
+            logger.warning("Failed to parse keywords from response: %s", exc)
         return []
 
-    def search_google_scholar(self, keywords: List[str], query: str) -> List[HardNegativePaper]:
-        results = []
-        search_query = " ".join(keywords[:3])
-        prompt = f"""You are searching Google Scholar for papers related to this query:
-Original Query: {query}
-Search Terms: {search_query}
+    def _build_search_queries(self, query: str, keywords: List[str]) -> List[str]:
+        variants = [query.strip()]
+        keyword_query = " ".join(keywords[:4]).strip()
+        if keyword_query and keyword_query.lower() != query.strip().lower():
+            variants.append(keyword_query)
+        return [variant for variant in variants if variant]
 
-Find 3-5 papers that are:
-1. Related to the topic/technique in the original query
-2. But NOT the same paper being queried about
-3. Could serve as HARD NEGATIVES (plausible matches but ultimately irrelevant)
+    def _search_google_scholar(self, search_queries: List[str]) -> List[ScholarCandidatePaper]:
+        unique_candidates: dict[str, ScholarCandidatePaper] = {}
+        per_query_limit = max(3, self.scholar_max_results // max(1, len(search_queries)))
 
-For each paper, provide:
-- Title
-- arXiv ID (if available)
-- A brief abstract or description
-- Why it might seem relevant but is actually not the right match
+        for search_query in search_queries:
+            try:
+                candidates = self.scholar_client.search(search_query, per_query_limit)
+            except Exception as exc:
+                logger.warning("Google Scholar search failed for '%s': %s", search_query, exc)
+                continue
 
-Output a JSON array of objects with this structure:
-[
-  {{
-    "paper_title": "Paper Title",
-    "arxiv_id": "2301.12345" or null,
-    "abstract": "Brief abstract...",
-    "relevance_score": 0.7,
-    "hard_negative_reason": "Why this is a hard negative..."
-  }}
-]
+            for candidate in candidates:
+                normalized_title = re.sub(r"\s+", " ", candidate.paper_title.strip().lower())
+                if normalized_title and normalized_title not in unique_candidates:
+                    unique_candidates[normalized_title] = candidate
 
-If no suitable papers found, return an empty array []. Only return actual papers, not placeholders.
-"""
-        response = self.llm.generate(prompt)
+        return list(unique_candidates.values())[: self.scholar_max_results]
+
+    def _paper_identifier(self, paper_title: str, arxiv_id: Optional[str]) -> str:
+        if arxiv_id:
+            return arxiv_id.replace("/", "_")
+        return hashlib.sha1(paper_title.encode("utf-8")).hexdigest()[:12]
+
+    def _paper_output_dir(self, query: str, category: str) -> Path:
+        base_dir = self.pdf_output_dir or (Path("outputs") / "hard_negative_pdfs")
+        query_key = f"{_slugify(query, 48)}-{hashlib.sha1(query.encode('utf-8')).hexdigest()[:10]}"
+        return base_dir / query_key / category
+
+    def _download_pdf_for_selected_paper(
+        self,
+        paper: Union[ScholarCandidatePaper, HardNegativePaper, PositivePaper],
+        *,
+        query: str,
+        category: str,
+    ) -> None:
+        if not self.download_selected_pdfs:
+            paper.pdf_download_status = "skipped"
+            paper.pdf_download_error = "PDF downloading disabled"
+            return
+
+        pdf_url = paper.pdf_url or _build_arxiv_pdf_url(paper.arxiv_id) or _extract_pdf_url(paper.url)
+        paper.pdf_url = pdf_url
+        if not pdf_url:
+            paper.pdf_download_status = "unavailable"
+            paper.pdf_download_error = "No downloadable PDF URL found"
+            return
+
+        output_dir = self._paper_output_dir(query, category)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"{self._paper_identifier(paper.paper_title, paper.arxiv_id)}_{_slugify(paper.paper_title, 80)}.pdf"
+        output_path = output_dir / filename
+
+        if output_path.exists() and output_path.stat().st_size > 0:
+            paper.pdf_path = str(output_path)
+            paper.pdf_download_status = "downloaded"
+            paper.pdf_download_error = None
+            return
+
+        request = Request(
+            pdf_url,
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
+            },
+        )
         try:
-            import json
-            import re
-            json_match = re.search(r'\[[\s\S]*?\]', response, re.DOTALL)
-            if json_match:
-                papers = json.loads(json_match.group())
-                if isinstance(papers, list):
-                    for p in papers:
-                        if isinstance(p, dict) and "paper_title" in p:
-                            results.append(HardNegativePaper(
-                                paper_title=p.get("paper_title", "Unknown"),
-                                arxiv_id=p.get("arxiv_id"),
-                                abstract=p.get("abstract"),
-                                relevance_score=p.get("relevance_score", 0.5),
-                                hard_negative_reason=p.get("hard_negative_reason", ""),
-                                source_query=query,
-                            ))
-        except Exception as e:
-            logger.warning(f"Failed to parse Google Scholar results: {e}")
-        return results
+            with urlopen(request, timeout=60) as response:
+                payload = response.read()
+                content_type = response.headers.get("Content-Type", "")
+        except Exception as exc:
+            paper.pdf_download_status = "failed"
+            paper.pdf_download_error = str(exc)
+            return
 
-    def mine_for_query(self, query: FilteredQuery) -> HardNegativeMiningResult:
-        logger.debug(f"Mining hard negatives for query: {query.original_query[:50]}...")
+        if not payload:
+            paper.pdf_download_status = "failed"
+            paper.pdf_download_error = "Empty response body"
+            return
 
-        keywords = self.extract_keywords(query.original_query)
-        logger.debug(f"Extracted keywords: {keywords}")
+        if not payload.startswith(b"%PDF") and "pdf" not in content_type.lower():
+            paper.pdf_download_status = "failed"
+            paper.pdf_download_error = f"Non-PDF response (Content-Type: {content_type or 'unknown'})"
+            return
 
-        hard_negatives = []
-        if keywords:
-            hard_negatives = self.search_google_scholar(keywords, query.original_query)
+        output_path.write_bytes(payload)
+        paper.pdf_path = str(output_path)
+        paper.pdf_download_status = "downloaded"
+        paper.pdf_download_error = None
 
-        return HardNegativeMiningResult(
-            query=query.original_query,
-            source_view=query.source_view,
-            hard_negatives=hard_negatives,
-            keywords_extracted=keywords,
-            mining_method="gpt_keyword_google_scholar",
+    def _candidate_to_hard_negative(
+        self,
+        candidate: ScholarCandidatePaper,
+        query: str,
+        reason: str,
+    ) -> HardNegativePaper:
+        return HardNegativePaper(
+            paper_title=candidate.paper_title,
+            arxiv_id=candidate.arxiv_id,
+            abstract=candidate.abstract,
+            venue=candidate.venue,
+            year=candidate.year,
+            authors=candidate.authors,
+            hard_negative_reason=reason,
+            source_query=query,
+            url=candidate.url,
+            pdf_url=candidate.pdf_url,
+            pdf_path=candidate.pdf_path,
+            pdf_download_status=candidate.pdf_download_status,
+            pdf_download_error=candidate.pdf_download_error,
+            citations=candidate.citations,
         )
 
-    def apply(self, dataset: FilteredQueriesDataset) -> HardNegativeMiningDataset:
-        logger.info(f"Mining hard negatives for {len(dataset.results)} queries")
+    def _candidate_to_positive(
+        self,
+        candidate: ScholarCandidatePaper,
+        query: str,
+        reason: str,
+    ) -> PositivePaper:
+        return PositivePaper(
+            paper_title=candidate.paper_title,
+            arxiv_id=candidate.arxiv_id,
+            abstract=candidate.abstract,
+            venue=candidate.venue,
+            year=candidate.year,
+            authors=candidate.authors,
+            positive_reason=reason,
+            source_query=query,
+            url=candidate.url,
+            pdf_url=candidate.pdf_url,
+            pdf_path=candidate.pdf_path,
+            pdf_download_status=candidate.pdf_download_status,
+            pdf_download_error=candidate.pdf_download_error,
+            citations=candidate.citations,
+        )
+
+    def _review_single_candidate(
+        self,
+        query: str,
+        candidate: ScholarCandidatePaper,
+    ) -> Optional[dict[str, Any]]:
+        authors = ", ".join(candidate.authors[:6]) if candidate.authors else "Unknown authors"
+        prompt = self._render_prompt(
+            "hard_negative_review_candidate.txt",
+            query=query,
+            paper_title=candidate.paper_title,
+            authors=authors,
+            year=str(candidate.year) if candidate.year is not None else "Unknown",
+            venue=candidate.venue or "Unknown venue",
+            abstract=candidate.abstract or "No abstract/snippet available",
+            paper_evidence=(
+                "The full candidate paper PDF is attached separately. Base the decision on that file."
+            ),
+        )
+
+        pdf_url = candidate.pdf_url or _build_arxiv_pdf_url(candidate.arxiv_id) or _extract_pdf_url(candidate.url)
+        candidate.pdf_url = pdf_url
+        if not pdf_url:
+            logger.debug("Skipping candidate without usable remote PDF URL: %s", candidate.paper_title)
+            return None
+
+        try:
+            response = self.llm.generate_with_pdf_url(prompt, pdf_url)
+        except Exception as exc:
+            logger.warning(
+                "Remote PDF review failed for '%s' via %s: %s",
+                candidate.paper_title,
+                pdf_url,
+                exc,
+            )
+            return None
+
+        try:
+            json_match = re.search(r"\{[\s\S]*\}", response)
+            parsed = json.loads(json_match.group()) if json_match else {}
+        except Exception as exc:
+            logger.warning("Failed to parse review response for '%s': %s", candidate.paper_title, exc)
+            return None
+
+        if not isinstance(parsed, dict):
+            return None
+
+        label = str(parsed.get("label", "")).strip().lower()
+        if label not in {"positive", "hard_negative", "ignored"}:
+            return None
+
+        reason = str(parsed.get("reason", "")).strip()
+        return {
+            "label": label,
+            "reason": reason,
+            "candidate": candidate,
+        }
+
+    def _download_selected_pdfs(
+        self,
+        query: str,
+        papers: List[Union[HardNegativePaper, PositivePaper]],
+        category: str,
+    ) -> None:
+        for paper in papers:
+            self._download_pdf_for_selected_paper(paper, query=query, category=category)
+
+    def _review_candidates(
+        self,
+        query: str,
+        candidates: List[ScholarCandidatePaper],
+    ) -> tuple[List[HardNegativePaper], List[PositivePaper]]:
+        if not candidates:
+            return [], []
+
+        hard_negative_indices: List[int] = []
+        hard_negative_by_index: dict[int, HardNegativePaper] = {}
+        positives: List[PositivePaper] = []
+        max_workers = min(self.review_max_workers, len(candidates))
+        candidate_index_map = {id(candidate): index for index, candidate in enumerate(candidates)}
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(self._review_single_candidate, query, candidate): candidate
+                for candidate in candidates
+            }
+            for future in as_completed(futures):
+                candidate = futures[future]
+                try:
+                    review = future.result()
+                except Exception as exc:
+                    logger.warning("Candidate review failed for '%s': %s", candidate.paper_title, exc)
+                    continue
+
+                if not review:
+                    continue
+
+                label = review["label"]
+                reason = review["reason"]
+                if label == "positive":
+                    positives.append(self._candidate_to_positive(candidate, query, reason))
+                elif label == "hard_negative":
+                    candidate_index = candidate_index_map[id(candidate)]
+                    hard_negative_indices.append(candidate_index)
+                    hard_negative_by_index[candidate_index] = self._candidate_to_hard_negative(
+                        candidate,
+                        query,
+                        reason,
+                    )
+
+        hard_negatives = [
+            hard_negative_by_index[index]
+            for index in sorted(hard_negative_indices)[:5]
+        ]
+        return hard_negatives, positives
+
+    def mine_for_query(
+        self,
+        paper_id: str,
+        paper_title: str,
+        query: RetrievalQuery,
+    ) -> HardNegativeMiningResult:
+        logger.debug("Mining hard negatives for query: %s...", query.query_text[:50])
+
+        keywords = self.extract_keywords(query.query_text)
+        logger.debug("Extracted keywords: %s", keywords)
+
+        search_queries = self._build_search_queries(query.query_text, keywords)
+        candidates = self._search_google_scholar(search_queries)
+        hard_negatives, positives = self._review_candidates(query.query_text, candidates)
+        self._download_selected_pdfs(query.query_text, hard_negatives, "hard_negatives")
+        self._download_selected_pdfs(query.query_text, positives, "positives")
+
+        return HardNegativeMiningResult(
+            paper_id=paper_id,
+            paper_title=paper_title,
+            query=query.query_text,
+            source_view=query.source_view,
+            is_multimodal=query.is_multimodal,
+            related_bullet_indice=query.related_bullet_indice,
+            related_bullet_justification=query.related_bullet_justification,
+            hard_negatives=hard_negatives,
+            positives=positives,
+            keywords_extracted=keywords,
+            search_queries_used=search_queries,
+            retrieved_candidates=len(candidates),
+            mining_method="google_scholar_real_search",
+        )
+
+    def apply(self, dataset: GeneratedQueriesDataset) -> HardNegativeMiningDataset:
+        logger.info("Mining hard negatives for %s queries", dataset.total_queries)
 
         all_results = []
         total_hard_negatives = 0
+        total_positives = 0
+        work_items = [
+            (paper.paper_id, paper.paper_title, query)
+            for paper in dataset.papers_queries
+            for query in paper.queries_by_view
+        ]
 
         progress = tqdm(
-            dataset.results,
-            total=len(dataset.results),
+            work_items,
+            total=len(work_items),
             desc="Mining hard negatives",
             unit="query",
             dynamic_ncols=True,
         )
-        for query in progress:
-            result = self.mine_for_query(query)
+        for paper_id, paper_title, query in progress:
+            result = self.mine_for_query(paper_id, paper_title, query)
             all_results.append(result)
             total_hard_negatives += len(result.hard_negatives)
-            progress.set_postfix_str(f"hard_negatives={total_hard_negatives}")
+            total_positives += len(result.positives)
+            progress.set_postfix_str(
+                f"hard_negatives={total_hard_negatives}, positives={total_positives}"
+            )
         progress.close()
 
-        logger.info(f"Hard negative mining complete: {total_hard_negatives} hard negatives for {len(all_results)} queries")
+        logger.info(
+            "Hard negative mining complete: %s hard negatives for %s queries",
+            total_hard_negatives,
+            len(all_results),
+        )
 
         return HardNegativeMiningDataset(
             results=all_results,
             total_queries=len(all_results),
             total_mined=len([r for r in all_results if r.hard_negatives]),
             total_hard_negatives=total_hard_negatives,
+            total_positives=total_positives,
         )
 
     def run(self, input_path: Path, output_path: Path) -> None:
-        logger.info(f"Running hard-negative-mining stage: {input_path} -> {output_path}")
-        dataset = load_json(input_path, FilteredQueriesDataset)
+        logger.info("Running hard-negative-mining stage: %s -> %s", input_path, output_path)
+        if self.pdf_output_dir is None:
+            self.pdf_output_dir = output_path.parent / f"{output_path.stem}_pdfs"
+        dataset = load_json(input_path, GeneratedQueriesDataset)
         result = self.apply(dataset)
         save_json(output_path, result)
+
+
+def build_google_scholar_client(
+    provider: str,
+    *,
+    serpapi_api_key: str = "",
+    language: str = "en",
+) -> GoogleScholarClient:
+    normalized = (provider or "").strip().lower()
+    if normalized == "serpapi":
+        if not serpapi_api_key:
+            raise ValueError(
+                "search.provider is 'serpapi' but no search.serpapi_api_key was configured."
+            )
+        return SerpApiGoogleScholarClient(api_key=serpapi_api_key, language=language)
+    if normalized == "scholarly":
+        return ScholarlyGoogleScholarClient()
+    raise ValueError(f"Unsupported Google Scholar provider: {provider}")

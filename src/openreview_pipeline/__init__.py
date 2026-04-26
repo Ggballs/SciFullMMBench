@@ -22,13 +22,21 @@ from .schemas.schemas_queries import (
     RetrievalQuery,
     GeneratedQueriesForPaper,
     GeneratedQueriesDataset,
-    FilteredQuery,
-    FilteredQueriesDataset,
+    RetrievalEvaluation,
+    RuleBasedStyleEvaluation,
+    LLMStyleEvaluation,
+    StyleEvaluation,
+    QueryHardNegativeContext,
+    QueryAnalysisEntry,
+    PaperQueryAnalysis,
+    QueryAnalysisDataset,
 )
 from .schemas.schemas_pipeline import (
     PipelineOutput,
     PipelinePaper,
+    PipelineQuery,
 )
+from .pipeline_output_builder import build_pipeline_output, write_pipeline_output
 from .runner import (
     PipelinePaths,
     build_llm_backend,
@@ -36,11 +44,14 @@ from .runner import (
     parse_stage_spec,
     run_download_stage,
     run_filter_stage,
-    run_filter_queries_stage,
     run_generate_queries_stage,
     run_hard_negative_mining_stage,
+    run_query_analysis_stage,
     run_selected_stages,
     run_summarize_stage,
+)
+from .stages import (
+    run as run_stage5_query_analysis,
 )
 
 __all__ = [
@@ -61,11 +72,19 @@ __all__ = [
     "RetrievalQuery",
     "GeneratedQueriesForPaper",
     "GeneratedQueriesDataset",
-    "FilteredQuery",
-    "FilteredQueriesDataset",
+    "RetrievalEvaluation",
+    "RuleBasedStyleEvaluation",
+    "LLMStyleEvaluation",
+    "StyleEvaluation",
+    "QueryHardNegativeContext",
+    "QueryAnalysisEntry",
+    "PaperQueryAnalysis",
+    "QueryAnalysisDataset",
     "PipelineOutput",
     "PipelinePaper",
+    "PipelineQuery",
     "PipelinePaths",
+    "build_pipeline_output",
     "build_llm_backend",
     "load_config",
     "parse_stage_spec",
@@ -73,7 +92,9 @@ __all__ = [
     "run_filter_stage",
     "run_summarize_stage",
     "run_generate_queries_stage",
-    "run_filter_queries_stage",
+    "run_query_analysis_stage",
     "run_hard_negative_mining_stage",
+    "run_stage5_query_analysis",
     "run_selected_stages",
+    "write_pipeline_output",
 ]

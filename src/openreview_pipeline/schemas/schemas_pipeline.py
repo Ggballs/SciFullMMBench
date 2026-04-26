@@ -1,39 +1,35 @@
-from pydantic import BaseModel, Field
+from __future__ import annotations
+
 from datetime import datetime
-from typing import Optional, List
+from typing import Any, Optional
+
+from pydantic import BaseModel, Field
+
+
+class PipelineQuery(BaseModel):
+    query_text: str
+    is_multimodal: bool = False
+    source_view: str = ""
+    related_bullet_indice: Optional[int] = None
+    related_bullet_justification: Optional[str] = None
+    hard_negative_context: Optional[dict[str, Any]] = None
+    query_analysis: Optional[dict[str, Any]] = None
 
 
 class PipelinePaper(BaseModel):
     paper_id: str
-    paper_title: str
-    abstract: str = ""
-    authors: List[str] = Field(default_factory=list)
-    venue: str = ""
-    year: int = 0
-    keywords: List[str] = Field(default_factory=list)
-
-    reviews: List[dict] = Field(default_factory=list)
-    comments: List[dict] = Field(default_factory=list)
-    rebuttals: List[dict] = Field(default_factory=list)
-    decision: Optional[dict] = None
-
-    passed: bool = False
-    filter_reasons: dict = Field(default_factory=dict)
-
-    summary: Optional[dict] = None
-
-    queries: List[dict] = Field(default_factory=list)
-    filtered_queries: List[dict] = Field(default_factory=list)
+    paper_title: str = ""
+    paper_dir: Optional[str] = None
+    openreview: dict[str, Any] = Field(default_factory=dict)
+    filter_status: Optional[dict[str, Any]] = None
+    summary_views: list[dict[str, Any]] = Field(default_factory=list)
+    queries: list[PipelineQuery] = Field(default_factory=list)
 
 
 class PipelineOutput(BaseModel):
-    venue: str = ""
-    year: int = 0
-    total_papers: int = 0
-    total_passed: int = 0
-    total_queries: int = 0
-    total_queries_passed: int = 0
-
-    papers: List[PipelinePaper] = Field(default_factory=list)
-
+    artifact_type: str = "final_pipeline_output"
     generated_at: datetime = Field(default_factory=datetime.now)
+    paths: dict[str, Optional[str]] = Field(default_factory=dict)
+    dataset_overview: dict[str, Any] = Field(default_factory=dict)
+    stage5_summary: dict[str, Any] = Field(default_factory=dict)
+    papers: list[PipelinePaper] = Field(default_factory=list)

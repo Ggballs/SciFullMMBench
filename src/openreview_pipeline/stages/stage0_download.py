@@ -245,14 +245,16 @@ class OpenReviewAPIDownloader:
         title = content.get("title", "")
         abstract = content.get("abstract", "")
         venueid = content.get("venueid")
+        paper_id = submission.id
 
         paper_data = {
-            "id": submission.id,
+            "id": paper_id,
             "title": unwrap_value(title) if isinstance(title, dict) else str(title),
             "abstract": unwrap_value(abstract) if isinstance(abstract, dict) else str(abstract),
             "authors": self._extract_authors(submission),
             "venue": self.venue,
             "year": self.year,
+            "pdf_url": f"https://openreview.net/pdf?id={paper_id}",
             "keywords": self._extract_keywords(submission),
             "venueid": unwrap_value(venueid) if isinstance(venueid, dict) else venueid,
             "submission_number": getattr(submission, "number", None),
@@ -420,6 +422,38 @@ class OpenReviewAPIDownloader:
         )
         return papers
 
+    def fetch_paper_by_forum_id(self, forum_id: str) -> List[dict]:
+        from openreview_pipeline.schemas import OpenReviewPaperWithMetadata
+
+        client = self._get_client()
+        if client is None:
+            logger.error("Cannot connect to OpenReview API. Check credentials.")
+            return []
+
+        try:
+            submission = client.get_note(forum_id)
+        except TypeError:
+            submission = client.get_note(id=forum_id)
+        except Exception as exc:
+            logger.error("Failed to fetch forum %s: %s", forum_id, exc)
+            return []
+
+        try:
+            paper = self._build_paper(submission)
+            forum_notes = self._collect_forum_notes(client, submission)
+            note_buckets = self._split_forum_notes(submission.id, forum_notes)
+            paper_with_metadata = OpenReviewPaperWithMetadata(
+                paper=paper,
+                reviews=note_buckets["reviews"],
+                rebuttals=note_buckets["rebuttals"],
+                comments=note_buckets["comments"],
+                decision=note_buckets["decisions"][0] if note_buckets["decisions"] else None,
+            )
+            return [paper_with_metadata]
+        except Exception as exc:
+            logger.error("Failed to process forum %s: %s", forum_id, exc)
+            return []
+
 
 class DatasetDownloader:
     def __init__(
@@ -449,14 +483,38 @@ class DatasetDownloader:
             output_dir=self.output_dir,
         )
 
-    def fetch_recent_papers(self, limit: Optional[int] = None) -> List:
-        from openreview_pipeline.schemas import OpenReviewPaper
+    def fetch_recent_papers(
+        self,
+        limit: Optional[int] = None,
+        forum_id: Optional[str] = None,
+    ) -> List:
+        from openreview_pipeline.schemas import OpenReviewPaper, OpenReviewPaperWithMetadata
 
         if self._openreview_downloader:
+            if forum_id:
+                return self._openreview_downloader.fetch_paper_by_forum_id(forum_id)
             return self._openreview_downloader.fetch_papers(limit=limit, accepted_only=True)
 
         logger.warning("OpenReview credentials not set. Using stub data.")
         logger.info("Would fetch papers from %s from year %s", self.venue, self.year_threshold)
+
+        if forum_id:
+            return [
+                OpenReviewPaperWithMetadata(
+                    paper=OpenReviewPaper(
+                        id=forum_id,
+                        title=f"Sample Paper {forum_id}",
+                        abstract=f"This is a sample abstract for paper {forum_id}. " * 5,
+                        authors=[f"Author {author_idx}" for author_idx in range(3)],
+                        venue=self.venue,
+                        year=self.year_threshold,
+                        pdf_url=f"https://openreview.net/pdf?id={forum_id}",
+                        keywords=["AI", "ML"],
+                        venueid=f"{self.venue}/{self.year_threshold}",
+                        submission_number=1,
+                    )
+                )
+            ]
 
         papers = []
         count = 0
@@ -466,26 +524,33 @@ class DatasetDownloader:
                     return papers
 
                 papers.append(
-                    OpenReviewPaper(
-                        id=f"paper_{year}_{index}",
-                        title=f"Sample Paper {year}-{index}",
-                        abstract=f"This is a sample abstract for paper {year}-{index}. " * 5,
-                        authors=[f"Author {author_idx}" for author_idx in range(3)],
-                        venue=self.venue,
-                        year=year,
-                        keywords=["AI", "ML"],
-                        venueid=f"{self.venue}/{year}",
-                        submission_number=index,
+                    OpenReviewPaperWithMetadata(
+                        paper=OpenReviewPaper(
+                            id=f"paper_{year}_{index}",
+                            title=f"Sample Paper {year}-{index}",
+                            abstract=f"This is a sample abstract for paper {year}-{index}. " * 5,
+                            authors=[f"Author {author_idx}" for author_idx in range(3)],
+                            venue=self.venue,
+                            year=year,
+                            keywords=["AI", "ML"],
+                            venueid=f"{self.venue}/{year}",
+                            submission_number=index,
+                        )
                     )
                 )
                 count += 1
 
         return papers
 
-    def run(self, output_path: Path, limit: Optional[int] = None) -> None:
+    def run(
+        self,
+        output_path: Path,
+        limit: Optional[int] = None,
+        forum_id: Optional[str] = None,
+    ) -> None:
         from openreview_pipeline.schemas import DownloadedPapersDataset
         from openreview_pipeline.utils import save_json
 
-        papers = self.fetch_recent_papers(limit=limit)
+        papers = self.fetch_recent_papers(limit=limit, forum_id=forum_id)
         dataset = DownloadedPapersDataset(papers=papers, total_count=len(papers))
         save_json(output_path, dataset)

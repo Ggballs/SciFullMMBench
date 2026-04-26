@@ -1,7 +1,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import TypeVar, Generic
+from typing import TypeVar
 
 from pydantic import BaseModel
 
@@ -28,3 +28,24 @@ def load_prompt_template(path: Path) -> str:
     logger.debug(f"Loading prompt template from {path}")
     with open(path) as f:
         return f.read()
+
+
+def extract_interleaved_pdf_content(*args, **kwargs):
+    from .pdf_interleaved_extraction import extract_interleaved_pdf_content as _extract
+
+    return _extract(*args, **kwargs)
+
+
+def write_interleaved_pdf_content(*args, **kwargs):
+    from .pdf_interleaved_extraction import write_interleaved_pdf_content as _write
+
+    return _write(*args, **kwargs)
+
+
+__all__ = [
+    "extract_interleaved_pdf_content",
+    "load_json",
+    "load_prompt_template",
+    "save_json",
+    "write_interleaved_pdf_content",
+]

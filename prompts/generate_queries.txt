@@ -19,10 +19,14 @@ Use the following template families:
 - **Is there / Are there / Any papers/methods/datasets on/about/that...**: about **30%**
 - **Give me / Show me / Provide / List / Find / Search for papers...**: about **20%*
 
-### 2. Construct constraints Requirement:
-- Discriminative Bullet Points Selection: the most distinctive constraint from the view as the main retrieval hook,  **one memorable retrieval hook** from the view, such as distinctive method or model design, an unusual task formulation, a dataset or benchmark characteristic, a striking empirical finding,a limitation, failure mode, or scope restriction.
-- Natural Phrasing: Use natural modifiers such as: `for`,`with`, `using`, `without`,  `on`, `about`
-- Constraint Budget (Hard Rule): A query may contain at most **2 semantic constraints**. Count a semantic constraint as one distinct retrieval-narrowing condition
+### 2. Construct Query Focus
+- Choose **ONLY ONE main retrieval hook** from the view: the most memorable and discriminative aspect, such as a distinctive method, unusual task, benchmark characteristic, key finding, limitation, or failure mode.
+- You may add **one supporting qualifier** only if it helps narrow the search naturally.
+- Do **not** stack multiple filters, exclusions, or result details into one query. If the query starts to sound like a paper abstract or a checklist of properties, simplify it.
+- Each query should be grounded in **exactly one bullet point**: choose the single most discriminative bullet from the view and base the query on that bullet only.
+- Use natural phrasing with modifiers such as `for`, `with`, `using`, `without`, `on`, and `about`.
+- Prefer the **shortest natural query** that still preserves the core search intent.
+
 
 ### 3. Prefer conceptual paraphrases over rare exact terms/statics
 Prefer the kind of wording a person would remember, or topics a researcher would explore not the exact internal terminology / statics from bullet points.
@@ -43,7 +47,7 @@ Each query should focus on the **few details most likely to help retrieval**.
 
 ## Multimodal Bonus Rule
 If a view contains bullet points referencing specific tables, figures, or equations,
-generate **2 additional queries** for that view.
+generate **1 additional queries** for that view.
 
 For these bonus queries:
 - do **not** describe the figure/table in exhaustive detail, do not mention the figure/table in the query, but use the figure/table as a clue to identify a distinctive aspect of the paper that can be expressed in a natural query form (in justification, explain the figure/table clue and how it inspired the query)
@@ -63,8 +67,8 @@ Output a JSON object with views as keys:
     {{
       "query_text": "generated query text",
       "is_multimodal": true/false (whether the query is inspired by a specific figure/table/equation/... non-textual element in the paper. Be RIGOROUS!),
-      "related_bullet_indices": [list of bullet index this query is based on(e.g. [1, 3])],
-      "related_bullet_justification": "1-2 sentences justifying whether the query relates to the bullet(s) and why it is a good retrieval hook"
+      "related_bullet_indice": 1,
+      "related_bullet_justification": "1-2 sentences justifying whether the query relates to the bullet and why it is a good retrieval hook"
     }},
   ],
   "method/dataset": [],
