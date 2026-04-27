@@ -3,9 +3,12 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
 
 import gradio as gr
 import matplotlib.pyplot as plt
