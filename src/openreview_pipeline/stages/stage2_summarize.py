@@ -32,6 +32,16 @@ class Summarizer:
     def _build_openreview_content(self, paper_meta) -> str:
         parts = []
 
+        def append_content_entries(section: str, entry_name: str, content: dict) -> None:
+            for key, value in content.items():
+                if isinstance(value, dict):
+                    val = value.get("value", "")
+                else:
+                    val = str(value) if value else ""
+                if val:
+                    source_ref = f"{section}/{entry_name}/{key}"
+                    parts.append(f"[{source_ref}] {key}: {val}")
+
         parts.append("=" * 50)
         parts.append("REVIEWS")
         parts.append("=" * 50)
@@ -39,14 +49,7 @@ class Summarizer:
         for review in paper_meta.reviews:
             content = review.content
             parts.append(f"\n--- Review {review.number} ---")
-
-            for key, value in content.items():
-                if isinstance(value, dict):
-                    val = value.get("value", "")
-                else:
-                    val = str(value) if value else ""
-                if val:
-                    parts.append(f"{key}: {val}")
+            append_content_entries("Reviews", f"Review {review.number}", content)
 
         if paper_meta.rebuttals:
             parts.append("\n" + "=" * 50)
@@ -55,13 +58,7 @@ class Summarizer:
             for rebuttal in paper_meta.rebuttals:
                 content = rebuttal.content
                 parts.append(f"\n--- Rebuttal {rebuttal.number} ---")
-                for key, value in content.items():
-                    if isinstance(value, dict):
-                        val = value.get("value", "")
-                    else:
-                        val = str(value) if value else ""
-                    if val:
-                        parts.append(f"{key}: {val}")
+                append_content_entries("Rebuttals", f"Rebuttal {rebuttal.number}", content)
 
         if paper_meta.comments:
             parts.append("\n" + "=" * 50)
@@ -70,26 +67,14 @@ class Summarizer:
             for comment in paper_meta.comments:
                 content = comment.content
                 parts.append(f"\n--- Comment {comment.number} ---")
-                for key, value in content.items():
-                    if isinstance(value, dict):
-                        val = value.get("value", "")
-                    else:
-                        val = str(value) if value else ""
-                    if val:
-                        parts.append(f"{key}: {val}")
+                append_content_entries("Comments", f"Comment {comment.number}", content)
 
         if paper_meta.decision:
             parts.append("\n" + "=" * 50)
             parts.append("AREA CHAIR META REVIEW / DECISION")
             parts.append("=" * 50)
             content = paper_meta.decision.content
-            for key, value in content.items():
-                if isinstance(value, dict):
-                    val = value.get("value", "")
-                else:
-                    val = str(value) if value else ""
-                if val:
-                    parts.append(f"{key}: {val}")
+            append_content_entries("Decision", "Decision", content)
 
         return "\n".join(parts)
 
@@ -150,13 +135,14 @@ class Summarizer:
                 ViewBulletPoints(
                     view_name="general",
                     summary=None,
-                    bullet_points=[response[:500]],
+                    bullet_points=[{"text": response[:500], "source_refs": []}],
                 )
             )
 
         return PaperSummary(
             paper_id=paper_id,
             paper_title=paper_title,
+            abstract=paper_abstract,
             views=views,
         )
 

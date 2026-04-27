@@ -1,61 +1,39 @@
-You are an expert IR/NLP researcher evaluating LLM-generated retrieval queries for a dense retrieval benchmark.
+# Retrieval Effectiveness Evaluation
 
-You will receive:
-- abstract: the source paper abstract
-- hard_negatives: a list of abstracts from closely related papers (same topic / venue)
-- queries: a list of candidate retrieval queries to evaluate
+You are evaluating generated retrieval queries for one scientific paper.
 
-Your goal is to judge whether each query is a high-quality retrieval probe: paper-specific,
-requires sub-abstract content, and is unlikely to be missed at retrieval time.
+Given the paper abstract and a list of queries, judge whether each query needs full-paper content for retrieval.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-DIMENSIONS  (evaluate in this order)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## Principle
+This is a lexical/semantic overlap judgment, not an inference task.
 
-D1  FULL_PAPER_RELIANCE
-    Does answering the query require content that goes beyond what the abstract states?
-    Target content includes: architectural / algorithmic internals, training or evaluation
-    setup details, specific table or figure findings, stated limitations, ablation results,
-    design trade-off justifications, or rebuttal-level clarifications.
-    PASS  — the query clearly targets sub-abstract detail
-    FAIL  — the query is fully resolvable from abstract-level claims alone
-    ⚠ FAIL on D1 triggers an immediate Hard Reject; skip remaining dimensions.
+- `FAIL`: the query has enough lexical or semantic overlap with the abstract that abstract-only retrieval should find the paper.
+- `PASS`: the query's main retrieval hook is not lexically or semantically present in the abstract, so full-paper content is needed.
 
-D2  FALSE_NEGATIVE_RISK
-    Even if the paper is relevant, could this query fail to surface it due to fragile or
-    idiosyncratic phrasing?
-    LOW   — the query uses robust, generalizable cues present in dense representations
-    HIGH  — the query hinges on a single awkward phrase, a rare acronym, or wording
-            unlikely to appear in or near the paper's embedding neighborhood
+Do not mark `FAIL` just because the answer can be inferred, reasoned out, or guessed from the abstract.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━
-OUTPUT FORMAT
-━━━━━━━━━━━━━━━━━━━━━━━━━
+## Output Format
+Return a JSON array with one object per query, in input order:
 
-Return a JSON array — one object per query, in input order.
-Do NOT output anything outside the JSON array.
-
+```json
 [
   {
-    "query": "<original query text>",
+    "query": "original query text",
     "dimensions": {
-      "full_paper_reliance": "PASS | FAIL",
-      "false_negative_risk": "LOW  | HIGH"
+      "full_paper_reliance": "PASS"
     },
-    "reasoning": "<2–4 sentences: cite specific evidence from abstract or hard-negatives
-                   to justify the dimension scores>"
+    "reasoning": "2-4 sentences comparing the query's main lexical/semantic hook with the abstract."
   }
 ]
+```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━
-INPUTS
-━━━━━━━━━━━━━━━━━━━━━━━━━
+Use only `PASS` or `FAIL` for `full_paper_reliance`.
+Return valid JSON only. Do not add explanations before or after the JSON.
 
-Abstract:
+## Abstract
+
 {{abstract}}
 
-Hard Negatives:
-{{hard_negatives}}
+## Queries
 
-Queries:
 {{queries}}

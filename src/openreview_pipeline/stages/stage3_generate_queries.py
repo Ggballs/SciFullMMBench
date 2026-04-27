@@ -77,6 +77,7 @@ class QueryGenerator:
 
         prompt = self._get_prompt_template().format(
             paper_title=paper_title,
+            abstract=getattr(summary, "abstract", None) or "N/A",
             summary_by_views=summary_text,
         )
 

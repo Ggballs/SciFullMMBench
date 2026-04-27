@@ -78,7 +78,7 @@ class GeneratedQueriesDataset(BaseModel):
 
 class RetrievalEvaluation(BaseModel):
     full_paper_reliance: str = Field(description="PASS | FAIL")
-    false_negative_risk: str = Field(description="LOW | HIGH")
+    false_negative_risk: Optional[str] = Field(default=None, description="LOW | HIGH")
     reasoning: str = ""
 
 

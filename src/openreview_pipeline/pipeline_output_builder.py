@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from openreview_pipeline.schemas import PipelineOutput, PipelinePaper, PipelineQuery
+from openreview_pipeline.schemas.schemas_summarize import ViewBulletPoints
 from openreview_pipeline.utils import save_json
 
 
@@ -102,6 +103,22 @@ def _build_filter_status(stage1_item: Optional[dict[str, Any]]) -> Optional[dict
         "reason": reasons,
         "score": stage1_item.get("score"),
     }
+
+
+def _build_summary_views(stage2_item: Optional[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not isinstance(stage2_item, dict):
+        return []
+
+    views = stage2_item.get("views", [])
+    if not isinstance(views, list):
+        return []
+
+    normalized_views: list[dict[str, Any]] = []
+    for view in views:
+        if not isinstance(view, dict):
+            continue
+        normalized_views.append(ViewBulletPoints.model_validate(view).model_dump(mode="json"))
+    return normalized_views
 
 
 def build_pipeline_output(
@@ -214,7 +231,7 @@ def build_pipeline_output(
                 paper_dir=_extract_paper_dir(query_analysis_output_dir, hard_negatives_path, paper_id),
                 openreview=_build_openreview_payload(stage0_item, paper_id, stage5_item),
                 filter_status=_build_filter_status(stage1_item),
-                summary_views=stage2_item.get("views", []) if isinstance(stage2_item, dict) else [],
+                summary_views=_build_summary_views(stage2_item),
                 queries=queries,
             )
         )

@@ -15,13 +15,11 @@ from openreview_pipeline.schemas.schemas_queries import (
     PaperQueryAnalysis,
     QueryAnalysisDataset,
     QueryAnalysisEntry,
-    QueryHardNegativeContext,
     RetrievalEvaluation,
     RuleBasedStyleEvaluation,
     StyleEvaluation,
 )
 from openreview_pipeline.schemas.schemas_summarize import SummarizedPapersDataset
-from openreview_pipeline.stages.stage4_hard_negative_mining import HardNegativeMiningDataset
 from openreview_pipeline.utils import load_json, load_prompt_template, save_json
 from openreview_pipeline.utils.query_analysis import llm_judge, rule_judge
 
@@ -77,23 +75,11 @@ class RetrievalEvaluator:
         *,
         paper_title: str,
         abstract: str,
-        hard_negative_context: Optional[QueryHardNegativeContext],
         query_text: str,
     ) -> RetrievalEvaluation:
-        hard_negative_lines = []
-        if hard_negative_context:
-            for idx, item in enumerate(hard_negative_context.hard_negatives, start=1):
-                title = str(item.get("paper_title", "")).strip() or "Untitled"
-                abstract_text = str(item.get("abstract", "")).strip() or "No abstract available."
-                hard_negative_lines.append(f"{idx}. {title}: {abstract_text}")
-
         prompt = self._get_prompt_template()
         prompt = prompt.replace("{{paper_title}}", paper_title or "Unknown title")
         prompt = prompt.replace("{{abstract}}", abstract or "N/A")
-        prompt = prompt.replace(
-            "{{hard_negatives}}",
-            "\n".join(hard_negative_lines) if hard_negative_lines else "None provided",
-        )
         prompt = prompt.replace("{{queries}}", f"- {query_text}")
 
         raw = self.llm.generate(prompt)
@@ -104,21 +90,15 @@ class RetrievalEvaluator:
         if full_paper_reliance not in {"PASS", "FAIL"}:
             full_paper_reliance = "FAIL"
 
-        false_negative_risk = str(dimensions.get("false_negative_risk", "HIGH")).strip().upper()
-        if false_negative_risk not in {"LOW", "HIGH"}:
-            false_negative_risk = "HIGH"
-
         return RetrievalEvaluation(
             full_paper_reliance=full_paper_reliance,
-            false_negative_risk=false_negative_risk,
+            false_negative_risk=None,
             reasoning=str(parsed.get("reasoning", "")).strip(),
         )
 
 
 def _decision_for_retrieval(evaluation: RetrievalEvaluation) -> str:
     if evaluation.full_paper_reliance == "FAIL":
-        return "Hard Reject"
-    if evaluation.false_negative_risk == "HIGH":
         return "Hard Reject"
     return "Keep"
 
@@ -146,45 +126,6 @@ def _paper_metadata_map(downloaded_dataset: Optional[DownloadedPapersDataset]) -
     return metadata
 
 
-def _hard_negative_map(dataset: Optional[HardNegativeMiningDataset]) -> dict[tuple[str, str, str], QueryHardNegativeContext]:
-    if dataset is None:
-        return {}
-
-    result = {}
-    for item in dataset.results:
-        key = (item.paper_id, item.query, item.source_view)
-        result[key] = QueryHardNegativeContext(
-            hard_negatives=[paper.model_dump(mode="json") for paper in item.hard_negatives],
-            positives=[paper.model_dump(mode="json") for paper in item.positives],
-            keywords_extracted=list(item.keywords_extracted),
-            search_queries_used=list(item.search_queries_used),
-            retrieved_candidates=int(item.retrieved_candidates),
-            mining_method=item.mining_method,
-        )
-    return result
-
-
-def _legacy_hard_negative_match(
-    dataset: Optional[HardNegativeMiningDataset],
-    query_text: str,
-    source_view: str,
-) -> Optional[QueryHardNegativeContext]:
-    if dataset is None:
-        return None
-
-    for item in dataset.results:
-        if item.query == query_text and item.source_view == source_view:
-            return QueryHardNegativeContext(
-                hard_negatives=[paper.model_dump(mode="json") for paper in item.hard_negatives],
-                positives=[paper.model_dump(mode="json") for paper in item.positives],
-                keywords_extracted=list(item.keywords_extracted),
-                search_queries_used=list(item.search_queries_used),
-                retrieved_candidates=int(item.retrieved_candidates),
-                mining_method=item.mining_method,
-            )
-    return None
-
-
 def _render_markdown(report: QueryAnalysisDataset) -> str:
     lines = [
         "# Query Analysis",
@@ -204,7 +145,6 @@ def _render_markdown(report: QueryAnalysisDataset) -> str:
                 "",
                 "## Retrieval Summary",
                 f"- Full-paper reliance: {retrieval_summary.get('full_paper_reliance', {})}",
-                f"- False-negative risk: {retrieval_summary.get('false_negative_risk', {})}",
             ]
         )
 
@@ -241,7 +181,6 @@ def _render_markdown(report: QueryAnalysisDataset) -> str:
                     f"- Decision: {query.decision}",
                     f"- Source view: {query.source_view}",
                     f"- Full-paper reliance: {query.retrieval_evaluation.full_paper_reliance}",
-                    f"- False-negative risk: {query.retrieval_evaluation.false_negative_risk}",
                     f"- Specificity calibration: {query.style_evaluation.llm_based.specificity_calibration_score}",
                     f"- Lexical naturalism: {query.style_evaluation.llm_based.lexical_naturalism_score}",
                     f"- Semantic constraint count: {query.style_evaluation.llm_based.semantic_constraint_count}",
@@ -257,7 +196,6 @@ def apply(
     summarized_dataset: SummarizedPapersDataset,
     queries_dataset: GeneratedQueriesDataset,
     downloaded_dataset: Optional[DownloadedPapersDataset] = None,
-    hard_negative_dataset: Optional[HardNegativeMiningDataset] = None,
     config_path: Optional[Path | str] = None,
     llm_batch_size: int = 25,
     llm_judge_mode: str = "batch",
@@ -265,7 +203,6 @@ def apply(
 ) -> QueryAnalysisDataset:
     paper_meta = _paper_metadata_map(downloaded_dataset)
     summary_by_id = {item.paper_id: item for item in summarized_dataset.summaries}
-    hard_negative_by_query = _hard_negative_map(hard_negative_dataset)
 
     all_queries = [
         query.query_text
@@ -307,7 +244,6 @@ def apply(
     papers: list[PaperQueryAnalysis] = []
     decision_counts: Counter[str] = Counter()
     full_paper_counts: Counter[str] = Counter()
-    false_negative_counts: Counter[str] = Counter()
     query_index = 1
 
     for paper_queries in queries_dataset.papers_queries:
@@ -318,14 +254,9 @@ def apply(
 
         analyzed_queries: list[QueryAnalysisEntry] = []
         for query in paper_queries.queries_by_view:
-            hard_negative_context = hard_negative_by_query.get(
-                (paper_queries.paper_id, query.query_text, query.source_view)
-            ) or _legacy_hard_negative_match(hard_negative_dataset, query.query_text, query.source_view)
-
             retrieval_evaluation = retrieval_evaluator.evaluate_query(
                 paper_title=paper_title,
                 abstract=abstract or "",
-                hard_negative_context=hard_negative_context,
                 query_text=query.query_text,
             )
             decision = _decision_for_retrieval(retrieval_evaluation)
@@ -365,7 +296,7 @@ def apply(
                     is_multimodal=query.is_multimodal,
                     related_bullet_indice=query.related_bullet_indice,
                     related_bullet_justification=query.related_bullet_justification,
-                    hard_negative_context=hard_negative_context,
+                    hard_negative_context=None,
                     retrieval_evaluation=retrieval_evaluation,
                     style_evaluation=style_evaluation,
                     decision=decision,
@@ -374,7 +305,6 @@ def apply(
 
             decision_counts[decision] += 1
             full_paper_counts[retrieval_evaluation.full_paper_reliance] += 1
-            false_negative_counts[retrieval_evaluation.false_negative_risk] += 1
             query_index += 1
 
         papers.append(
@@ -417,7 +347,6 @@ def apply(
         dataset_summary={
             "retrieval_summary": {
                 "full_paper_reliance": dict(full_paper_counts),
-                "false_negative_risk": dict(false_negative_counts),
             },
             "style_summary": {
                 "char_length": rule_report.get("length_stats", {}).get("char_length", {}),
@@ -449,7 +378,6 @@ def run(
     output_dir: Path,
     config_path: Path | str,
     downloaded_path: Optional[Path] = None,
-    hard_negatives_path: Optional[Path] = None,
     llm_batch_size: int = 25,
     llm_judge_mode: str = "batch",
     llm_max_concurrency: int = 1,
@@ -463,18 +391,12 @@ def run(
         if downloaded_path is not None and downloaded_path.is_file()
         else None
     )
-    hard_negative_dataset = (
-        load_json(hard_negatives_path, HardNegativeMiningDataset)
-        if hard_negatives_path is not None and hard_negatives_path.is_file()
-        else None
-    )
 
     artifact = apply(
         llm=llm,
         summarized_dataset=summarized_dataset,
         queries_dataset=queries_dataset,
         downloaded_dataset=downloaded_dataset,
-        hard_negative_dataset=hard_negative_dataset,
         config_path=config_path,
         llm_batch_size=llm_batch_size,
         llm_judge_mode=llm_judge_mode,

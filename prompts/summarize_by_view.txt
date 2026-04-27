@@ -1,84 +1,63 @@
 # Literature-Review Style Summarization
 
-You are given the full OpenReview content for a scientific paper:
-- Reviewer summaries, strengths, weaknesses, and questions (all reviewers)
-- Author rebuttals
-- Area chair meta review
+You are summarizing OpenReview content for one scientific paper.
 
-Your task: produce structured summaries for each view in a **literature review style**.
+Write clean literature-review notes about the paper itself, not a narration of the review conversation.
 
-Write as if you are preparing high-quality structured notes for a related-work section or paper survey.
-The output should describe the paper's contribution, method, evidence, and limits in clean academic prose,
-not narrate the review conversation.
+## Views
+Organize the output into exactly these views:
+- `contribution`
+- `method_dataset`
+- `experiment_result`
+- `limitation_scope`
 
 Each view should contain:
-- a short view-specific summary
-- a consolidated list of bullet points capturing the distinct and important points for that view
+- `summary`: a short summary of that view
+- `bullet_points`: concise atomic claims for that view
 
-## Rules:
-1. One atomic claim per bullet
-2. Merge duplicate points across reviewers into one bullet (keep the most specific version)
-3. Prioritize the multimodal information (exactly pointing out the table / figure / equation...)
-4. Exclude procedural comments (e.g. "thanks for the review")
-5. Categorize each point into exactly one best-fit view:
-   - contribution
-   - method/dataset
-   - experiment/result
-   - limitation/scope
-6. Do not repeat or paraphrase the same point across views or within a view
-7. If a point could fit multiple views, assign it once to the most specific view
-8. The `summary` of a view must only summarize the bullet points in that same view
-9. Write every `summary` and bullet point in a **literature review tone**: concise, academic, descriptive, and paper-focused
-11. Describe the paper itself, not the conversation around it
-12. Do not write bullets like "Reviewer 2 asks...", "A reviewer questions...", "The rebuttal explains...", or "The authors respond that..."
-14. When a reviewer concern is clarified or resolved by the rebuttal or comments, absorb that clarification into the final statement rather than narrating the exchange
-15. When a concern remains only partially resolved, express that as a paper-level limitation or evidential weakness
-16. Prefer formulations such as:
-    - "The work introduces..."
-    - "The method uses..."
-    - "The dataset is constructed by..."
-    - "Experiments show..."
-    - "Evidence remains limited for..."
-17. If a claim is disputed or only weakly supported, use calibrated wording such as:
-    - "The paper argues..."
-    - "The reported evidence suggests..."
-    - "Support for X remains limited to..."
-18. Focus on the final interpreted substance of the paper and its evidence, not the conversational back-and-forth
+## Principles
+- Merge duplicate reviewer/rebuttal/comment points into one clear claim.
+- Put each claim in the single best-fit view.
+- Exclude procedural comments and thanks.
+- If a concern is clarified by rebuttal/comments, write the final paper-level interpretation.
+- If support is weak or disputed, use calibrated wording such as "The paper argues..." or "Evidence remains limited for..."
+- Each OpenReview field is prefixed with a source path like `[Reviews/Review 1/pros]`.
+- For every bullet point, include `source_refs` with the exact source paths that support the claim.
 
-## Output Format:
-Output a JSON object with the following structure:
+## Output Format
+Return valid JSON only:
+
 ```
 {{
   "contribution": {{
-    "summary": "short summary for the contribution view",
-    "bullet_points": ["bullet point 1", "bullet point 2", ...]
+    "summary": "short summary for this view",
+    "bullet_points": [
+      {{
+        "text": "one atomic literature-review claim",
+        "source_refs": ["Reviews/Review 1/pros"]
+      }}
+    ]
   }},
   "method_dataset": {{
-    "summary": "short summary for the method/dataset view",
-    "bullet_points": ["bullet point 1", "bullet point 2", ...]
+    "summary": "short summary for this view",
+    "bullet_points": []
   }},
   "experiment_result": {{
-    "summary": "short summary for the experiment/result view",
-    "bullet_points": ["bullet point 1", "bullet point 2", ...]
+    "summary": "short summary for this view",
+    "bullet_points": []
   }},
   "limitation_scope": {{
-    "summary": "short summary for the limitation/scope view",
-    "bullet_points": ["bullet point 1", "bullet point 2", ...]
+    "summary": "short summary for this view",
+    "bullet_points": []
   }}
 }}
 ```
 
-
-## Important Interpretation Rule:
-- The OpenReview discussion is evidence, not the output style.
-- Use it to decide what is well supported, what is clarified, and what remains uncertain.
-- Then rewrite everything as clean literature-review statements about the paper.
-
-## Paper Information:
+## Paper Information
 Title: {paper_title}
 Abstract: {paper_abstract}
 
-## Full OpenReview Content:
+## Full OpenReview Content
 {full_openreview_content}
 
-## Output (JSON):
+## Output (JSON)

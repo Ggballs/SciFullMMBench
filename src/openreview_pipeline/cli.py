@@ -105,7 +105,8 @@ def generate_queries(input_path: str, output: str, base_url: str, api_token: str
 
 @cli.command("hard-negative-mining")
 @click.option("--input", "-i", "input_path", type=click.Path(exists=True), required=True, help="Input generated queries dataset path")
-@click.option("--output", "-o", type=click.Path(), default="data/04_hard_negatives.json", help="Output path")
+@click.option("--query-analysis-input", type=click.Path(exists=True), default=None, help="Optional stage-4 query analysis directory used to keep only surviving queries")
+@click.option("--output", "-o", type=click.Path(), default="data/05_hard_negatives.json", help="Output path")
 @click.option("--base-url", default=None, help="LLM API base URL (overrides config)")
 @click.option("--api-token", default=None, help="LLM API token (overrides config)")
 @click.option("--model", default=None, help="Model name (overrides config)")
@@ -115,6 +116,7 @@ def generate_queries(input_path: str, output: str, base_url: str, api_token: str
 @click.option("--scholar-language", default=None, help="Google Scholar language code, e.g. 'en'")
 def hard_negative_mining(
     input_path: str,
+    query_analysis_input: str,
     output: str,
     base_url: str,
     api_token: str,
@@ -127,6 +129,7 @@ def hard_negative_mining(
     run_hard_negative_mining_stage(
         input_path=Path(input_path),
         output_path=Path(output),
+        query_analysis_output_dir=Path(query_analysis_input) if query_analysis_input else None,
         config_path=CONFIG_PATH,
         base_url=base_url,
         api_token=api_token,
@@ -142,8 +145,7 @@ def hard_negative_mining(
 @click.option("--summarized-input", type=click.Path(exists=True), required=True, help="Stage-2 summarized dataset path")
 @click.option("--queries-input", type=click.Path(exists=True), required=True, help="Stage-3 generated queries dataset path")
 @click.option("--downloaded-input", type=click.Path(exists=True), default=None, help="Optional stage-0 downloaded dataset path")
-@click.option("--hard-negatives-input", type=click.Path(exists=True), default=None, help="Optional stage-4 hard negatives dataset path")
-@click.option("--output-dir", "-o", type=click.Path(), default="data/05_query_analysis", help="Output directory")
+@click.option("--output-dir", "-o", type=click.Path(), default="data/04_query_analysis", help="Output directory")
 @click.option("--base-url", default=None, help="LLM API base URL (overrides config)")
 @click.option("--api-token", default=None, help="LLM API token (overrides config)")
 @click.option("--model", default=None, help="Model name (overrides config)")
@@ -154,7 +156,6 @@ def query_analysis(
     summarized_input: str,
     queries_input: str,
     downloaded_input: str,
-    hard_negatives_input: str,
     output_dir: str,
     base_url: str,
     api_token: str,
@@ -167,7 +168,6 @@ def query_analysis(
         summarized_path=Path(summarized_input),
         queries_path=Path(queries_input),
         downloaded_path=Path(downloaded_input) if downloaded_input else None,
-        hard_negatives_path=Path(hard_negatives_input) if hard_negatives_input else None,
         output_dir=Path(output_dir),
         config_path=CONFIG_PATH,
         base_url=base_url,
@@ -192,6 +192,7 @@ def query_analysis(
 @click.option("--llm-batch-size", default=25, type=int, help="Batch size for LLM-as-a-judge style scoring")
 @click.option("--llm-judge-mode", default="batch", help="LLM judge mode: batch or single_query")
 @click.option("--llm-max-concurrency", default=1, type=int, help="Max concurrent style-judge batches")
+@click.option("--final-output", type=click.Path(), default=None, help="Final combined JSON path")
 def run_all(
     output_dir: str,
     venue: str,
@@ -205,8 +206,9 @@ def run_all(
     llm_batch_size: int,
     llm_judge_mode: str,
     llm_max_concurrency: int,
+    final_output: str,
 ):
-    run_selected_stages(
+    paths = run_selected_stages(
         "0-5",
         output_dir=Path(output_dir),
         venue=venue,
@@ -222,6 +224,21 @@ def run_all(
         llm_judge_mode=llm_judge_mode,
         llm_max_concurrency=llm_max_concurrency,
     )
+    final_output_path = (
+        Path(final_output).expanduser().resolve()
+        if final_output
+        else paths.output_dir / "final_pipeline_output.json"
+    )
+    artifact = build_pipeline_output(
+        downloaded_path=paths.downloaded_path,
+        filtered_path=paths.filtered_path,
+        summarized_path=paths.summarized_path,
+        queries_path=paths.queries_path,
+        hard_negatives_path=paths.hard_negatives_path,
+        query_analysis_output_dir=paths.query_analysis_output_dir,
+    )
+    write_pipeline_output(final_output_path, artifact)
+    click.echo(str(final_output_path))
 
 
 @cli.command("update-final-json")
@@ -231,8 +248,8 @@ def run_all(
 @click.option("--filtered-path", type=click.Path(exists=True), default=None, help="Optional override for 01_filtered.json")
 @click.option("--summarized-path", type=click.Path(exists=True), default=None, help="Optional override for 02_summarized.json")
 @click.option("--queries-path", type=click.Path(exists=True), default=None, help="Optional override for 03_queries.json")
-@click.option("--hard-negatives-path", type=click.Path(exists=True), default=None, help="Optional override for 04_hard_negatives.json")
-@click.option("--query-analysis-dir", type=click.Path(exists=True), default=None, help="Optional override for 05_query_analysis directory")
+@click.option("--hard-negatives-path", type=click.Path(exists=True), default=None, help="Optional override for 05_hard_negatives.json")
+@click.option("--query-analysis-dir", type=click.Path(exists=True), default=None, help="Optional override for 04_query_analysis directory")
 def update_final_json(
     base_dir: str,
     output: str,
@@ -252,8 +269,8 @@ def update_final_json(
         filtered_path=Path(filtered_path).expanduser().resolve() if filtered_path else (base / "01_filtered.json"),
         summarized_path=Path(summarized_path).expanduser().resolve() if summarized_path else (base / "02_summarized.json"),
         queries_path=Path(queries_path).expanduser().resolve() if queries_path else (base / "03_queries.json"),
-        hard_negatives_path=Path(hard_negatives_path).expanduser().resolve() if hard_negatives_path else (base / "04_hard_negatives.json"),
-        query_analysis_output_dir=Path(query_analysis_dir).expanduser().resolve() if query_analysis_dir else (base / "05_query_analysis"),
+        hard_negatives_path=Path(hard_negatives_path).expanduser().resolve() if hard_negatives_path else (base / "05_hard_negatives.json"),
+        query_analysis_output_dir=Path(query_analysis_dir).expanduser().resolve() if query_analysis_dir else (base / "04_query_analysis"),
     )
     write_pipeline_output(final_output_path, artifact)
     click.echo(str(final_output_path))

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -9,6 +10,8 @@ from typing import Optional, Sequence
 import yaml
 
 from openreview_pipeline.llm import MockLLMBackend, OpenAICompatibleBackend
+from openreview_pipeline.schemas.schemas_queries import GeneratedQueriesDataset, GeneratedQueriesForPaper
+from openreview_pipeline.utils import load_json, save_json
 from openreview_pipeline.stages import (
     DatasetDownloader,
     HardNegativeMiner,
@@ -29,8 +32,8 @@ LOGICAL_STAGE_ORDER = [
     "filter",
     "summarize",
     "generate_queries",
-    "hard_negative_mining",
     "query_analysis",
+    "hard_negative_mining",
 ]
 
 STAGE_ALIASES = {
@@ -43,12 +46,12 @@ STAGE_ALIASES = {
     "3": "generate_queries",
     "generate_queries": "generate_queries",
     "generate-queries": "generate_queries",
-    "4": "hard_negative_mining",
-    "hard_negative_mining": "hard_negative_mining",
-    "hard-negative-mining": "hard_negative_mining",
-    "5": "query_analysis",
+    "4": "query_analysis",
     "query_analysis": "query_analysis",
     "query-analysis": "query_analysis",
+    "5": "hard_negative_mining",
+    "hard_negative_mining": "hard_negative_mining",
+    "hard-negative-mining": "hard_negative_mining",
 }
 
 DEFAULT_STAGE_FILENAMES = {
@@ -56,7 +59,7 @@ DEFAULT_STAGE_FILENAMES = {
     "filter": "01_filtered.json",
     "summarize": "02_summarized.json",
     "generate_queries": "03_queries.json",
-    "hard_negative_mining": "04_hard_negatives.json",
+    "hard_negative_mining": "05_hard_negatives.json",
 }
 
 
@@ -247,7 +250,7 @@ def resolve_pipeline_paths(
         filtered_path=stage_path(filtered_path, "filter"),
         summarized_path=stage_path(summarized_path, "summarize"),
         queries_path=stage_path(queries_path, "generate_queries"),
-        query_analysis_output_dir=_normalize_path(query_analysis_output_dir) or (base_dir / "05_query_analysis"),
+        query_analysis_output_dir=_normalize_path(query_analysis_output_dir) or (base_dir / "04_query_analysis"),
         hard_negatives_path=stage_path(hard_negatives_path, "hard_negative_mining"),
     )
 
@@ -263,6 +266,66 @@ def _require_input(stage_name: str, input_path: Optional[Path]) -> Path:
     if not resolved.is_file():
         raise FileNotFoundError(f"Input file not found for stage '{stage_name}': {resolved}")
     return resolved
+
+
+def _filter_queries_for_hard_negative_mining(
+    *,
+    query_dataset: GeneratedQueriesDataset,
+    query_analysis_output_dir: Optional[Path],
+) -> GeneratedQueriesDataset:
+    if query_analysis_output_dir is None:
+        return query_dataset
+
+    analysis_path = query_analysis_output_dir / "query_analysis.json"
+    if not analysis_path.is_file():
+        return query_dataset
+
+    with analysis_path.open("r", encoding="utf-8") as handle:
+        raw_analysis = json.load(handle)
+    keep_keys = {
+        (
+            str(paper.get("paper_id", "")),
+            str(query.get("query_text", "")),
+            str(query.get("source_view", "")),
+        )
+        for paper in raw_analysis.get("papers", [])
+        if isinstance(paper, dict)
+        for query in paper.get("queries", [])
+        if isinstance(query, dict) and str(query.get("decision", "")).strip() == "Keep"
+    }
+    if not keep_keys:
+        logger.info("Stage-5 analysis produced no surviving queries; hard-negative mining will be skipped.")
+        return GeneratedQueriesDataset(papers_queries=[], total_papers=0, total_queries=0)
+
+    filtered_papers = []
+    for paper in query_dataset.papers_queries:
+        kept_queries = [
+            query
+            for query in paper.queries_by_view
+            if (paper.paper_id, query.query_text, query.source_view) in keep_keys
+        ]
+        if not kept_queries:
+            continue
+        filtered_papers.append(
+            GeneratedQueriesForPaper(
+                paper_id=paper.paper_id,
+                paper_title=paper.paper_title,
+                queries_by_view=kept_queries,
+                generated_at=paper.generated_at,
+            )
+        )
+
+    logger.info(
+        "Filtered hard-negative mining input from %s to %s queries using stage-5 Keep decisions.",
+        query_dataset.total_queries,
+        sum(len(paper.queries_by_view) for paper in filtered_papers),
+    )
+    return GeneratedQueriesDataset(
+        papers_queries=filtered_papers,
+        total_papers=len(filtered_papers),
+        total_queries=sum(len(paper.queries_by_view) for paper in filtered_papers),
+        generated_at=query_dataset.generated_at,
+    )
 
 
 def run_download_stage(
@@ -380,6 +443,7 @@ def run_hard_negative_mining_stage(
     *,
     input_path: Path | str,
     output_path: Path | str,
+    query_analysis_output_dir: Optional[Path | str] = None,
     config_path: Optional[Path | str] = None,
     base_url: Optional[str] = None,
     api_token: Optional[str] = None,
@@ -417,7 +481,13 @@ def run_hard_negative_mining_stage(
         scholar_client=scholar_client,
         scholar_max_results=int(search_settings["max_results"]),
     )
-    miner.run(input_path, output_path)
+
+    query_dataset = load_json(input_path, GeneratedQueriesDataset)
+    filtered_dataset = _filter_queries_for_hard_negative_mining(
+        query_dataset=query_dataset,
+        query_analysis_output_dir=_normalize_path(query_analysis_output_dir),
+    )
+    save_json(output_path, miner.apply(filtered_dataset))
     return output_path
 
 
@@ -428,7 +498,6 @@ def run_query_analysis_stage(
     output_dir: Path | str,
     config_path: Optional[Path | str] = None,
     downloaded_path: Optional[Path | str] = None,
-    hard_negatives_path: Optional[Path | str] = None,
     base_url: Optional[str] = None,
     api_token: Optional[str] = None,
     model: Optional[str] = None,
@@ -455,7 +524,6 @@ def run_query_analysis_stage(
         output_dir=output_dir,
         config_path=_normalize_path(config_path) or DEFAULT_CONFIG_PATH,
         downloaded_path=_normalize_path(downloaded_path),
-        hard_negatives_path=_normalize_path(hard_negatives_path),
         llm_batch_size=llm_batch_size,
         llm_judge_mode=llm_judge_mode,
         llm_max_concurrency=llm_max_concurrency,
@@ -514,7 +582,7 @@ def run_selected_stages(
     )
 
     needs_llm = any(
-        stage in {"summarize", "generate_queries", "hard_negative_mining", "query_analysis"}
+        stage in {"summarize", "generate_queries", "query_analysis", "hard_negative_mining"}
         for stage in stages
     )
     llm_backend = None
@@ -576,22 +644,6 @@ def run_selected_stages(
                 llm_backend=llm_backend,
             )
             queries_source = current_input
-        elif stage == "hard_negative_mining":
-            query_input = _require_input(stage, queries_source or current_input or paths.queries_path)
-            run_hard_negative_mining_stage(
-                input_path=query_input,
-                output_path=paths.hard_negatives_path,
-                config_path=config_path,
-                base_url=base_url,
-                api_token=api_token,
-                model=model,
-                scholar_provider=scholar_provider,
-                serpapi_api_key=serpapi_api_key,
-                scholar_max_results=scholar_max_results,
-                scholar_language=scholar_language,
-                llm_backend=llm_backend,
-            )
-            current_input = query_input
         elif stage == "query_analysis":
             summary_input = summarized_source or paths.summarized_path
             query_input = queries_source or paths.queries_path
@@ -600,7 +652,6 @@ def run_selected_stages(
                 queries_path=_require_input(stage, query_input),
                 output_dir=paths.query_analysis_output_dir,
                 downloaded_path=downloaded_source,
-                hard_negatives_path=paths.hard_negatives_path if paths.hard_negatives_path.is_file() else None,
                 config_path=config_path,
                 base_url=base_url,
                 api_token=api_token,
@@ -608,6 +659,23 @@ def run_selected_stages(
                 llm_batch_size=llm_batch_size,
                 llm_judge_mode=llm_judge_mode,
                 llm_max_concurrency=llm_max_concurrency,
+                llm_backend=llm_backend,
+            )
+            current_input = query_input
+        elif stage == "hard_negative_mining":
+            query_input = _require_input(stage, queries_source or current_input or paths.queries_path)
+            run_hard_negative_mining_stage(
+                input_path=query_input,
+                output_path=paths.hard_negatives_path,
+                query_analysis_output_dir=paths.query_analysis_output_dir if paths.query_analysis_output_dir.is_dir() else None,
+                config_path=config_path,
+                base_url=base_url,
+                api_token=api_token,
+                model=model,
+                scholar_provider=scholar_provider,
+                serpapi_api_key=serpapi_api_key,
+                scholar_max_results=scholar_max_results,
+                scholar_language=scholar_language,
                 llm_backend=llm_backend,
             )
             current_input = query_input

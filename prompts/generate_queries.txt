@@ -1,6 +1,6 @@
 # Query Generation
 
-Given the literature-review-style summary of a scientific paper organized by views (`contribution`, `method/dataset`, `experiment/result`, `limitation/scope`), where each view contains a short narrative summary and indexed bullet points, generate **1-2 human-written-style general retrieval queries per view**.
+Given the paper title, abstract, and a literature-review-style summary of a scientific paper organized by views (`contribution`, `method/dataset`, `experiment/result`, `limitation/scope`), where each view contains a short narrative summary and indexed bullet points, generate **1-2 human-written-style general retrieval queries per view**.
 
 The goal is to sound like a real researcher searching for a paper they partly remember / explore the new literature, not like a benchmark description, annotation guideline, or paper abstract.
 
@@ -11,6 +11,7 @@ Write queries that are:
 3. **Concise**: usually **12-20 words**, ideally around **14-17 words**
 4. **Search-realistic**: something a person would actually type into a paper search engine
 5. **Discriminative**: centered on the paper's most distinctive idea, setup, result, or limitation
+6. **Beyond-abstract Retrieval Hook**: the query should not be solvable or trivially retrievable from the abstract alone; it should lean on details that are more specific than the abstract's top-line claims
 
 ## Human Style Requirements
 ### 1. Use human query templates
@@ -26,6 +27,9 @@ Use the following template families:
 - Each query should be grounded in **exactly one bullet point**: choose the single most discriminative bullet from the view and base the query on that bullet only.
 - Use natural phrasing with modifiers such as `for`, `with`, `using`, `without`, `on`, and `about`.
 - Prefer the **shortest natural query** that still preserves the core search intent.
+- Avoid using only the paper abstract's generic topic, task, or headline claim as the retrieval hook.
+- Prefer details that would help distinguish the paper **beyond what the abstract alone already makes obvious**, while still sounding like a realistic search query.
+- If a query could be answered or matched well using only the abstract, make it more discriminative by shifting toward a more specific method detail, evaluation setup, limitation, trade-off, or notable finding from the bullet.
 
 
 ### 3. Prefer conceptual paraphrases over rare exact terms/statics
@@ -82,6 +86,10 @@ Return valid JSON only. Do not add explanations before or after the JSON.
 ## Paper Title
 
 {paper_title}
+
+## Paper Abstract
+
+{abstract}
 
 ## Bullet-Point Summary
 

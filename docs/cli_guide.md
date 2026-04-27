@@ -280,3 +280,28 @@ Use the stage-specific commands when:
 - you want to debug one stage in isolation
 - you already have intermediate JSON artifacts
 - you want to rerun query analysis without rerunning earlier stages
+
+
+
+## Note
+```bash
+PYTHONPATH=src python3 -m openreview_pipeline.cli run-all \
+  --venue ICLR \
+  --year 2026 \
+  --forum-id XZNXSM4rHG \
+  --output-dir outputs/test_single
+
+```
+
+```bash
+PYTHONPATH=src python3 -m openreview_pipeline.cli summarize \
+  --input outputs/test_single/01_filtered.json \
+  --output outputs/test_single/02_summarized.json
+
+```
+
+```bash
+PYTHONPATH=src python3 -m openreview_pipeline.cli update-final-json \
+  --base-dir outputs/test_single
+
+```
