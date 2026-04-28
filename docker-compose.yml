@@ -24,7 +24,7 @@ services:
       context: .
       network: host
       args:
-        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     container_name: scifull-gradio
     restart: unless-stopped
     depends_on:
