@@ -23,8 +23,6 @@ services:
     build:
       context: .
       network: host
-      args:
-        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     container_name: scifull-gradio
     restart: unless-stopped
     depends_on:
@@ -38,8 +36,6 @@ services:
       FINAL_JSON: ${FINAL_JSON:-outputs/test_single/final_pipeline_output.json}
     ports:
       - "${GRADIO_PORT:-7860}:7860"
-    volumes:
-      - ./logs:/app/logs
 
 volumes:
   mysql-data:
