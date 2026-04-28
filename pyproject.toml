@@ -19,7 +19,7 @@ dependencies = [
     "scipy>=1.10",
     "matplotlib>=3.7",
     "openai>=1.0",
-    "openreview>=2.0",
+    "openreview-py>=2.0",
 ]
 
 [project.optional-dependencies]
