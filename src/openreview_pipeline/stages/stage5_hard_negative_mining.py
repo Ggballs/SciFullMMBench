@@ -365,7 +365,7 @@ class HardNegativeMiner:
         llm: LLMBackend,
         scholar_client: GoogleScholarClient,
         scholar_max_results: int = 10,
-        download_selected_pdfs: bool = True,
+        download_selected_pdfs: bool = False,
         pdf_output_dir: Optional[Path] = None,
         review_max_workers: int = 4,
     ):
@@ -443,13 +443,14 @@ class HardNegativeMiner:
         query: str,
         category: str,
     ) -> None:
-        if not self.download_selected_pdfs:
-            paper.pdf_download_status = "skipped"
-            paper.pdf_download_error = "PDF downloading disabled"
-            return
-
         pdf_url = paper.pdf_url or _build_arxiv_pdf_url(paper.arxiv_id) or _extract_pdf_url(paper.url)
         paper.pdf_url = pdf_url
+        if not self.download_selected_pdfs:
+            paper.pdf_path = None
+            paper.pdf_download_status = "url_only" if pdf_url else "unavailable"
+            paper.pdf_download_error = None if pdf_url else "No downloadable PDF URL found"
+            return
+
         if not pdf_url:
             paper.pdf_download_status = "unavailable"
             paper.pdf_download_error = "No downloadable PDF URL found"

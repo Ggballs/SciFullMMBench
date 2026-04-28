@@ -402,19 +402,26 @@ def build_overview_html(
     generated_summary: Dict[str, Any],
 ) -> str:
     dataset = final_data.get("dataset_overview", {}) or {}
-    stage5 = final_data.get("stage5_summary", {}) or {}
-    style_summary = stage5.get("style_summary", {}) or {}
+    query_analysis_summary = (
+        final_data.get("query_analysis_summary")
+        or final_data.get("stage5_summary")
+        or {}
+    )
+    decision_counts = query_analysis_summary.get("decision_counts", {}) or {}
+    if not decision_counts:
+        decision_counts = {"Keep": 0, "Hard Reject": 0}
+        for paper in final_data.get("papers", []):
+            for query in paper.get("queries", []) or []:
+                decision = safe_get(query, "query_analysis", "decision", default="")
+                if decision in decision_counts:
+                    decision_counts[decision] += 1
 
     cards = [
         ("Papers", fmt_int(len(final_data.get("papers", [])))),
-        ("Queries", fmt_int(dataset.get("stage5_total_queries") or dataset.get("stage3_total_queries") or 0)),
-        ("Hard Negatives", fmt_int(dataset.get("stage4_total_hard_negatives", 0))),
-        ("Generated Spec. Mean", fmt_score(style_summary.get("specificity_calibration_mean"))),
-        ("Generated Nat. Mean", fmt_score(style_summary.get("lexical_naturalism_mean"))),
-        (
-            "Generated Template Unmatched",
-            fmt_pct(generated_summary.get("unmatched_template_share"), 2),
-        ),
+        ("Queries", fmt_int(dataset.get("stage4_total_queries") or dataset.get("stage3_total_queries") or 0)),
+        ("Keep Queries", fmt_int(decision_counts.get("Keep", 0))),
+        ("Hard Reject Queries", fmt_int(decision_counts.get("Hard Reject", 0))),
+        ("Hard Negatives", fmt_int(dataset.get("stage5_total_hard_negatives") or dataset.get("stage4_total_hard_negatives") or 0)),
     ]
 
     cards_html = "".join(
@@ -443,8 +450,8 @@ def build_overview_html(
             <div style="margin-bottom:8px">{human_status}</div>
             <div style="margin-bottom:8px"><b>Human reference in code:</b> combined LitSearch human + PASA human; JSON files unchanged.</div>
             <div style="margin-bottom:8px"><b>Human query count:</b> {fmt_int(human_summary.get("total_queries", 0))}</div>
-            <div style="margin-bottom:8px"><b>Decision Counts:</b> {esc(stage5.get("decision_counts", {}))}</div>
-            <div style="margin-bottom:8px"><b>Retrieval Summary:</b> {esc(stage5.get("retrieval_summary", {}))}</div>
+            <div style="margin-bottom:8px"><b>Decision Counts:</b> {esc(query_analysis_summary.get("decision_counts", {}))}</div>
+            <div style="margin-bottom:8px"><b>Retrieval Summary:</b> {esc(query_analysis_summary.get("retrieval_summary", {}))}</div>
         </div>
     </div>
     """
@@ -940,6 +947,35 @@ def candidate_question_label(candidate: Dict[str, Any]) -> str:
     return "Is this label correct?"
 
 
+def candidate_wrong_label_choices(candidate: Dict[str, Any]) -> List[str]:
+    if candidate.get("group") == "hard_negative":
+        return [
+            "Actually positive",
+            "Actually irrelevant / unsupported",
+            "Too easy / not a hard negative",
+            "Only topically related",
+            "Evidence unavailable",
+            "Duplicate / same paper",
+            "Other",
+        ]
+    if candidate.get("group") == "positive":
+        return [
+            "Actually hard negative",
+            "Actually irrelevant / unsupported",
+            "Only topically related",
+            "Evidence unavailable",
+            "Duplicate / same paper",
+            "Other",
+        ]
+    return [
+        "Wrong relevance class",
+        "Only topically related",
+        "Evidence unavailable",
+        "Duplicate / same paper",
+        "Other",
+    ]
+
+
 def build_candidate_review_header(context: Dict[str, Any]) -> str:
     query_text = context.get("query_text", "") if context else ""
     if not query_text:
@@ -963,12 +999,15 @@ def human_judgment_updates(path: Path, context: Dict[str, Any]):
     candidate_items = context.get("candidate_items", []) if context else []
     real_researcher_search = human_like.get("real_researcher_search")
     show_non_human_type = real_researcher_search == "No"
+    non_human_like_type = human_like.get("non_human_like_type", [])
+    show_non_human_other = show_non_human_type and "Other" in (non_human_like_type or [])
 
     updates = [
         gr.update(value=query_paper.get("relevance")),
         gr.update(value=query_paper.get("notes", "")),
         gr.update(value=real_researcher_search),
-        gr.update(value=human_like.get("non_human_like_type", []), visible=show_non_human_type),
+        gr.update(value=non_human_like_type, visible=show_non_human_type),
+        gr.update(value=human_like.get("non_human_like_other", ""), visible=show_non_human_other),
         gr.update(value=human_like.get("notes", "")),
     ]
 
@@ -982,7 +1021,11 @@ def human_judgment_updates(path: Path, context: Dict[str, Any]):
                 [
                     gr.update(value=candidate["html"], visible=True),
                     gr.update(value=label_correct, visible=True, label=candidate_question_label(candidate)),
-                    gr.update(value=saved.get("wrong_label_type", []), visible=show_wrong_type),
+                    gr.update(
+                        value=saved.get("wrong_label_type", []),
+                        choices=candidate_wrong_label_choices(candidate),
+                        visible=show_wrong_type,
+                    ),
                     gr.update(value=saved.get("notes", ""), visible=True),
                 ]
             )
@@ -1005,6 +1048,7 @@ def save_current_human_judgment(
     query_notes: str,
     real_researcher_search: Optional[str],
     non_human_like_type: List[str],
+    non_human_like_other: str,
     human_like_notes: str,
     *candidate_values: Any,
 ) -> str:
@@ -1018,6 +1062,8 @@ def save_current_human_judgment(
         errors.append("human-like search")
     if real_researcher_search == "No" and not non_human_like_type:
         errors.append("non human-like type")
+    if real_researcher_search == "No" and "Other" in (non_human_like_type or []) and not str(non_human_like_other or "").strip():
+        errors.append("non human-like other reason")
 
     candidate_items = context.get("candidate_items", [])[:MAX_CANDIDATE_JUDGE_ROWS]
     candidate_checks = {}
@@ -1061,6 +1107,7 @@ def save_current_human_judgment(
     item["human_like_search"] = {
         "real_researcher_search": real_researcher_search,
         "non_human_like_type": (non_human_like_type or []) if real_researcher_search == "No" else [],
+        "non_human_like_other": str(non_human_like_other or "").strip() if real_researcher_search == "No" and "Other" in (non_human_like_type or []) else "",
         "notes": human_like_notes or "",
     }
     item["candidate_checks"] = candidate_checks
@@ -1284,6 +1331,7 @@ def launch_app(
     human_litsearch_path: Optional[Path],
     human_pasa_path: Optional[Path],
     human_judgments_path: Path,
+    port: int = 7860,
     share: bool = False,
 ) -> None:
     final_data = load_json(final_json_path)
@@ -1388,7 +1436,7 @@ def launch_app(
                         )
                         query_notes = gr.Textbox(
                             value=initial_judgment_updates[1]["value"],
-                            label="Relevance notes (optional)",
+                            label="Reason / note (optional)",
                             lines=2,
                         )
             with gr.Row():
@@ -1403,21 +1451,27 @@ def launch_app(
                             label="Would a real researcher search this?",
                         )
                         non_human_like_type = gr.CheckboxGroup(
-                            ["Too broad", "Too specific", "Too casual", "Too formal / synthetic-like"],
+                            ["Too broad", "Too specific", "Too casual", "Too formal / synthetic-like", "Other"],
                             value=initial_judgment_updates[3]["value"],
                             label="Non-human-like type",
                             visible=initial_judgment_updates[3].get("visible", False),
                         )
-                        human_like_notes = gr.Textbox(
+                        non_human_like_other = gr.Textbox(
                             value=initial_judgment_updates[4]["value"],
-                            label="Human-like notes (optional)",
+                            label="Other reason / note",
+                            lines=1,
+                            visible=initial_judgment_updates[4].get("visible", False),
+                        )
+                        human_like_notes = gr.Textbox(
+                            value=initial_judgment_updates[5]["value"],
+                            label="Reason / note (optional)",
                             lines=2,
                         )
 
             gr.Markdown("### Candidate Checks")
             candidate_review_header = gr.HTML(value=initial_candidate_review_header)
             candidate_components = []
-            candidate_start = 5
+            candidate_start = 6
             for idx in range(MAX_CANDIDATE_JUDGE_ROWS):
                 offset = candidate_start + idx * 4
                 with gr.Row():
@@ -1434,14 +1488,14 @@ def launch_app(
                             visible=initial_judgment_updates[offset + 1].get("visible", False),
                         )
                         candidate_wrong_type = gr.CheckboxGroup(
-                            ["False positive", "False negative", "Only topically similar", "Insufficient evidence"],
+                            initial_judgment_updates[offset + 2].get("choices", ["Wrong relevance class", "Other"]),
                             value=initial_judgment_updates[offset + 2]["value"],
                             label="Wrong-label type",
                             visible=initial_judgment_updates[offset + 2].get("visible", False),
                         )
                         candidate_notes = gr.Textbox(
                             value=initial_judgment_updates[offset + 3]["value"],
-                            label="Candidate notes (optional)",
+                            label="Reason / note (optional)",
                             lines=2,
                             visible=initial_judgment_updates[offset + 3].get("visible", False),
                         )
@@ -1474,7 +1528,10 @@ def launch_app(
                 return _render_all(paper_id, source_view=source_view, query_label=query_label)
 
             def _toggle_non_human_like(value: Optional[str]):
-                return gr.update(visible=value == "No")
+                return gr.update(visible=value == "No"), gr.update(visible=False)
+
+            def _toggle_non_human_other(value: Optional[List[str]]):
+                return gr.update(visible="Other" in (value or []))
 
             def _toggle_wrong_label_type(value: Optional[str]):
                 return gr.update(visible=value == "No")
@@ -1485,6 +1542,7 @@ def launch_app(
                 query_notes_value: str,
                 real_researcher_search_value: Optional[str],
                 non_human_like_type_value: List[str],
+                non_human_like_other_value: str,
                 human_like_notes_value: str,
                 *candidate_values: Any,
             ):
@@ -1495,6 +1553,7 @@ def launch_app(
                     query_notes_value,
                     real_researcher_search_value,
                     non_human_like_type_value,
+                    non_human_like_other_value,
                     human_like_notes_value,
                     *candidate_values,
                 )
@@ -1514,6 +1573,7 @@ def launch_app(
                 query_notes,
                 real_researcher_search,
                 non_human_like_type,
+                non_human_like_other,
                 human_like_notes,
             ]
             for components in candidate_components:
@@ -1537,7 +1597,12 @@ def launch_app(
             real_researcher_search.change(
                 _toggle_non_human_like,
                 inputs=real_researcher_search,
-                outputs=non_human_like_type,
+                outputs=[non_human_like_type, non_human_like_other],
+            )
+            non_human_like_type.change(
+                _toggle_non_human_other,
+                inputs=non_human_like_type,
+                outputs=non_human_like_other,
             )
             for _, candidate_label_correct, candidate_wrong_type, _ in candidate_components:
                 candidate_label_correct.change(
@@ -1553,6 +1618,7 @@ def launch_app(
                     query_notes,
                     real_researcher_search,
                     non_human_like_type,
+                    non_human_like_other,
                     human_like_notes,
                 ]
                 + [
@@ -1563,7 +1629,7 @@ def launch_app(
                 outputs=judge_status,
             )
 
-    demo.launch(share=share)
+    demo.launch(share=share, server_port=port)
 
 
 def main() -> None:
@@ -1588,6 +1654,12 @@ def main() -> None:
         default=str(DEFAULT_HUMAN_JUDGMENTS_JSON),
         help="Path where interactive human judgments are saved",
     )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=7860,
+        help="Port to run the Gradio app on (default is 7860)"
+    )
     parser.add_argument("--share", action="store_true", help="Enable Gradio share link")
     args = parser.parse_args()
 
@@ -1596,6 +1668,7 @@ def main() -> None:
         human_litsearch_path=resolve_input_path(args.human_litsearch_json),
         human_pasa_path=resolve_input_path(args.human_pasa_json),
         human_judgments_path=Path(args.human_judgments_json).expanduser(),
+        port=args.port,
         share=args.share,
     )
 

@@ -19,7 +19,7 @@ from openreview_pipeline.stages import (
     RuleBasedFilter,
     Summarizer,
     build_google_scholar_client,
-    run as run_stage5_query_analysis,
+    run as run_stage4_query_analysis,
 )
 
 logger = logging.getLogger(__name__)
@@ -294,7 +294,7 @@ def _filter_queries_for_hard_negative_mining(
         if isinstance(query, dict) and str(query.get("decision", "")).strip() == "Keep"
     }
     if not keep_keys:
-        logger.info("Stage-5 analysis produced no surviving queries; hard-negative mining will be skipped.")
+        logger.info("Stage-4 analysis produced no surviving queries; hard-negative mining will be skipped.")
         return GeneratedQueriesDataset(papers_queries=[], total_papers=0, total_queries=0)
 
     filtered_papers = []
@@ -316,7 +316,7 @@ def _filter_queries_for_hard_negative_mining(
         )
 
     logger.info(
-        "Filtered hard-negative mining input from %s to %s queries using stage-5 Keep decisions.",
+        "Filtered hard-negative mining input from %s to %s queries using stage-4 Keep decisions.",
         query_dataset.total_queries,
         sum(len(paper.queries_by_view) for paper in filtered_papers),
     )
@@ -452,6 +452,7 @@ def run_hard_negative_mining_stage(
     serpapi_api_key: Optional[str] = None,
     scholar_max_results: Optional[int] = None,
     scholar_language: Optional[str] = None,
+    download_selected_pdfs: bool = False,
     llm_backend=None,
 ) -> Path:
     input_path = _require_input("hard_negative_mining", _normalize_path(input_path))
@@ -480,6 +481,7 @@ def run_hard_negative_mining_stage(
         llm=llm_backend,
         scholar_client=scholar_client,
         scholar_max_results=int(search_settings["max_results"]),
+        download_selected_pdfs=download_selected_pdfs,
     )
 
     query_dataset = load_json(input_path, GeneratedQueriesDataset)
@@ -501,9 +503,10 @@ def run_query_analysis_stage(
     base_url: Optional[str] = None,
     api_token: Optional[str] = None,
     model: Optional[str] = None,
-    llm_batch_size: int = 25,
+    llm_batch_size: int = 10,
     llm_judge_mode: str = "batch",
     llm_max_concurrency: int = 1,
+    retrieval_batch_size: int = 10,
     llm_backend=None,
 ) -> Path:
     summarized_path = _require_input("query_analysis", _normalize_path(summarized_path))
@@ -517,7 +520,7 @@ def run_query_analysis_stage(
         api_token=api_token,
         model=model,
     )
-    run_stage5_query_analysis(
+    run_stage4_query_analysis(
         llm=llm_backend,
         summarized_path=summarized_path,
         queries_path=queries_path,
@@ -527,6 +530,7 @@ def run_query_analysis_stage(
         llm_batch_size=llm_batch_size,
         llm_judge_mode=llm_judge_mode,
         llm_max_concurrency=llm_max_concurrency,
+        retrieval_batch_size=retrieval_batch_size,
     )
     return output_dir
 
@@ -560,9 +564,11 @@ def run_selected_stages(
     serpapi_api_key: Optional[str] = None,
     scholar_max_results: Optional[int] = None,
     scholar_language: Optional[str] = None,
-    llm_batch_size: int = 25,
+    llm_batch_size: int = 10,
     llm_judge_mode: str = "batch",
     llm_max_concurrency: int = 1,
+    retrieval_batch_size: int = 10,
+    download_selected_pdfs: bool = False,
 ) -> PipelinePaths:
     stages = parse_stage_spec(stage_spec)
     current_input = _normalize_path(input_path)
@@ -659,6 +665,7 @@ def run_selected_stages(
                 llm_batch_size=llm_batch_size,
                 llm_judge_mode=llm_judge_mode,
                 llm_max_concurrency=llm_max_concurrency,
+                retrieval_batch_size=retrieval_batch_size,
                 llm_backend=llm_backend,
             )
             current_input = query_input
@@ -676,6 +683,7 @@ def run_selected_stages(
                 serpapi_api_key=serpapi_api_key,
                 scholar_max_results=scholar_max_results,
                 scholar_language=scholar_language,
+                download_selected_pdfs=download_selected_pdfs,
                 llm_backend=llm_backend,
             )
             current_input = query_input

@@ -1,6 +1,6 @@
 # OpenReview Pipeline
 
-A 3-stage OpenReview processing pipeline for filtering, summarizing, and generating retrieval queries from academic papers.
+A staged OpenReview processing pipeline for filtering, summarizing, generating retrieval queries, analyzing query quality, and mining hard negatives from academic papers.
 
 ## Features
 
@@ -8,7 +8,8 @@ A 3-stage OpenReview processing pipeline for filtering, summarizing, and generat
 - **Stage 1**: Rule-based filtering of papers based on quality criteria
 - **Stage 2**: LLM-based bullet-point summarization from multiple views
 - **Stage 3**: LLM-based retrieval query generation
-- **Stage 4**: LLM-based query quality filtering, with optional style-analysis and retrieval-feature-analysis services
+- **Stage 4**: LLM-based query analysis and query quality filtering
+- **Stage 5**: Hard-negative and positive candidate mining for surviving queries
 
 ## Installation
 
@@ -36,11 +37,12 @@ pip install -e .
 │   ├── schemas_queries.py
 │   ├── stages/
 │   │   ├── __init__.py
-│   │   ├── download.py
-│   │   ├── filter.py
-│   │   ├── summarize.py
-│   │   ├── generate_queries.py
-│   │   └── filter_queries.py
+│   │   ├── stage0_download.py
+│   │   ├── stage1_filter.py
+│   │   ├── stage2_summarize.py
+│   │   ├── stage3_generate_queries.py
+│   │   ├── stage4_query_analysis.py
+│   │   └── stage5_hard_negative_mining.py
 │   ├── llm/
 │   │   ├── __init__.py
 │   │   └── base.py
@@ -56,25 +58,25 @@ pip install -e .
 
 ```bash
 # Download papers
-openreview-pipeline download --output data/00_downloaded.json --venue ICLR --years 3
+openreview-pipeline download --output data/00_downloaded.json --venue ICLR --year 2025 --max-papers 10
 
 # Filter papers
 openreview-pipeline filter --input data/00_downloaded.json --output data/01_filtered.json
 
 # Summarize papers
-openreview-pipeline summarize --input data/01_filtered.json --output data/02_summarized.json --llm mock --views methodology applications
+openreview-pipeline summarize --input data/01_filtered.json --output data/02_summarized.json
 
 # Generate queries
-openreview-pipeline generate-queries --input data/02_summarized.json --output data/03_queries.json --llm mock
+openreview-pipeline generate-queries --input data/02_summarized.json --output data/03_queries.json
 
-# Filter queries
-openreview-pipeline filter-queries --input data/03_queries.json --output data/04_filtered_queries.json --llm mock --threshold 0.5
+# Analyze generated query quality
+openreview-pipeline query-analysis --summarized-input data/02_summarized.json --queries-input data/03_queries.json --output-dir data/04_query_analysis --judge-batch-size 10 --retrieval-batch-size 10
 
-# Filter queries and also emit stage-4 analysis artifacts
-openreview-pipeline filter-queries --input data/03_queries.json --output data/04_filtered_queries.json --llm mock --threshold 0.5 --stage4-services style_analysis,retrieval_feature_analysis
+# Mine hard negatives for surviving queries
+openreview-pipeline hard-negative-mining --input data/03_queries.json --query-analysis-input data/04_query_analysis --output data/05_hard_negatives.json
 
 # Run all stages
-openreview-pipeline run-all --output-dir data --llm mock
+openreview-pipeline run-all --output-dir data --venue ICLR --year 2025 --max-papers 10 --summarize-limit 5 --judge-batch-size 10 --retrieval-batch-size 10
 ```
 
 ### Python API
@@ -85,7 +87,7 @@ from openreview_pipeline.stages import (
     RuleBasedFilter,
     Summarizer,
     QueryGenerator,
-    QueryFilter,
+    HardNegativeMiner,
 )
 from openreview_pipeline.llm import MockLLMBackend
 from pathlib import Path
@@ -109,9 +111,9 @@ summarizer.run(Path("data/01_filtered.json"), Path("data/02_summarized.json"))
 generator = QueryGenerator(llm=llm)
 generator.run(Path("data/02_summarized.json"), Path("data/03_queries.json"))
 
-# Filter queries
-query_filter = QueryFilter(llm=llm, threshold=0.5)
-query_filter.run(Path("data/03_queries.json"), Path("data/04_filtered_queries.json"))
+# Hard-negative mining
+miner = HardNegativeMiner(llm=llm)
+miner.run(Path("data/03_queries.json"), Path("data/05_hard_negatives.json"))
 ```
 
 ## LLM Backend

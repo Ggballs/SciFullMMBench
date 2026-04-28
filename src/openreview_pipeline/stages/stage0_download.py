@@ -9,6 +9,12 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_YEAR_THRESHOLD = 2021
 OPENREVIEW_BASEURL = "https://api2.openreview.net"
+OPENREVIEW_VENUE_ALIASES = {
+    "ICLR": "ICLR.cc",
+    "NEURIPS": "NeurIPS.cc",
+    "NIPS": "NeurIPS.cc",
+    "ICML": "ICML.cc",
+}
 
 REVIEW_FIELD_MAPPING = {
     "summary": "review",
@@ -42,6 +48,11 @@ def normalize_content(content: Any) -> Dict[str, Any]:
     if not isinstance(content, dict):
         return {}
     return {key: unwrap_value(value) for key, value in content.items()}
+
+
+def normalize_openreview_venue_id(venue: str) -> str:
+    normalized = str(venue or "").strip().replace(" ", "_")
+    return OPENREVIEW_VENUE_ALIASES.get(normalized.upper(), normalized)
 
 
 def note_to_dict(note: Any) -> Dict[str, Any]:
@@ -155,8 +166,38 @@ class OpenReviewAPIDownloader:
         logger.warning("No OpenReview credentials provided. Set username/password or token.")
         return None
 
-    def _get_blind_submission_invitation(self) -> str:
-        return f"{self.venue}/{self.year}/Conference/-/Submission"
+    def _get_venue_id(self) -> str:
+        return f"{self.venue}/{self.year}/Conference"
+
+    def _get_submission_invitation_candidates(self) -> List[str]:
+        venue_id = self._get_venue_id()
+        return [
+            f"{venue_id}/-/Submission",
+            f"{venue_id}/-/Blind_Submission",
+        ]
+
+    def _fetch_submissions(self, client: Any) -> Tuple[List[Any], str]:
+        for invitation in self._get_submission_invitation_candidates():
+            logger.info("Fetching submissions from %s", invitation)
+            try:
+                submissions = list(client.get_all_notes(invitation=invitation))
+            except Exception as exc:
+                logger.warning("Failed to fetch submissions from %s: %s", invitation, exc)
+                continue
+            logger.info("Total submissions found from %s: %s", invitation, len(submissions))
+            if submissions:
+                return submissions, invitation
+
+        venue_id = self._get_venue_id()
+        logger.info("Fetching submissions by venueid=%s", venue_id)
+        try:
+            submissions = list(client.get_all_notes(content={"venueid": venue_id}))
+        except Exception as exc:
+            logger.error("Failed to fetch submissions by venueid=%s: %s", venue_id, exc)
+            return [], f"venueid={venue_id}"
+
+        logger.info("Total submissions found by venueid=%s: %s", venue_id, len(submissions))
+        return submissions, f"venueid={venue_id}"
 
     def _extract_authors(self, note: Any) -> List[str]:
         content = getattr(note, "content", None)
@@ -364,14 +405,9 @@ class OpenReviewAPIDownloader:
             logger.error("Cannot connect to OpenReview API. Check credentials.")
             return []
 
-        invitation = self._get_blind_submission_invitation()
-        logger.info("Fetching submissions from %s", invitation)
-
-        try:
-            submissions = list(client.get_all_notes(invitation=invitation))
-            logger.info("Total submissions found: %s", len(submissions))
-        except Exception as exc:
-            logger.error("Failed to fetch submissions: %s", exc)
+        submissions, source = self._fetch_submissions(client)
+        if not submissions:
+            logger.error("No submissions found for %s via %s", self._get_venue_id(), source)
             return []
 
         papers = []
@@ -473,7 +509,7 @@ class DatasetDownloader:
         password: Optional[str] = None,
         token: Optional[str] = None,
     ):
-        venue_id = self.venue.replace(" ", "_")
+        venue_id = normalize_openreview_venue_id(self.venue)
         self._openreview_downloader = OpenReviewAPIDownloader(
             venue=venue_id,
             year=self.year_threshold,

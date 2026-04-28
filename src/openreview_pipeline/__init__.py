@@ -51,7 +51,7 @@ from .runner import (
     run_summarize_stage,
 )
 from .stages import (
-    run as run_stage5_query_analysis,
+    run as run_stage4_query_analysis,
 )
 
 __all__ = [
@@ -94,7 +94,7 @@ __all__ = [
     "run_generate_queries_stage",
     "run_query_analysis_stage",
     "run_hard_negative_mining_stage",
-    "run_stage5_query_analysis",
+    "run_stage4_query_analysis",
     "run_selected_stages",
     "write_pipeline_output",
 ]

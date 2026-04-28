@@ -1,10 +1,14 @@
 from abc import ABC, abstractmethod
+import logging
 from pathlib import Path
+import time
 from typing import Any, Optional
 
 import argparse
 import json
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 class LLMBackend(ABC):
@@ -43,6 +47,8 @@ class OpenAICompatibleBackend(LLMBackend):
         max_tokens: int = 4096,
         temperature: float = 0.0,
         seed: Optional[int] = None,
+        max_retries: int = 5,
+        retry_backoff_seconds: float = 8.0,
     ):
         from openai import OpenAI
         self.base_url = base_url.rstrip("/")
@@ -51,10 +57,33 @@ class OpenAICompatibleBackend(LLMBackend):
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.seed = seed
+        self.max_retries = max(1, int(max_retries))
+        self.retry_backoff_seconds = max(0.0, float(retry_backoff_seconds))
         self._client = OpenAI(
             api_key=api_token,
             base_url=base_url,
         )
+
+    def _with_retries(self, operation_name: str, fn):
+        last_exc = None
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                return fn()
+            except Exception as exc:
+                last_exc = exc
+                if attempt >= self.max_retries:
+                    break
+                sleep_seconds = self.retry_backoff_seconds * attempt
+                logger.warning(
+                    "%s failed on attempt %s/%s: %s. Retrying in %.1fs.",
+                    operation_name,
+                    attempt,
+                    self.max_retries,
+                    exc,
+                    sleep_seconds,
+                )
+                time.sleep(sleep_seconds)
+        raise last_exc
 
     def _chat_completion_kwargs(self) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
@@ -77,27 +106,36 @@ class OpenAICompatibleBackend(LLMBackend):
         return kwargs
 
     def generate(self, prompt: str, **kwargs) -> str:
-        response = self._client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            **self._chat_completion_kwargs(),
+        response = self._with_retries(
+            "chat completion",
+            lambda: self._client.chat.completions.create(
+                messages=[{"role": "user", "content": prompt}],
+                **self._chat_completion_kwargs(),
+            ),
         )
 
         # pretty_print_response(response)
         return response.choices[0].message.content
 
     def response(self, prompt: str, **kwargs) -> Any:
-        response = self._client.responses.create(
+        response = self._with_retries(
+            "responses completion",
+            lambda: self._client.responses.create(
                 input=prompt,
                 **self._responses_kwargs(),
+            ),
         )
         pretty_print_response(response)
         return response
 
     def generate_json(self, prompt: str, **kwargs) -> dict[str, Any]:
         import re
-        response = self._client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            **self._chat_completion_kwargs(),
+        response = self._with_retries(
+            "chat JSON completion",
+            lambda: self._client.chat.completions.create(
+                messages=[{"role": "user", "content": prompt}],
+                **self._chat_completion_kwargs(),
+            ),
         )
         content = response.choices[0].message.content
         json_match = re.search(r'\{[\s\S]*\}', content)
@@ -163,7 +201,10 @@ class OpenAICompatibleBackend(LLMBackend):
             print("responses_payload:")
             print(json.dumps(payload, indent=2, default=str))
 
-        response = self._client.responses.create(**payload)
+        response = self._with_retries(
+            "PDF URL response completion",
+            lambda: self._client.responses.create(**payload),
+        )
 
         if debug:
             print("responses_raw:")

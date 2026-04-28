@@ -48,15 +48,15 @@ class RetrievalEvaluator:
         )
         return load_prompt_template(prompt_path)
 
-    def _parse_llm_response(self, response: str) -> dict[str, Any]:
+    def _parse_llm_response(self, response: str) -> list[dict[str, Any]]:
         array_match = re.search(r"\[[\s\S]*\]", response)
         if array_match:
             try:
                 payload = json.loads(array_match.group())
             except json.JSONDecodeError:
                 payload = []
-            if isinstance(payload, list) and payload and isinstance(payload[0], dict):
-                return payload[0]
+            if isinstance(payload, list):
+                return [item for item in payload if isinstance(item, dict)]
 
         object_match = re.search(r"\{[\s\S]*\}", response)
         if object_match:
@@ -65,25 +65,12 @@ class RetrievalEvaluator:
             except json.JSONDecodeError:
                 payload = {}
             if isinstance(payload, dict):
-                return payload
+                return [payload]
 
         logger.warning("Failed to parse retrieval evaluation response: %s", response[:300])
-        return {}
+        return []
 
-    def evaluate_query(
-        self,
-        *,
-        paper_title: str,
-        abstract: str,
-        query_text: str,
-    ) -> RetrievalEvaluation:
-        prompt = self._get_prompt_template()
-        prompt = prompt.replace("{{paper_title}}", paper_title or "Unknown title")
-        prompt = prompt.replace("{{abstract}}", abstract or "N/A")
-        prompt = prompt.replace("{{queries}}", f"- {query_text}")
-
-        raw = self.llm.generate(prompt)
-        parsed = self._parse_llm_response(raw)
+    def _to_retrieval_evaluation(self, parsed: dict[str, Any]) -> RetrievalEvaluation:
         dimensions = parsed.get("dimensions", {}) if isinstance(parsed.get("dimensions"), dict) else {}
 
         full_paper_reliance = str(dimensions.get("full_paper_reliance", "FAIL")).strip().upper()
@@ -95,6 +82,62 @@ class RetrievalEvaluator:
             false_negative_risk=None,
             reasoning=str(parsed.get("reasoning", "")).strip(),
         )
+
+    def evaluate_queries(
+        self,
+        *,
+        paper_title: str,
+        abstract: str,
+        query_texts: list[str],
+        batch_size: int = 10,
+    ) -> list[RetrievalEvaluation]:
+        if not query_texts:
+            return []
+
+        prompt_template = self._get_prompt_template()
+        effective_batch_size = max(1, int(batch_size))
+        evaluations: list[RetrievalEvaluation] = []
+
+        for start in range(0, len(query_texts), effective_batch_size):
+            batch = query_texts[start:start + effective_batch_size]
+            numbered_queries = "\n".join(
+                f"{index}. {query_text}"
+                for index, query_text in enumerate(batch, start=start + 1)
+            )
+            logger.info(
+                "Retrieval evaluation scoring queries %s-%s/%s for %s",
+                start + 1,
+                start + len(batch),
+                len(query_texts),
+                paper_title or "unknown paper",
+            )
+            prompt = prompt_template
+            prompt = prompt.replace("{{paper_title}}", paper_title or "Unknown title")
+            prompt = prompt.replace("{{abstract}}", abstract or "N/A")
+            prompt = prompt.replace("{{queries}}", numbered_queries)
+
+            raw = self.llm.generate(prompt)
+            parsed_items = self._parse_llm_response(raw)
+
+            for offset in range(len(batch)):
+                parsed = parsed_items[offset] if offset < len(parsed_items) else {}
+                evaluations.append(self._to_retrieval_evaluation(parsed))
+
+        return evaluations
+
+    def evaluate_query(
+        self,
+        *,
+        paper_title: str,
+        abstract: str,
+        query_text: str,
+    ) -> RetrievalEvaluation:
+        return self.evaluate_queries(
+            paper_title=paper_title,
+            abstract=abstract,
+            query_texts=[query_text],
+            batch_size=1,
+        )[0]
 
 
 def _decision_for_retrieval(evaluation: RetrievalEvaluation) -> str:
@@ -197,9 +240,10 @@ def apply(
     queries_dataset: GeneratedQueriesDataset,
     downloaded_dataset: Optional[DownloadedPapersDataset] = None,
     config_path: Optional[Path | str] = None,
-    llm_batch_size: int = 25,
+    llm_batch_size: int = 10,
     llm_judge_mode: str = "batch",
     llm_max_concurrency: int = 1,
+    retrieval_batch_size: int = 10,
 ) -> QueryAnalysisDataset:
     paper_meta = _paper_metadata_map(downloaded_dataset)
     summary_by_id = {item.paper_id: item for item in summarized_dataset.summaries}
@@ -212,7 +256,7 @@ def apply(
     rule_report = rule_judge.analyze_queries(all_queries)
 
     if config_path is None:
-        raise ValueError("config_path is required for stage-5 LLM-based analysis")
+        raise ValueError("config_path is required for stage-4 LLM-based analysis")
     llm_config = llm_judge.load_llm_config(Path(config_path))
     llm_report = llm_judge.analyze_queries(
         all_queries,
@@ -253,12 +297,15 @@ def apply(
         abstract = meta.get("abstract")
 
         analyzed_queries: list[QueryAnalysisEntry] = []
-        for query in paper_queries.queries_by_view:
-            retrieval_evaluation = retrieval_evaluator.evaluate_query(
-                paper_title=paper_title,
-                abstract=abstract or "",
-                query_text=query.query_text,
-            )
+        query_entries = list(paper_queries.queries_by_view)
+        retrieval_evaluations = retrieval_evaluator.evaluate_queries(
+            paper_title=paper_title,
+            abstract=abstract or "",
+            query_texts=[query.query_text for query in query_entries],
+            batch_size=retrieval_batch_size,
+        )
+
+        for query, retrieval_evaluation in zip(query_entries, retrieval_evaluations):
             decision = _decision_for_retrieval(retrieval_evaluation)
 
             rule_item = rule_per_query.get(query_index, {})
@@ -378,9 +425,10 @@ def run(
     output_dir: Path,
     config_path: Path | str,
     downloaded_path: Optional[Path] = None,
-    llm_batch_size: int = 25,
+    llm_batch_size: int = 10,
     llm_judge_mode: str = "batch",
     llm_max_concurrency: int = 1,
+    retrieval_batch_size: int = 10,
 ) -> dict[str, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -401,6 +449,7 @@ def run(
         llm_batch_size=llm_batch_size,
         llm_judge_mode=llm_judge_mode,
         llm_max_concurrency=llm_max_concurrency,
+        retrieval_batch_size=retrieval_batch_size,
     )
 
     json_path = output_dir / "query_analysis.json"

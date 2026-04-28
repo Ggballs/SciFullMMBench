@@ -146,16 +146,32 @@ class Summarizer:
             views=views,
         )
 
-    def apply(self, dataset: FilteredPapersDataset) -> SummarizedPapersDataset:
+    def apply(
+        self,
+        dataset: FilteredPapersDataset,
+        checkpoint_path: Optional[Path] = None,
+    ) -> SummarizedPapersDataset:
         passed_papers = [r for r in dataset.results if r.passed]
         total = len(passed_papers)
         limit = self.llm_limit if self.llm_limit else total
         logger.info(f"Summarizing {min(limit, total)} of {total} passed papers (llm_limit={self.llm_limit})")
 
         summaries = []
+        completed_ids = set()
+        if checkpoint_path and checkpoint_path.exists():
+            try:
+                checkpoint = load_json(checkpoint_path, SummarizedPapersDataset)
+                summaries = list(checkpoint.summaries)
+                completed_ids = {summary.paper_id for summary in summaries}
+                if completed_ids:
+                    logger.info("Loaded %s existing summaries from %s", len(completed_ids), checkpoint_path)
+            except Exception as exc:
+                logger.warning("Could not load summarize checkpoint %s: %s", checkpoint_path, exc)
+
+        work_items = [result for result in passed_papers[:limit] if result.paper.paper.id not in completed_ids]
         progress = tqdm(
-            passed_papers[:limit],
-            total=min(limit, total),
+            work_items,
+            total=len(work_items),
             desc="Summarizing papers",
             unit="paper",
             dynamic_ncols=True,
@@ -169,6 +185,12 @@ class Summarizer:
                 paper_meta=result.paper,
             )
             summaries.append(summary)
+            completed_ids.add(paper.id)
+            if checkpoint_path:
+                save_json(
+                    checkpoint_path,
+                    SummarizedPapersDataset(summaries=summaries, total_papers=len(summaries)),
+                )
             progress.set_postfix_str(f"done={len(summaries)}")
         progress.close()
 
@@ -177,5 +199,5 @@ class Summarizer:
     def run(self, input_path: Path, output_path: Path) -> None:
         logger.info(f"Running summarize stage: {input_path} -> {output_path}")
         dataset = load_json(input_path, FilteredPapersDataset)
-        result = self.apply(dataset)
+        result = self.apply(dataset, checkpoint_path=output_path)
         save_json(output_path, result)

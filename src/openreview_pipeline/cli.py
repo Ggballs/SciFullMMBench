@@ -35,7 +35,7 @@ def cli(verbose: bool):
 @click.option("--username", default=None, help="OpenReview username/email (overrides config)")
 @click.option("--password", default=None, help="OpenReview password (overrides config)")
 @click.option("--token", default=None, help="OpenReview API token (overrides config)")
-@click.option("--limit", default=None, type=int, help="Limit number of papers to fetch")
+@click.option("--max-papers", "limit", default=None, type=int, help="Maximum papers to download")
 def download(
     output: str,
     venue: str,
@@ -114,6 +114,7 @@ def generate_queries(input_path: str, output: str, base_url: str, api_token: str
 @click.option("--serpapi-api-key", default=None, help="SerpAPI key for real Google Scholar search (overrides config)")
 @click.option("--scholar-max-results", default=None, type=int, help="Maximum Google Scholar candidates to retrieve per query")
 @click.option("--scholar-language", default=None, help="Google Scholar language code, e.g. 'en'")
+@click.option("--download-selected-pdfs", is_flag=True, help="Download selected hard-negative/positive PDFs instead of storing URL-only metadata")
 def hard_negative_mining(
     input_path: str,
     query_analysis_input: str,
@@ -125,6 +126,7 @@ def hard_negative_mining(
     serpapi_api_key: str,
     scholar_max_results: int,
     scholar_language: str,
+    download_selected_pdfs: bool,
 ):
     run_hard_negative_mining_stage(
         input_path=Path(input_path),
@@ -138,6 +140,7 @@ def hard_negative_mining(
         serpapi_api_key=serpapi_api_key,
         scholar_max_results=scholar_max_results,
         scholar_language=scholar_language,
+        download_selected_pdfs=download_selected_pdfs,
     )
 
 
@@ -149,9 +152,10 @@ def hard_negative_mining(
 @click.option("--base-url", default=None, help="LLM API base URL (overrides config)")
 @click.option("--api-token", default=None, help="LLM API token (overrides config)")
 @click.option("--model", default=None, help="Model name (overrides config)")
-@click.option("--llm-batch-size", default=25, type=int, help="Batch size for LLM-as-a-judge style scoring")
+@click.option("--judge-batch-size", default=10, type=int, help="Batch size for LLM-as-a-judge style scoring; ignored in single_query mode")
 @click.option("--llm-judge-mode", default="batch", help="LLM judge mode: batch or single_query")
-@click.option("--llm-max-concurrency", default=1, type=int, help="Max concurrent style-judge batches")
+@click.option("--judge-max-concurrency", default=1, type=int, help="Max concurrent style-judge batches")
+@click.option("--retrieval-batch-size", default=10, type=int, help="Batch size for retrieval-effectiveness evaluation")
 def query_analysis(
     summarized_input: str,
     queries_input: str,
@@ -160,9 +164,10 @@ def query_analysis(
     base_url: str,
     api_token: str,
     model: str,
-    llm_batch_size: int,
+    judge_batch_size: int,
     llm_judge_mode: str,
-    llm_max_concurrency: int,
+    judge_max_concurrency: int,
+    retrieval_batch_size: int,
 ):
     run_query_analysis_stage(
         summarized_path=Path(summarized_input),
@@ -173,9 +178,10 @@ def query_analysis(
         base_url=base_url,
         api_token=api_token,
         model=model,
-        llm_batch_size=llm_batch_size,
+        llm_batch_size=judge_batch_size,
         llm_judge_mode=llm_judge_mode,
-        llm_max_concurrency=llm_max_concurrency,
+        llm_max_concurrency=judge_max_concurrency,
+        retrieval_batch_size=retrieval_batch_size,
     )
 
 
@@ -185,13 +191,15 @@ def query_analysis(
 @click.option("--year", default=None, type=int, help="Year to download (default: current year)")
 @click.option("--forum-id", default=None, help="Download exactly one paper by OpenReview forum id")
 @click.option("--max-papers", default=30, type=int, help="Maximum papers to download")
-@click.option("--llm-limit", default=5, type=int, help="Maximum papers to process with LLM")
+@click.option("--summarize-limit", default=5, type=int, help="Maximum papers to summarize with the LLM")
 @click.option("--base-url", default=None, help="LLM API base URL (overrides config)")
 @click.option("--api-token", default=None, help="LLM API token (overrides config)")
 @click.option("--model", default=None, help="Model name (overrides config)")
-@click.option("--llm-batch-size", default=25, type=int, help="Batch size for LLM-as-a-judge style scoring")
+@click.option("--judge-batch-size", default=10, type=int, help="Batch size for LLM-as-a-judge style scoring; ignored in single_query mode")
 @click.option("--llm-judge-mode", default="batch", help="LLM judge mode: batch or single_query")
-@click.option("--llm-max-concurrency", default=1, type=int, help="Max concurrent style-judge batches")
+@click.option("--judge-max-concurrency", default=1, type=int, help="Max concurrent style-judge batches")
+@click.option("--retrieval-batch-size", default=10, type=int, help="Batch size for retrieval-effectiveness evaluation")
+@click.option("--download-selected-pdfs", is_flag=True, help="Download selected hard-negative/positive PDFs instead of storing URL-only metadata")
 @click.option("--final-output", type=click.Path(), default=None, help="Final combined JSON path")
 def run_all(
     output_dir: str,
@@ -199,13 +207,15 @@ def run_all(
     year: int,
     forum_id: str,
     max_papers: int,
-    llm_limit: int,
+    summarize_limit: int,
     base_url: str,
     api_token: str,
     model: str,
-    llm_batch_size: int,
+    judge_batch_size: int,
     llm_judge_mode: str,
-    llm_max_concurrency: int,
+    judge_max_concurrency: int,
+    retrieval_batch_size: int,
+    download_selected_pdfs: bool,
     final_output: str,
 ):
     paths = run_selected_stages(
@@ -215,14 +225,16 @@ def run_all(
         year=year,
         forum_id=forum_id,
         download_limit=max_papers,
-        llm_limit=llm_limit,
+        llm_limit=summarize_limit,
         config_path=CONFIG_PATH,
         base_url=base_url,
         api_token=api_token,
         model=model,
-        llm_batch_size=llm_batch_size,
+        llm_batch_size=judge_batch_size,
         llm_judge_mode=llm_judge_mode,
-        llm_max_concurrency=llm_max_concurrency,
+        llm_max_concurrency=judge_max_concurrency,
+        retrieval_batch_size=retrieval_batch_size,
+        download_selected_pdfs=download_selected_pdfs,
     )
     final_output_path = (
         Path(final_output).expanduser().resolve()

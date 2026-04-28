@@ -31,5 +31,6 @@ class PipelineOutput(BaseModel):
     generated_at: datetime = Field(default_factory=datetime.now)
     paths: dict[str, Optional[str]] = Field(default_factory=dict)
     dataset_overview: dict[str, Any] = Field(default_factory=dict)
+    query_analysis_summary: dict[str, Any] = Field(default_factory=dict)
     stage5_summary: dict[str, Any] = Field(default_factory=dict)
     papers: list[PipelinePaper] = Field(default_factory=list)
