@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import hmac
 import html
 import json
 import os
-from datetime import datetime, timezone
 from pathlib import Path
+import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
@@ -21,6 +22,17 @@ DEFAULT_HUMAN_PASA_JSON = Path("outputs/query_analysis_comparison/02_pasa_realsc
 DEFAULT_HUMAN_JUDGMENTS_JSON = Path("outputs/human_judgments.json")
 MAX_CANDIDATE_JUDGE_ROWS = 8
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = REPO_ROOT / "src"
+if SRC_ROOT.exists() and str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+from openreview_pipeline.utils.db.human_feedback_mysql import (  # noqa: E402
+    load_query_feedback,
+    save_query_feedback,
+)
+
+
+ADMIN_FEEDBACK_PASSWORD = "westlakenlp"
 
 
 def load_json(path: Path) -> Dict[str, Any]:
@@ -46,6 +58,38 @@ def resolve_input_path(raw_path: Optional[str]) -> Optional[Path]:
         if path.exists():
             return path
     return candidates[0] if candidates else candidate.resolve()
+
+
+def parse_feedback_users(raw_users: Optional[str]) -> Dict[str, str]:
+    users = {}
+    for item in str(raw_users or "").split(","):
+        if ":" not in item:
+            continue
+        username, password = item.split(":", 1)
+        username = username.strip()
+        if username:
+            users[username] = password
+    return users
+
+
+def authenticate_user(username: str, password: str) -> bool:
+    username = str(username or "").strip()
+    password = str(password or "")
+    if not username:
+        return False
+    if hmac.compare_digest(password, ADMIN_FEEDBACK_PASSWORD):
+        return True
+    configured_users = parse_feedback_users(os.getenv("HUMAN_FEEDBACK_USERS"))
+    expected_password = configured_users.get(username)
+    return expected_password is not None and hmac.compare_digest(password, expected_password)
+
+
+def request_username(request: Optional[gr.Request]) -> Optional[str]:
+    if request is None:
+        return None
+    username = getattr(request, "username", None)
+    username = str(username or "").strip()
+    return username or None
 
 
 def esc(value: Any) -> str:
@@ -990,9 +1034,10 @@ def build_candidate_review_header(context: Dict[str, Any]) -> str:
     """
 
 
-def human_judgment_updates(path: Path, context: Dict[str, Any]):
-    judgments = load_human_judgments(path)
-    item = judgments.get("judgments", {}).get(context.get("query_key", ""), {}) if context else {}
+def human_judgment_updates(context: Dict[str, Any], reviewer_username: Optional[str] = None):
+    item: Dict[str, Any] = {}
+    if context and reviewer_username:
+        item = load_query_feedback(context, reviewer_username)
     query_paper = item.get("query_paper_relevance", {}) or {}
     human_like = item.get("human_like_search", {}) or {}
     candidates = item.get("candidate_checks", {}) or {}
@@ -1041,8 +1086,25 @@ def human_judgment_updates(path: Path, context: Dict[str, Any]):
     return tuple(updates)
 
 
-def save_current_human_judgment(
-    path: Path,
+def mysql_status_message(reviewer_username: Optional[str], error: Optional[Exception] = None) -> str:
+    if error is not None:
+        return f"MySQL feedback load failed for `{esc(reviewer_username or 'unknown')}`: {esc(error)}"
+    if reviewer_username:
+        return f"Saving to MySQL as `{esc(reviewer_username)}`"
+    return "Saving to MySQL"
+
+
+def safe_human_judgment_updates(
+    context: Dict[str, Any],
+    reviewer_username: Optional[str],
+) -> Tuple[Tuple[Any, ...], str]:
+    try:
+        return human_judgment_updates(context, reviewer_username), mysql_status_message(reviewer_username)
+    except Exception as exc:
+        return human_judgment_updates(context, None), mysql_status_message(reviewer_username, exc)
+
+
+def build_human_feedback_payload(
     context: Dict[str, Any],
     query_relevance: Optional[str],
     query_notes: str,
@@ -1051,9 +1113,9 @@ def save_current_human_judgment(
     non_human_like_other: str,
     human_like_notes: str,
     *candidate_values: Any,
-) -> str:
+) -> Tuple[Optional[Dict[str, Any]], List[str]]:
     if not context or not context.get("query_key"):
-        return "No query selected; nothing saved."
+        return None, ["No query selected"]
 
     errors = []
     if not query_relevance:
@@ -1085,35 +1147,67 @@ def save_current_human_judgment(
         }
 
     if errors:
+        return None, errors
+
+    return (
+        {
+            "query_paper_relevance": {
+                "relevance": query_relevance,
+                "notes": query_notes or "",
+            },
+            "human_like_search": {
+                "real_researcher_search": real_researcher_search,
+                "non_human_like_type": (
+                    (non_human_like_type or []) if real_researcher_search == "No" else []
+                ),
+                "non_human_like_other": (
+                    str(non_human_like_other or "").strip()
+                    if real_researcher_search == "No" and "Other" in (non_human_like_type or [])
+                    else ""
+                ),
+                "notes": human_like_notes or "",
+            },
+            "candidate_checks": candidate_checks,
+        },
+        [],
+    )
+
+
+def save_current_human_judgment(
+    reviewer_username: Optional[str],
+    context: Dict[str, Any],
+    query_relevance: Optional[str],
+    query_notes: str,
+    real_researcher_search: Optional[str],
+    non_human_like_type: List[str],
+    non_human_like_other: str,
+    human_like_notes: str,
+    *candidate_values: Any,
+) -> str:
+    reviewer_username = str(reviewer_username or "").strip()
+    if not reviewer_username:
+        return "Login required before saving feedback."
+
+    feedback_payload, errors = build_human_feedback_payload(
+        context,
+        query_relevance,
+        query_notes,
+        real_researcher_search,
+        non_human_like_type,
+        non_human_like_other,
+        human_like_notes,
+        *candidate_values,
+    )
+    if errors:
+        if errors == ["No query selected"]:
+            return "No query selected; nothing saved."
         return "Missing required fields: " + "; ".join(errors)
 
-    data = load_human_judgments(path)
-    judgments = data.setdefault("judgments", {})
-    item = judgments.setdefault(context["query_key"], {})
-    item.update(
-        {
-            "paper_id": context.get("paper_id", ""),
-            "paper_title": context.get("paper_title", ""),
-            "query_text": context.get("query_text", ""),
-            "source_view": context.get("source_view", ""),
-            "related_bullet_indice": context.get("related_bullet_indice"),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
-    )
-    item["query_paper_relevance"] = {
-        "relevance": query_relevance,
-        "notes": query_notes or "",
-    }
-    item["human_like_search"] = {
-        "real_researcher_search": real_researcher_search,
-        "non_human_like_type": (non_human_like_type or []) if real_researcher_search == "No" else [],
-        "non_human_like_other": str(non_human_like_other or "").strip() if real_researcher_search == "No" and "Other" in (non_human_like_type or []) else "",
-        "notes": human_like_notes or "",
-    }
-    item["candidate_checks"] = candidate_checks
-
-    save_human_judgments(path, data)
-    return f"Saved human judgment to {path}"
+    try:
+        save_query_feedback(context, feedback_payload or {}, reviewer_username)
+    except Exception as exc:
+        return f"MySQL feedback save failed for `{reviewer_username}`: {exc}"
+    return f"Saved human feedback to MySQL as {reviewer_username}"
 
 
 def build_candidate_list_html(items: List[Dict[str, Any]], label: str, query: Optional[Dict[str, Any]] = None) -> str:
@@ -1399,7 +1493,7 @@ def launch_app(
                 initial_summary_views = "<div></div>"
                 initial_forum = "<div></div>"
                 initial_context = {}
-            initial_judgment_updates = human_judgment_updates(human_judgments_path, initial_context)
+            initial_judgment_updates = human_judgment_updates(initial_context)
             initial_candidate_review_header = build_candidate_review_header(initial_context)
 
             paper_html = gr.HTML(value=initial_html)
@@ -1422,6 +1516,7 @@ def launch_app(
                     scale=3,
                 )
             query_context_state = gr.State(value=initial_context)
+            reviewer_username_state = gr.State(value="")
             query_header_html = gr.HTML(value=initial_query_header)
             with gr.Row():
                 with gr.Column(scale=3):
@@ -1504,9 +1599,14 @@ def launch_app(
                 )
 
             save_judgment_button = gr.Button("Save Human Judgment", variant="primary")
-            judge_status = gr.Markdown(f"Saving to `{esc(human_judgments_path)}`")
+            judge_status = gr.Markdown("Saving to MySQL")
 
-            def _render_all(paper_id: str, source_view: Optional[str] = None, query_label: Optional[str] = None):
+            def _render_all(
+                paper_id: str,
+                reviewer_username: str,
+                source_view: Optional[str] = None,
+                query_label: Optional[str] = None,
+            ):
                 rendered = render_paper(final_data, human_summary, paper_id, source_view=source_view, query_label=query_label)
                 view_update = rendered[1]
                 query_update = rendered[2]
@@ -1516,16 +1616,32 @@ def launch_app(
                     source_view=view_update["value"],
                     query_label=query_update["value"],
                 )
-                return rendered + (context, gr.update(value=build_candidate_review_header(context))) + human_judgment_updates(human_judgments_path, context)
+                feedback_updates, status = safe_human_judgment_updates(context, reviewer_username)
+                return (
+                    rendered
+                    + (context, gr.update(value=build_candidate_review_header(context)))
+                    + feedback_updates
+                    + (gr.update(value=status),)
+                )
 
-            def _on_paper_change(paper_id: str):
-                return _render_all(paper_id)
+            def _on_paper_change(paper_id: str, reviewer_username: str):
+                return _render_all(paper_id, reviewer_username)
 
-            def _on_view_change(paper_id: str, source_view: str):
-                return _render_all(paper_id, source_view=source_view)
+            def _on_view_change(paper_id: str, reviewer_username: str, source_view: str):
+                return _render_all(paper_id, reviewer_username, source_view=source_view)
 
-            def _on_query_change(paper_id: str, source_view: str, query_label: str):
-                return _render_all(paper_id, source_view=source_view, query_label=query_label)
+            def _on_query_change(
+                paper_id: str,
+                reviewer_username: str,
+                source_view: str,
+                query_label: str,
+            ):
+                return _render_all(
+                    paper_id,
+                    reviewer_username,
+                    source_view=source_view,
+                    query_label=query_label,
+                )
 
             def _toggle_non_human_like(value: Optional[str]):
                 return gr.update(visible=value == "No"), gr.update(visible=False)
@@ -1537,6 +1653,7 @@ def launch_app(
                 return gr.update(visible=value == "No")
 
             def _save_judgment(
+                reviewer_username: str,
                 context: Dict[str, Any],
                 query_relevance_value: Optional[str],
                 query_notes_value: str,
@@ -1547,7 +1664,7 @@ def launch_app(
                 *candidate_values: Any,
             ):
                 return save_current_human_judgment(
-                    human_judgments_path,
+                    reviewer_username,
                     context,
                     query_relevance_value,
                     query_notes_value,
@@ -1578,20 +1695,44 @@ def launch_app(
             ]
             for components in candidate_components:
                 render_outputs.extend(components)
+            render_outputs.append(judge_status)
+
+            feedback_outputs = [
+                query_relevance,
+                query_notes,
+                real_researcher_search,
+                non_human_like_type,
+                non_human_like_other,
+                human_like_notes,
+            ]
+            for components in candidate_components:
+                feedback_outputs.extend(components)
+            feedback_outputs.append(judge_status)
+
+            def _on_load(context: Dict[str, Any], request: gr.Request):
+                reviewer_username = request_username(request)
+                feedback_updates, status = safe_human_judgment_updates(context, reviewer_username)
+                return (reviewer_username or "",) + feedback_updates + (gr.update(value=status),)
+
+            demo.load(
+                _on_load,
+                inputs=query_context_state,
+                outputs=[reviewer_username_state] + feedback_outputs,
+            )
 
             paper_selector.change(
                 _on_paper_change,
-                inputs=paper_selector,
+                inputs=[paper_selector, reviewer_username_state],
                 outputs=render_outputs,
             )
             view_selector.change(
                 _on_view_change,
-                inputs=[paper_selector, view_selector],
+                inputs=[paper_selector, reviewer_username_state, view_selector],
                 outputs=render_outputs,
             )
             query_selector.change(
                 _on_query_change,
-                inputs=[paper_selector, view_selector, query_selector],
+                inputs=[paper_selector, reviewer_username_state, view_selector, query_selector],
                 outputs=render_outputs,
             )
             real_researcher_search.change(
@@ -1613,6 +1754,7 @@ def launch_app(
             save_judgment_button.click(
                 _save_judgment,
                 inputs=[
+                    reviewer_username_state,
                     query_context_state,
                     query_relevance,
                     query_notes,
@@ -1629,7 +1771,7 @@ def launch_app(
                 outputs=judge_status,
             )
 
-    demo.launch(share=share, server_port=port)
+    demo.launch(auth=authenticate_user, share=share, server_port=port)
 
 
 def main() -> None:

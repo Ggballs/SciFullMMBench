@@ -68,7 +68,7 @@ Useful options:
 - `--venue`: conference venue such as `ICLR`, `NeurIPS`, `ICML`
 - `--year`: target year
 - `--max-papers`: max number of papers
-- `--forum-id`: fetch exactly one paper by OpenReview forum id
+- `--forum-id`: fetch one or more OpenReview forum ids as a comma-separated list, for example `ID_1, ID_2`
 - `--username`, `--password`, `--token`: override OpenReview credentials from `config.yaml`
 
 ### 2. Filter
@@ -181,7 +181,7 @@ openreview-pipeline run-all \
 
 Useful options:
 
-- `--forum-id`: run against a single known paper
+- `--forum-id`: run against one or more known papers as a comma-separated list
 - `--base-url`
 - `--api-token`
 - `--model`
@@ -200,6 +200,22 @@ openreview-pipeline run-all \
   --year 2025 \
   --forum-id <OPENREVIEW_FORUM_ID> \
   --summarize-limit 1
+```
+
+For multiple known papers, pass comma-separated forum ids. In forum-id mode, rerunning against the same output directory merges new papers into the existing `00_downloaded.json`; newly fetched papers replace existing rows with the same paper id.
+
+```bash
+openreview-pipeline run-all \
+  --output-dir outputs/forum_batch \
+  --forum-id XZNXSM4rHG,ID_2,ID_3
+```
+
+Later, add more papers to the same folder:
+
+```bash
+openreview-pipeline run-all \
+  --output-dir outputs/forum_batch \
+  --forum-id ID_4,ID_5
 ```
 
 If you do not have a forum id, use:
@@ -292,7 +308,7 @@ Use the stage-specific commands when:
 PYTHONPATH=src python3 -m openreview_pipeline.cli run-all \
   --venue ICLR \
   --year 2026 \
-  --forum-id XZNXSM4rHG \
+  --forum-id XZNXSM4rHG,ID_2 \
   --output-dir outputs/test_single
 
 ```

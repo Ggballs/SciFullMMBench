@@ -77,7 +77,12 @@ openreview-pipeline hard-negative-mining --input data/03_queries.json --query-an
 
 # Run all stages
 openreview-pipeline run-all --output-dir data --venue ICLR --year 2025 --max-papers 10 --summarize-limit 5 --judge-batch-size 10 --retrieval-batch-size 10
+
+# Run all stages for known OpenReview forum ids
+openreview-pipeline run-all --output-dir outputs/forum_batch --forum-id XZNXSM4rHG,ID_2,ID_3
 ```
+
+When `--forum-id` is used, the value may be a comma-separated list. Re-running with the same output directory merges newly fetched papers into `00_downloaded.json` and updates existing rows with the same paper id. Venue/year downloads without `--forum-id` keep the normal fresh overwrite behavior.
 
 ### Python API
 

@@ -26,6 +26,17 @@ REVIEW_FIELD_MAPPING = {
 }
 
 
+def parse_forum_ids(forum_id: Any) -> List[str]:
+    """Parse the public comma-separated --forum-id value into clean ids."""
+    if not forum_id:
+        return []
+    if isinstance(forum_id, str):
+        raw_parts = forum_id.split(",")
+    else:
+        raw_parts = forum_id
+    return [str(part).strip() for part in raw_parts if str(part).strip()]
+
+
 def try_import_openreview():
     try:
         import openreview
@@ -522,35 +533,46 @@ class DatasetDownloader:
     def fetch_recent_papers(
         self,
         limit: Optional[int] = None,
+        forum_ids: Optional[List[str]] = None,
         forum_id: Optional[str] = None,
     ) -> List:
         from openreview_pipeline.schemas import OpenReviewPaper, OpenReviewPaperWithMetadata
 
+        forum_ids = parse_forum_ids(forum_ids) + parse_forum_ids(forum_id)
         if self._openreview_downloader:
-            if forum_id:
-                return self._openreview_downloader.fetch_paper_by_forum_id(forum_id)
+            if forum_ids:
+                papers = []
+                for forum_id in forum_ids:
+                    try:
+                        papers.extend(self._openreview_downloader.fetch_paper_by_forum_id(forum_id))
+                    except Exception as exc:
+                        logger.error("Failed to fetch forum %s: %s", forum_id, exc)
+                return deduplicate_papers_by_id(papers)
             return self._openreview_downloader.fetch_papers(limit=limit, accepted_only=True)
 
         logger.warning("OpenReview credentials not set. Using stub data.")
         logger.info("Would fetch papers from %s from year %s", self.venue, self.year_threshold)
 
-        if forum_id:
-            return [
-                OpenReviewPaperWithMetadata(
-                    paper=OpenReviewPaper(
-                        id=forum_id,
-                        title=f"Sample Paper {forum_id}",
-                        abstract=f"This is a sample abstract for paper {forum_id}. " * 5,
-                        authors=[f"Author {author_idx}" for author_idx in range(3)],
-                        venue=self.venue,
-                        year=self.year_threshold,
-                        pdf_url=f"https://openreview.net/pdf?id={forum_id}",
-                        keywords=["AI", "ML"],
-                        venueid=f"{self.venue}/{self.year_threshold}",
-                        submission_number=1,
+        if forum_ids:
+            return deduplicate_papers_by_id(
+                [
+                    OpenReviewPaperWithMetadata(
+                        paper=OpenReviewPaper(
+                            id=forum_id,
+                            title=f"Sample Paper {forum_id}",
+                            abstract=f"This is a sample abstract for paper {forum_id}. " * 5,
+                            authors=[f"Author {author_idx}" for author_idx in range(3)],
+                            venue=self.venue,
+                            year=self.year_threshold,
+                            pdf_url=f"https://openreview.net/pdf?id={forum_id}",
+                            keywords=["AI", "ML"],
+                            venueid=f"{self.venue}/{self.year_threshold}",
+                            submission_number=1,
+                        )
                     )
-                )
-            ]
+                    for forum_id in forum_ids
+                ]
+            )
 
         papers = []
         count = 0
@@ -582,11 +604,43 @@ class DatasetDownloader:
         self,
         output_path: Path,
         limit: Optional[int] = None,
+        forum_ids: Optional[List[str]] = None,
         forum_id: Optional[str] = None,
     ) -> None:
         from openreview_pipeline.schemas import DownloadedPapersDataset
-        from openreview_pipeline.utils import save_json
+        from openreview_pipeline.utils import load_json, save_json
 
-        papers = self.fetch_recent_papers(limit=limit, forum_id=forum_id)
+        forum_ids = parse_forum_ids(forum_ids) + parse_forum_ids(forum_id)
+        papers = self.fetch_recent_papers(limit=limit, forum_ids=forum_ids)
+        if forum_ids and output_path.exists():
+            existing_dataset = load_json(output_path, DownloadedPapersDataset)
+            papers = merge_papers_by_id(existing_dataset.papers, papers)
         dataset = DownloadedPapersDataset(papers=papers, total_count=len(papers))
         save_json(output_path, dataset)
+
+
+def deduplicate_papers_by_id(papers: Iterable) -> List:
+    merged = {}
+    order = []
+    for paper_metadata in papers:
+        paper_id = paper_metadata.paper.id
+        if paper_id not in merged:
+            order.append(paper_id)
+        merged[paper_id] = paper_metadata
+    return [merged[paper_id] for paper_id in order]
+
+
+def merge_papers_by_id(existing_papers: Iterable, fetched_papers: Iterable) -> List:
+    merged = {}
+    order = []
+    for paper_metadata in existing_papers:
+        paper_id = paper_metadata.paper.id
+        if paper_id not in merged:
+            order.append(paper_id)
+        merged[paper_id] = paper_metadata
+    for paper_metadata in fetched_papers:
+        paper_id = paper_metadata.paper.id
+        if paper_id not in merged:
+            order.append(paper_id)
+        merged[paper_id] = paper_metadata
+    return [merged[paper_id] for paper_id in order]

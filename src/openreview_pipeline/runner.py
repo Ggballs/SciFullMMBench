@@ -21,6 +21,7 @@ from openreview_pipeline.stages import (
     build_google_scholar_client,
     run as run_stage4_query_analysis,
 )
+from openreview_pipeline.stages.stage0_download import parse_forum_ids
 
 logger = logging.getLogger(__name__)
 
@@ -365,7 +366,8 @@ def run_download_stage(
     else:
         logger.warning("No OpenReview credentials configured. Using stub download data.")
 
-    downloader.run(output_path, limit=limit, forum_id=forum_id)
+    forum_ids = parse_forum_ids(forum_id)
+    downloader.run(output_path, limit=limit, forum_ids=forum_ids)
     return output_path
 
 
