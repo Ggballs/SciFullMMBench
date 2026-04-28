@@ -1,0 +1,30 @@
+FROM python:3.10-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/src \
+    GRADIO_ANALYTICS_ENABLED=False \
+    GRADIO_SERVER_NAME=0.0.0.0 \
+    GRADIO_SERVER_PORT=7860 \
+    FINAL_JSON=outputs/test_single/final_pipeline_output.json
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    default-libmysqlclient-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+COPY outputs ./outputs
+COPY prompts ./prompts
+COPY configs ./configs
+
+RUN pip install --no-cache-dir -U pip \
+    && pip install --no-cache-dir -e ".[deploy-mysql]"
+
+EXPOSE 7860
+
+CMD ["sh", "-c", "python outputs/display_final_pipeline_gradio.py --final-json \"$FINAL_JSON\" --port \"$GRADIO_SERVER_PORT\""]

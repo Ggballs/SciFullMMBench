@@ -1771,7 +1771,12 @@ def launch_app(
                 outputs=judge_status,
             )
 
-    demo.launch(auth=authenticate_user, share=share, server_port=port)
+    demo.launch(
+        auth=authenticate_user,
+        share=share,
+        server_name=os.getenv("GRADIO_SERVER_NAME"),
+        server_port=port,
+    )
 
 
 def main() -> None:

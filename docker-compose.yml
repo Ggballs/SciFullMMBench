@@ -1,0 +1,39 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: scifull-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-westlakenlp_root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-scifullmmbench}
+      MYSQL_USER: ${MYSQL_USER:-scifull}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-westlakenlp}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u${MYSQL_USER:-scifull} -p${MYSQL_PASSWORD:-westlakenlp} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  gradio:
+    build: .
+    container_name: scifull-gradio
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      HUMAN_FEEDBACK_DB_URL: mysql+pymysql://${MYSQL_USER:-scifull}:${MYSQL_PASSWORD:-westlakenlp}@mysql:3306/${MYSQL_DATABASE:-scifullmmbench}?charset=utf8mb4
+      HUMAN_FEEDBACK_USERS: ${HUMAN_FEEDBACK_USERS:-}
+      GRADIO_SERVER_NAME: 0.0.0.0
+      GRADIO_SERVER_PORT: 7860
+      FINAL_JSON: ${FINAL_JSON:-outputs/test_single/final_pipeline_output.json}
+    ports:
+      - "${GRADIO_PORT:-7860}:7860"
+
+volumes:
+  mysql-data:
