@@ -1,13 +1,6 @@
 FROM python:3.10-slim
 
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
-ARG PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
-ARG HTTP_PROXY
-ARG HTTPS_PROXY
-ARG NO_PROXY=localhost,127.0.0.1
-ARG http_proxy
-ARG https_proxy
-ARG no_proxy=localhost,127.0.0.1
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -18,8 +11,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     FINAL_JSON=outputs/test_single/final_pipeline_output.json \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_DEFAULT_TIMEOUT=120 \
-    PIP_INDEX_URL=${PIP_INDEX_URL} \
-    PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
+    PIP_INDEX_URL=${PIP_INDEX_URL}
 
 WORKDIR /app
 
