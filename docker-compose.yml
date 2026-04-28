@@ -20,7 +20,9 @@ services:
       retries: 12
 
   gradio:
-    build: .
+    build:
+      context: .
+      network: host
     container_name: scifull-gradio
     restart: unless-stopped
     depends_on:
