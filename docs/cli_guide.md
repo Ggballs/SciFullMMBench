@@ -190,6 +190,7 @@ Useful options:
 - `--llm-judge-mode`
 - `--judge-max-concurrency`
 - `--retrieval-batch-size`
+- `--skip-filter`: create an all-passed `01_filtered.json` instead of applying stage-1 rules
 
 For a single-paper smoke test:
 
@@ -210,6 +211,15 @@ openreview-pipeline run-all \
   --forum-id XZNXSM4rHG,ID_2,ID_3
 ```
 
+To bypass stage-1 filtering and summarize every downloaded paper:
+
+```bash
+openreview-pipeline run-all \
+  --output-dir outputs/forum_batch \
+  --forum-id XZNXSM4rHG,ID_2,ID_3 \
+  --skip-filter
+```
+
 Later, add more papers to the same folder:
 
 ```bash
@@ -217,6 +227,11 @@ openreview-pipeline run-all \
   --output-dir outputs/forum_batch \
   --forum-id ID_4,ID_5
 ```
+
+Each stage is resume-aware. If an output file already exists, the stage loads completed
+paper/query rows from that file, reports them as successful, and continues from the
+first missing item. This is useful after API rate limits, interrupted LLM calls, or
+aborted hard-negative mining runs.
 
 If you do not have a forum id, use:
 
@@ -339,4 +354,9 @@ PYTHONPATH=src python3 -m openreview_pipeline.cli query-analysis \
   --queries-input ../outputs/test_run_10/03_queries.json \
   --downloaded-input ../outputs/test_run_10/00_downloaded.json \
   --output-dir ../outputs/test_run_10/04_query_analysis
+```
+```commandline
+PYTHONPATH=src python3 -m openreview_pipeline.cli run-all \
+  --output-dir outputs/forum_batch \
+  --forum-id txmqENuRcc,OBMcxeSK5U,yfcpdY4gMP,WMx2DTFltx
 ```

@@ -3,6 +3,7 @@ FROM python:3.10-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app/src \
+    OPENREVIEW_PIPELINE_LOG_DIR=/app/logs \
     GRADIO_ANALYTICS_ENABLED=False \
     GRADIO_SERVER_NAME=0.0.0.0 \
     GRADIO_SERVER_PORT=7860 \
@@ -15,6 +16,7 @@ COPY src ./src
 COPY outputs ./outputs
 COPY prompts ./prompts
 COPY configs ./configs
+COPY scripts ./scripts
 
 RUN pip install --no-cache-dir -U pip \
     && pip install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir -e ".[deploy-mysql]"

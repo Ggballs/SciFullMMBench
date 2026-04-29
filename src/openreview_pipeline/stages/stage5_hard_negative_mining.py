@@ -692,16 +692,49 @@ class HardNegativeMiner:
             mining_method="google_scholar_real_search",
         )
 
-    def apply(self, dataset: GeneratedQueriesDataset) -> HardNegativeMiningDataset:
+    def _result_key(self, result: HardNegativeMiningResult) -> tuple[str, str, str]:
+        return (result.paper_id, result.query, result.source_view)
+
+    def _query_key(self, paper_id: str, query: RetrievalQuery) -> tuple[str, str, str]:
+        return (paper_id, query.query_text, query.source_view)
+
+    def apply(
+        self,
+        dataset: GeneratedQueriesDataset,
+        checkpoint_path: Optional[Path] = None,
+    ) -> HardNegativeMiningDataset:
         logger.info("Mining hard negatives for %s queries", dataset.total_queries)
 
         all_results = []
-        total_hard_negatives = 0
-        total_positives = 0
+        completed_keys = set()
+        if checkpoint_path and checkpoint_path.exists():
+            try:
+                checkpoint = load_json(checkpoint_path, HardNegativeMiningDataset)
+                expected_keys = {
+                    self._query_key(paper.paper_id, query)
+                    for paper in dataset.papers_queries
+                    for query in paper.queries_by_view
+                }
+                all_results = [
+                    result
+                    for result in checkpoint.results
+                    if self._result_key(result) in expected_keys
+                ]
+                completed_keys = {self._result_key(result) for result in all_results}
+                if completed_keys:
+                    logger.info(
+                        "Loaded %s existing hard-negative mining results from %s",
+                        len(completed_keys),
+                        checkpoint_path,
+                    )
+            except Exception as exc:
+                logger.warning("Could not load hard-negative mining checkpoint %s: %s", checkpoint_path, exc)
+
         work_items = [
             (paper.paper_id, paper.paper_title, query)
             for paper in dataset.papers_queries
             for query in paper.queries_by_view
+            if self._query_key(paper.paper_id, query) not in completed_keys
         ]
 
         progress = tqdm(
@@ -714,25 +747,39 @@ class HardNegativeMiner:
         for paper_id, paper_title, query in progress:
             result = self.mine_for_query(paper_id, paper_title, query)
             all_results.append(result)
-            total_hard_negatives += len(result.hard_negatives)
-            total_positives += len(result.positives)
+            if checkpoint_path:
+                save_json(checkpoint_path, self._build_dataset(all_results))
+            total_hard_negatives = sum(len(item.hard_negatives) for item in all_results)
+            total_positives = sum(len(item.positives) for item in all_results)
             progress.set_postfix_str(
                 f"hard_negatives={total_hard_negatives}, positives={total_positives}"
             )
         progress.close()
 
+        results_by_key = {self._result_key(result): result for result in all_results}
+        all_results = [
+            results_by_key[self._query_key(paper.paper_id, query)]
+            for paper in dataset.papers_queries
+            for query in paper.queries_by_view
+            if self._query_key(paper.paper_id, query) in results_by_key
+        ]
+        result_dataset = self._build_dataset(all_results)
         logger.info(
-            "Hard negative mining complete: %s hard negatives for %s queries",
-            total_hard_negatives,
-            len(all_results),
+            "Hard-negative-mining stage success: %s/%s queries (%.1f%%), %s with hard negatives.",
+            result_dataset.total_queries,
+            dataset.total_queries,
+            (result_dataset.total_queries / dataset.total_queries * 100) if dataset.total_queries else 100.0,
+            result_dataset.total_mined,
         )
+        return result_dataset
 
+    def _build_dataset(self, results: List[HardNegativeMiningResult]) -> HardNegativeMiningDataset:
         return HardNegativeMiningDataset(
-            results=all_results,
-            total_queries=len(all_results),
-            total_mined=len([r for r in all_results if r.hard_negatives]),
-            total_hard_negatives=total_hard_negatives,
-            total_positives=total_positives,
+            results=results,
+            total_queries=len(results),
+            total_mined=len([r for r in results if r.hard_negatives]),
+            total_hard_negatives=sum(len(r.hard_negatives) for r in results),
+            total_positives=sum(len(r.positives) for r in results),
         )
 
     def run(self, input_path: Path, output_path: Path) -> None:
@@ -740,7 +787,7 @@ class HardNegativeMiner:
         if self.pdf_output_dir is None:
             self.pdf_output_dir = output_path.parent / f"{output_path.stem}_pdfs"
         dataset = load_json(input_path, GeneratedQueriesDataset)
-        result = self.apply(dataset)
+        result = self.apply(dataset, checkpoint_path=output_path)
         save_json(output_path, result)
 
 

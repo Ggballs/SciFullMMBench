@@ -10,6 +10,8 @@ from typing import Optional, Sequence
 import yaml
 
 from openreview_pipeline.llm import MockLLMBackend, OpenAICompatibleBackend
+from openreview_pipeline.schemas import DownloadedPapersDataset
+from openreview_pipeline.schemas.schemas_filter import FilteredPapersDataset, FilterResult, FilterRuleResult
 from openreview_pipeline.schemas.schemas_queries import GeneratedQueriesDataset, GeneratedQueriesForPaper
 from openreview_pipeline.utils import load_json, save_json
 from openreview_pipeline.stages import (
@@ -390,6 +392,69 @@ def run_filter_stage(
     return output_path
 
 
+def run_skip_filter_stage(
+    *,
+    input_path: Path | str,
+    output_path: Path | str,
+) -> Path:
+    input_path = _require_input("skip_filter", _normalize_path(input_path))
+    output_path = Path(output_path).expanduser().resolve()
+    _ensure_parent(output_path)
+
+    dataset = load_json(input_path, DownloadedPapersDataset)
+    target_ids = {paper.paper.id for paper in dataset.papers}
+    existing_results = []
+    completed_ids = set()
+    if output_path.exists():
+        try:
+            checkpoint = load_json(output_path, FilteredPapersDataset)
+            existing_results = [
+                result for result in checkpoint.results if result.paper.paper.id in target_ids
+            ]
+            completed_ids = {result.paper.paper.id for result in existing_results}
+            if completed_ids:
+                logger.info(
+                    "Loaded %s existing skip-filter results from %s",
+                    len(completed_ids),
+                    output_path,
+                )
+        except Exception as exc:
+            logger.warning("Could not load skip-filter checkpoint %s: %s", output_path, exc)
+    results = [
+        FilterResult(
+            paper=paper,
+            passed=True,
+            details=FilterRuleResult(
+                accepted=True,
+                similar_paper=False,
+                multimodal_info=True,
+            ),
+        )
+        for paper in dataset.papers
+        if paper.paper.id not in completed_ids
+    ]
+    results_by_id = {result.paper.paper.id: result for result in existing_results + results}
+    results = [
+        results_by_id[paper.paper.id]
+        for paper in dataset.papers
+        if paper.paper.id in results_by_id
+    ]
+    result = FilteredPapersDataset(
+        results=results,
+        total_input=len(results),
+        total_passed=len(results),
+        total_filtered=0,
+    )
+    logger.info(
+        "Skip-filter stage success: %s/%s papers passed (%.1f%%).",
+        len(results),
+        len(results),
+        100.0,
+    )
+    save_json(output_path, result)
+    return output_path
+
+
 def run_summarize_stage(
     *,
     input_path: Path | str,
@@ -491,7 +556,7 @@ def run_hard_negative_mining_stage(
         query_dataset=query_dataset,
         query_analysis_output_dir=_normalize_path(query_analysis_output_dir),
     )
-    save_json(output_path, miner.apply(filtered_dataset))
+    save_json(output_path, miner.apply(filtered_dataset, checkpoint_path=output_path))
     return output_path
 
 
@@ -571,6 +636,7 @@ def run_selected_stages(
     llm_max_concurrency: int = 1,
     retrieval_batch_size: int = 10,
     download_selected_pdfs: bool = False,
+    skip_filter: bool = False,
 ) -> PipelinePaths:
     stages = parse_stage_spec(stage_spec)
     current_input = _normalize_path(input_path)
@@ -622,12 +688,18 @@ def run_selected_stages(
             )
             downloaded_source = current_input
         elif stage == "filter":
-            current_input = run_filter_stage(
-                input_path=_require_input(stage, current_input),
-                output_path=paths.filtered_path,
-                rules_config_path=rules_config_path,
-                limit=filter_limit,
-            )
+            if skip_filter:
+                current_input = run_skip_filter_stage(
+                    input_path=_require_input(stage, current_input),
+                    output_path=paths.filtered_path,
+                )
+            else:
+                current_input = run_filter_stage(
+                    input_path=_require_input(stage, current_input),
+                    output_path=paths.filtered_path,
+                    rules_config_path=rules_config_path,
+                    limit=filter_limit,
+                )
             filtered_source = current_input
         elif stage == "summarize":
             current_input = run_summarize_stage(

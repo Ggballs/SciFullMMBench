@@ -1,25 +1,32 @@
 from __future__ import annotations
 
+import logging
 import os
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
+from openreview_pipeline.app_logging import resolve_log_dir
 from sqlalchemy import (
     JSON,
     BigInteger,
     Column,
     MetaData,
     String,
+    TIMESTAMP,
     Table,
     Text,
     create_engine,
     delete,
     select,
+    text,
 )
 from sqlalchemy.engine import Engine
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 
 
 HUMAN_FEEDBACK_TABLE = "human_feedback"
+logger = logging.getLogger(__name__)
 
 metadata = MetaData()
 
@@ -28,15 +35,53 @@ human_feedback = Table(
     metadata,
     Column("id", BigInteger, primary_key=True, autoincrement=True),
     Column("paper_forum_id", String(128), nullable=False),
-    Column("query_id", String(512), nullable=False),
+    Column("query_id", String(64), nullable=False),
     Column("query_text", Text, nullable=False),
     Column("feedback_item_id", String(64), nullable=False),
-    Column("reviewer_username", String(128), nullable=False),
+    Column("reviewer_username", String(64), nullable=False),
     Column("judgement", String(32), nullable=False),
     Column("selection_type", JSON, nullable=True),
     Column("reason_note", Text, nullable=True),
     Column("feedback_raw_json", JSON, nullable=True),
+    Column("created_at", TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP")),
+    Column(
+        "updated_at",
+        TIMESTAMP,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+        server_onupdate=text("CURRENT_TIMESTAMP"),
+    ),
 )
+
+
+def configure_sql_access_logging(log_dir: Optional[Path] = None) -> None:
+    """Write SQL access logs to the project logs directory."""
+    target_dir = Path(log_dir or os.getenv("HUMAN_FEEDBACK_LOG_DIR") or resolve_log_dir())
+    target_dir.mkdir(parents=True, exist_ok=True)
+    log_path = target_dir / "human_feedback_mysql.log"
+
+    if any(
+        isinstance(handler, RotatingFileHandler)
+        and Path(getattr(handler, "baseFilename", "")) == log_path
+        for handler in logger.handlers
+    ):
+        return
+
+    handler = RotatingFileHandler(
+        log_path,
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    )
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = True
+
+
+configure_sql_access_logging()
 
 
 def get_engine(db_url: Optional[str] = None) -> Engine:
@@ -222,18 +267,52 @@ def save_query_feedback(
 ) -> None:
     rows = feedback_payload_to_rows(context, feedback_payload, reviewer_username)
     if not rows:
+        logger.info(
+            "save skipped reviewer=%s paper=%s query=%s rows=0 reason=no_feedback_rows",
+            reviewer_username,
+            context.get("paper_id") or context.get("paper_forum_id"),
+            context.get("query_key") or context.get("query_id"),
+        )
         return
 
     db = engine or get_engine()
+    reviewer = _require_reviewer(reviewer_username)
+    paper_forum_id = derive_paper_forum_id(context)
+    query_id = derive_query_id(context)
     insert_stmt = mysql_insert(human_feedback).values(rows)
     update_columns = {
         column.name: insert_stmt.inserted[column.name]
         for column in human_feedback.columns
-        if column.name not in {"id", "created_at"}
+        if column.name not in {"id", "created_at", "updated_at"}
     }
     stmt = insert_stmt.on_duplicate_key_update(**update_columns)
-    with db.begin() as conn:
-        conn.execute(stmt)
+    logger.info(
+        "save start reviewer=%s paper=%s query=%s rows=%s",
+        reviewer,
+        paper_forum_id,
+        query_id,
+        len(rows),
+    )
+    try:
+        with db.begin() as conn:
+            result = conn.execute(stmt)
+        logger.info(
+            "save success reviewer=%s paper=%s query=%s rows=%s affected_rows=%s",
+            reviewer,
+            paper_forum_id,
+            query_id,
+            len(rows),
+            result.rowcount,
+        )
+    except Exception:
+        logger.exception(
+            "save failed reviewer=%s paper=%s query=%s rows=%s",
+            reviewer,
+            paper_forum_id,
+            query_id,
+            len(rows),
+        )
+        raise
 
 
 def load_query_feedback(
@@ -242,6 +321,12 @@ def load_query_feedback(
     *,
     engine: Optional[Engine] = None,
 ) -> Dict[str, Any]:
+    logger.info(
+        "load start reviewer=%s paper=%s query=%s",
+        reviewer_username,
+        context.get("paper_id") or context.get("paper_forum_id"),
+        context.get("query_key") or context.get("query_id"),
+    )
     return list_feedback_for_query(
         derive_paper_forum_id(context),
         derive_query_id(context),
@@ -257,15 +342,36 @@ def delete_query_feedback(
     engine: Optional[Engine] = None,
 ) -> int:
     db = engine or get_engine()
+    reviewer = _require_reviewer(reviewer_username)
+    paper_forum_id = derive_paper_forum_id(context)
+    query_id = derive_query_id(context)
     stmt = (
         delete(human_feedback)
-        .where(human_feedback.c.paper_forum_id == derive_paper_forum_id(context))
-        .where(human_feedback.c.query_id == derive_query_id(context))
-        .where(human_feedback.c.reviewer_username == _require_reviewer(reviewer_username))
+        .where(human_feedback.c.paper_forum_id == paper_forum_id)
+        .where(human_feedback.c.query_id == query_id)
+        .where(human_feedback.c.reviewer_username == reviewer)
     )
-    with db.begin() as conn:
-        result = conn.execute(stmt)
-    return int(result.rowcount or 0)
+    logger.info("delete start reviewer=%s paper=%s query=%s", reviewer, paper_forum_id, query_id)
+    try:
+        with db.begin() as conn:
+            result = conn.execute(stmt)
+        row_count = int(result.rowcount or 0)
+        logger.info(
+            "delete success reviewer=%s paper=%s query=%s rows=%s",
+            reviewer,
+            paper_forum_id,
+            query_id,
+            row_count,
+        )
+        return row_count
+    except Exception:
+        logger.exception(
+            "delete failed reviewer=%s paper=%s query=%s",
+            reviewer,
+            paper_forum_id,
+            query_id,
+        )
+        raise
 
 
 def list_feedback_for_query(
@@ -276,19 +382,44 @@ def list_feedback_for_query(
     engine: Optional[Engine] = None,
 ) -> Dict[str, Any]:
     db = engine or get_engine()
+    reviewer = _require_reviewer(reviewer_username) if reviewer_username is not None else None
     stmt = (
         select(human_feedback)
         .where(human_feedback.c.paper_forum_id == str(paper_forum_id))
         .where(human_feedback.c.query_id == str(query_id))
         .order_by(human_feedback.c.feedback_item_id)
     )
-    if reviewer_username is not None:
-        stmt = stmt.where(
-            human_feedback.c.reviewer_username == _require_reviewer(reviewer_username)
-        )
+    if reviewer is not None:
+        stmt = stmt.where(human_feedback.c.reviewer_username == reviewer)
 
-    with db.begin() as conn:
-        rows = [dict(row) for row in conn.execute(stmt).mappings()]
+    operation = "load" if reviewer is not None else "list"
+    logger.info(
+        "%s query start reviewer=%s paper=%s query=%s",
+        operation,
+        reviewer,
+        paper_forum_id,
+        query_id,
+    )
+    try:
+        with db.begin() as conn:
+            rows = [dict(row) for row in conn.execute(stmt).mappings()]
+        logger.info(
+            "%s query success reviewer=%s paper=%s query=%s rows=%s",
+            operation,
+            reviewer,
+            paper_forum_id,
+            query_id,
+            len(rows),
+        )
+    except Exception:
+        logger.exception(
+            "%s query failed reviewer=%s paper=%s query=%s",
+            operation,
+            reviewer,
+            paper_forum_id,
+            query_id,
+        )
+        raise
 
     if reviewer_username is not None:
         return rows_to_feedback_payload(rows)

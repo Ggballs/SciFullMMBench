@@ -2,10 +2,22 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
+from pathlib import Path
 from typing import Optional
 
 from sqlalchemy import create_engine, text
 
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = REPO_ROOT / "src"
+if SRC_ROOT.exists() and str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+from openreview_pipeline.app_logging import configure_project_logging  # noqa: E402
+
+
+configure_project_logging()
 
 DEFAULT_DB_URL = "mysql+pymysql://scifull:westlakenlp@127.0.0.1:3306/scifullmmbench?charset=utf8mb4"
 

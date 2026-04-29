@@ -150,6 +150,40 @@ def _openreview_url_for_paper(paper_id: str) -> str:
     return f"https://openreview.net/forum?id={paper_id}"
 
 
+def _query_key(paper_id: str, query: Any) -> tuple[str, str, str]:
+    return (
+        str(paper_id),
+        str(getattr(query, "query_text", "")),
+        str(getattr(query, "source_view", "")),
+    )
+
+
+def _analyzed_query_key(paper_id: str, query: QueryAnalysisEntry) -> tuple[str, str, str]:
+    return (str(paper_id), str(query.query_text), str(query.source_view))
+
+
+def _completed_analysis_paper_ids(
+    existing: QueryAnalysisDataset,
+    queries_dataset: GeneratedQueriesDataset,
+) -> set[str]:
+    expected_by_paper = {
+        paper.paper_id: {
+            _query_key(paper.paper_id, query)
+            for query in paper.queries_by_view
+        }
+        for paper in queries_dataset.papers_queries
+    }
+    completed = set()
+    for paper in existing.papers:
+        expected = expected_by_paper.get(paper.paper_id)
+        if not expected:
+            continue
+        actual = {_analyzed_query_key(paper.paper_id, query) for query in paper.queries}
+        if expected and expected.issubset(actual):
+            completed.add(paper.paper_id)
+    return completed
+
+
 def _paper_metadata_map(downloaded_dataset: Optional[DownloadedPapersDataset]) -> dict[str, dict[str, Any]]:
     if downloaded_dataset is None:
         return {}
@@ -167,6 +201,72 @@ def _paper_metadata_map(downloaded_dataset: Optional[DownloadedPapersDataset]) -
             "authors": list(paper.authors),
         }
     return metadata
+
+
+def _refresh_analysis_paper_metadata(
+    paper: PaperQueryAnalysis,
+    *,
+    metadata: dict[str, Any],
+    summary: Optional[Any],
+) -> PaperQueryAnalysis:
+    if metadata:
+        paper.paper_title = metadata.get("paper_title") or paper.paper_title
+        paper.abstract = metadata.get("abstract") or paper.abstract
+        paper.pdf_url = metadata.get("pdf_url") or paper.pdf_url
+        paper.openreview_url = metadata.get("openreview_url") or paper.openreview_url
+        paper.venue = metadata.get("venue") or paper.venue
+        paper.year = metadata.get("year") or paper.year
+        paper.authors = list(metadata.get("authors", paper.authors))
+    if summary is not None:
+        paper.summary_views = list(summary.views)
+    return paper
+
+
+def _build_dataset_summary_from_papers(papers: list[PaperQueryAnalysis]) -> dict[str, Any]:
+    decision_counts: Counter[str] = Counter()
+    full_paper_counts: Counter[str] = Counter()
+    token_lengths = []
+    char_lengths = []
+    templates: Counter[str] = Counter()
+    specificity_scores = []
+    lexical_scores = []
+    semantic_counts = []
+
+    for paper in papers:
+        for query in paper.queries:
+            decision_counts[query.decision] += 1
+            full_paper_counts[query.retrieval_evaluation.full_paper_reliance] += 1
+            token_lengths.append(query.style_evaluation.rule_based.token_length)
+            char_lengths.append(query.style_evaluation.rule_based.char_length)
+            templates[query.style_evaluation.rule_based.question_template] += 1
+            if query.style_evaluation.llm_based.specificity_calibration_score is not None:
+                specificity_scores.append(float(query.style_evaluation.llm_based.specificity_calibration_score))
+            if query.style_evaluation.llm_based.lexical_naturalism_score is not None:
+                lexical_scores.append(float(query.style_evaluation.llm_based.lexical_naturalism_score))
+            semantic_counts.append(float(query.style_evaluation.llm_based.semantic_constraint_count))
+
+    return {
+        "retrieval_summary": {
+            "full_paper_reliance": dict(full_paper_counts),
+        },
+        "style_summary": {
+            "char_length": {
+                "mean": _safe_mean([float(value) for value in char_lengths]),
+                "min": min(char_lengths) if char_lengths else None,
+                "max": max(char_lengths) if char_lengths else None,
+            },
+            "token_length": {
+                "mean": _safe_mean([float(value) for value in token_lengths]),
+                "min": min(token_lengths) if token_lengths else None,
+                "max": max(token_lengths) if token_lengths else None,
+            },
+            "question_templates": dict(templates),
+            "specificity_calibration_mean": _safe_mean(specificity_scores),
+            "lexical_naturalism_mean": _safe_mean(lexical_scores),
+            "semantic_constraint_count_mean": _safe_mean(semantic_counts),
+        },
+        "decision_counts": dict(decision_counts),
+    }
 
 
 def _render_markdown(report: QueryAnalysisDataset) -> str:
@@ -440,20 +540,103 @@ def run(
         else None
     )
 
-    artifact = apply(
-        llm=llm,
-        summarized_dataset=summarized_dataset,
-        queries_dataset=queries_dataset,
-        downloaded_dataset=downloaded_dataset,
-        config_path=config_path,
-        llm_batch_size=llm_batch_size,
-        llm_judge_mode=llm_judge_mode,
-        llm_max_concurrency=llm_max_concurrency,
-        retrieval_batch_size=retrieval_batch_size,
-    )
-
     json_path = output_dir / "query_analysis.json"
     md_path = output_dir / "query_analysis.md"
+
+    existing_papers: list[PaperQueryAnalysis] = []
+    completed_paper_ids: set[str] = set()
+    paper_meta = _paper_metadata_map(downloaded_dataset)
+    summary_by_id = {summary.paper_id: summary for summary in summarized_dataset.summaries}
+    if json_path.exists():
+        try:
+            existing_artifact = load_json(json_path, QueryAnalysisDataset)
+            completed_paper_ids = _completed_analysis_paper_ids(existing_artifact, queries_dataset)
+            existing_papers = [
+                _refresh_analysis_paper_metadata(
+                    paper,
+                    metadata=paper_meta.get(paper.paper_id, {}),
+                    summary=summary_by_id.get(paper.paper_id),
+                )
+                for paper in existing_artifact.papers
+                if paper.paper_id in completed_paper_ids
+            ]
+            if completed_paper_ids:
+                logger.info(
+                    "Loaded %s existing query-analysis paper results from %s",
+                    len(completed_paper_ids),
+                    json_path,
+                )
+        except Exception as exc:
+            logger.warning("Could not load query-analysis checkpoint %s: %s", json_path, exc)
+
+    missing_query_papers = [
+        paper for paper in queries_dataset.papers_queries if paper.paper_id not in completed_paper_ids
+    ]
+    new_papers_by_id = {}
+    if missing_query_papers:
+        existing_papers_by_id = {paper.paper_id: paper for paper in existing_papers}
+        for missing_query_paper in missing_query_papers:
+            summary = summary_by_id.get(missing_query_paper.paper_id)
+            missing_summaries = [summary] if summary else []
+            paper_artifact = apply(
+                llm=llm,
+                summarized_dataset=SummarizedPapersDataset(
+                    summaries=missing_summaries,
+                    total_papers=len(missing_summaries),
+                ),
+                queries_dataset=GeneratedQueriesDataset(
+                    papers_queries=[missing_query_paper],
+                    total_papers=1,
+                    total_queries=len(missing_query_paper.queries_by_view),
+                ),
+                downloaded_dataset=downloaded_dataset,
+                config_path=config_path,
+                llm_batch_size=llm_batch_size,
+                llm_judge_mode=llm_judge_mode,
+                llm_max_concurrency=llm_max_concurrency,
+                retrieval_batch_size=retrieval_batch_size,
+            )
+            for paper in paper_artifact.papers:
+                new_papers_by_id[paper.paper_id] = paper
+
+            checkpoint_papers = []
+            for paper_queries in queries_dataset.papers_queries:
+                paper = existing_papers_by_id.get(paper_queries.paper_id) or new_papers_by_id.get(paper_queries.paper_id)
+                if paper is not None:
+                    checkpoint_papers.append(paper)
+            checkpoint_artifact = QueryAnalysisDataset(
+                papers=checkpoint_papers,
+                total_papers=len(checkpoint_papers),
+                total_queries=sum(len(paper.queries) for paper in checkpoint_papers),
+                dataset_summary=_build_dataset_summary_from_papers(checkpoint_papers),
+            )
+            save_json(json_path, checkpoint_artifact)
+            md_path.write_text(_render_markdown(checkpoint_artifact), encoding="utf-8")
+    else:
+        logger.info("Query-analysis stage found no missing papers to process.")
+
+    existing_papers_by_id = {paper.paper_id: paper for paper in existing_papers}
+    combined_papers = []
+    for paper_queries in queries_dataset.papers_queries:
+        paper = existing_papers_by_id.get(paper_queries.paper_id) or new_papers_by_id.get(paper_queries.paper_id)
+        if paper is not None:
+            combined_papers.append(paper)
+
+    artifact = QueryAnalysisDataset(
+        papers=combined_papers,
+        total_papers=len(combined_papers),
+        total_queries=sum(len(paper.queries) for paper in combined_papers),
+        dataset_summary=_build_dataset_summary_from_papers(combined_papers),
+    )
     save_json(json_path, artifact)
     md_path.write_text(_render_markdown(artifact), encoding="utf-8")
+    logger.info(
+        "Query-analysis stage success: %s/%s papers (%.1f%%), %s/%s queries (%.1f%%).",
+        artifact.total_papers,
+        queries_dataset.total_papers,
+        (artifact.total_papers / queries_dataset.total_papers * 100) if queries_dataset.total_papers else 100.0,
+        artifact.total_queries,
+        queries_dataset.total_queries,
+        (artifact.total_queries / queries_dataset.total_queries * 100) if queries_dataset.total_queries else 100.0,
+    )
     return {"json": json_path, "markdown": md_path}

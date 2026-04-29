@@ -3,6 +3,7 @@ from pathlib import Path
 
 import click
 
+from openreview_pipeline.app_logging import configure_project_logging
 from openreview_pipeline.pipeline_output_builder import build_pipeline_output, write_pipeline_output
 from openreview_pipeline.runner import (
     run_download_stage,
@@ -14,7 +15,7 @@ from openreview_pipeline.runner import (
     run_summarize_stage,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+configure_project_logging()
 logger = logging.getLogger(__name__)
 
 CONFIG_PATH = Path(__file__).parent.parent.parent / "config.yaml"
@@ -200,6 +201,7 @@ def query_analysis(
 @click.option("--judge-max-concurrency", default=1, type=int, help="Max concurrent style-judge batches")
 @click.option("--retrieval-batch-size", default=10, type=int, help="Batch size for retrieval-effectiveness evaluation")
 @click.option("--download-selected-pdfs", is_flag=True, help="Download selected hard-negative/positive PDFs instead of storing URL-only metadata")
+@click.option("--skip-filter", is_flag=True, help="Mark all downloaded papers as passed instead of applying stage-1 filtering")
 @click.option("--final-output", type=click.Path(), default=None, help="Final combined JSON path")
 def run_all(
     output_dir: str,
@@ -216,6 +218,7 @@ def run_all(
     judge_max_concurrency: int,
     retrieval_batch_size: int,
     download_selected_pdfs: bool,
+    skip_filter: bool,
     final_output: str,
 ):
     paths = run_selected_stages(
@@ -235,6 +238,7 @@ def run_all(
         llm_max_concurrency=judge_max_concurrency,
         retrieval_batch_size=retrieval_batch_size,
         download_selected_pdfs=download_selected_pdfs,
+        skip_filter=skip_filter,
     )
     final_output_path = (
         Path(final_output).expanduser().resolve()

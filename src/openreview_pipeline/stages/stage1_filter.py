@@ -144,17 +144,44 @@ class RuleBasedFilter:
 
         return mention_count >= self.config.min_multimodal_mentions
 
-    def apply(self, dataset: DownloadedPapersDataset) -> FilteredPapersDataset:
+    def apply(
+        self,
+        dataset: DownloadedPapersDataset,
+        checkpoint_path: Optional[Path] = None,
+    ) -> FilteredPapersDataset:
         total = dataset.total_count
         limit = self.limit if self.limit else total
         logger.info(f"Applying filter to {min(limit, total)} of {total} papers (limit={self.limit})")
 
         results = []
         passed_count = 0
+        target_papers = list(dataset.papers[:limit])
+        target_ids = {paper.paper.id for paper in target_papers}
+        completed_ids = set()
+        if checkpoint_path and checkpoint_path.exists():
+            try:
+                checkpoint = load_json(checkpoint_path, FilteredPapersDataset)
+                results = [
+                    result
+                    for result in checkpoint.results
+                    if result.paper.paper.id in target_ids
+                ]
+                completed_ids = {result.paper.paper.id for result in results}
+                passed_count = sum(1 for result in results if result.passed)
+                if completed_ids:
+                    logger.info(
+                        "Loaded %s existing filter results from %s",
+                        len(completed_ids),
+                        checkpoint_path,
+                    )
+            except Exception as exc:
+                logger.warning("Could not load filter checkpoint %s: %s", checkpoint_path, exc)
+
+        work_items = [paper for paper in target_papers if paper.paper.id not in completed_ids]
 
         progress = tqdm(
-            dataset.papers[:limit],
-            total=min(limit, total),
+            work_items,
+            total=len(work_items),
             desc="Filtering papers",
             unit="paper",
             dynamic_ncols=True,
@@ -184,6 +211,16 @@ class RuleBasedFilter:
                         ),
                     )
                 )
+                if checkpoint_path:
+                    save_json(
+                        checkpoint_path,
+                        FilteredPapersDataset(
+                            results=results,
+                            total_input=len(results),
+                            total_passed=sum(1 for result in results if result.passed),
+                            total_filtered=sum(1 for result in results if not result.passed),
+                        ),
+                    )
             except Exception as e:
                 logger.error(f"Error filtering paper {paper_meta.paper.id}: {e}")
                 import traceback
@@ -199,9 +236,24 @@ class RuleBasedFilter:
                         ),
                     )
                 )
+                if checkpoint_path:
+                    save_json(
+                        checkpoint_path,
+                        FilteredPapersDataset(
+                            results=results,
+                            total_input=len(results),
+                            total_passed=sum(1 for result in results if result.passed),
+                            total_filtered=sum(1 for result in results if not result.passed),
+                        ),
+                    )
         progress.close()
 
-        logger.info(f"Filter complete: {passed_count}/{len(results)} passed")
+        logger.info(
+            "Filter stage success: %s/%s papers passed (%.1f%%).",
+            passed_count,
+            len(results),
+            (passed_count / len(results) * 100) if results else 100.0,
+        )
 
         return FilteredPapersDataset(
             results=results,
@@ -213,5 +265,5 @@ class RuleBasedFilter:
     def run(self, input_path: Path, output_path: Path) -> None:
         logger.info(f"Running filter stage: {input_path} -> {output_path}")
         dataset = load_json(input_path, DownloadedPapersDataset)
-        result = self.apply(dataset)
+        result = self.apply(dataset, checkpoint_path=output_path)
         save_json(output_path, result)

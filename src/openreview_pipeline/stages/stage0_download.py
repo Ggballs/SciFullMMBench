@@ -1,5 +1,7 @@
 import logging
-from datetime import datetime
+import re
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -9,6 +11,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_YEAR_THRESHOLD = 2021
 OPENREVIEW_BASEURL = "https://api2.openreview.net"
+OPENREVIEW_RATE_LIMIT_BUFFER_SECONDS = 2.0
+OPENREVIEW_MAX_RATE_LIMIT_RETRIES = 3
+OPENREVIEW_MIN_REQUEST_INTERVAL_SECONDS = 22.0
 OPENREVIEW_VENUE_ALIASES = {
     "ICLR": "ICLR.cc",
     "NEURIPS": "NeurIPS.cc",
@@ -35,6 +40,51 @@ def parse_forum_ids(forum_id: Any) -> List[str]:
     else:
         raw_parts = forum_id
     return [str(part).strip() for part in raw_parts if str(part).strip()]
+
+
+def _extract_exception_payload(exc: Exception) -> Any:
+    if getattr(exc, "args", None):
+        return exc.args[0]
+    return None
+
+
+def _rate_limit_wait_seconds(exc: Exception) -> Optional[float]:
+    payload = _extract_exception_payload(exc)
+    if isinstance(payload, dict):
+        name = str(payload.get("name", ""))
+        status = payload.get("status")
+        details = payload.get("details", {})
+        if name != "RateLimitError" and status != 429:
+            return None
+        reset_time = details.get("resetTime") if isinstance(details, dict) else None
+        if reset_time:
+            try:
+                reset_at = datetime.fromisoformat(str(reset_time).replace("Z", "+00:00"))
+                now = datetime.now(timezone.utc)
+                return max(0.0, (reset_at - now).total_seconds()) + OPENREVIEW_RATE_LIMIT_BUFFER_SECONDS
+            except ValueError:
+                pass
+        return 60.0
+
+    message = str(exc)
+    if "RateLimitError" in message or "Too many requests" in message or "status': 429" in message:
+        return 60.0
+    return None
+
+
+def _sleep_for_rate_limit_if_needed(exc: Exception, *, context: str, attempt: int) -> bool:
+    wait_seconds = _rate_limit_wait_seconds(exc)
+    if wait_seconds is None:
+        return False
+    logger.warning(
+        "OpenReview rate limit while %s; retry %s/%s after %.1f seconds.",
+        context,
+        attempt,
+        OPENREVIEW_MAX_RATE_LIMIT_RETRIES,
+        wait_seconds,
+    )
+    time.sleep(wait_seconds)
+    return True
 
 
 def try_import_openreview():
@@ -64,6 +114,49 @@ def normalize_content(content: Any) -> Dict[str, Any]:
 def normalize_openreview_venue_id(venue: str) -> str:
     normalized = str(venue or "").strip().replace(" ", "_")
     return OPENREVIEW_VENUE_ALIASES.get(normalized.upper(), normalized)
+
+
+def _first_nonempty(*values: Any) -> Optional[str]:
+    for value in values:
+        unwrapped = unwrap_value(value)
+        if unwrapped is None:
+            continue
+        text = str(unwrapped).strip()
+        if text:
+            return text
+    return None
+
+
+def _venue_from_venueid(venueid: Optional[str]) -> Optional[str]:
+    if not venueid:
+        return None
+    parts = [part for part in str(venueid).split("/") if part]
+    if len(parts) >= 3 and parts[0].lower() == "aclweb.org":
+        return "/".join(parts[:3])
+    if len(parts) >= 3 and re.fullmatch(r"(19|20)\d{2}", parts[2]):
+        return "/".join(parts[:3])
+    if len(parts) >= 4 and re.fullmatch(r"(19|20)\d{2}", parts[3]):
+        return "/".join(parts[:4])
+    if len(parts) >= 2 and parts[1].lower() in {"acl", "emnlp", "naacl", "eacl", "arr"}:
+        return "/".join(parts[:2])
+    if len(parts) >= 2:
+        return parts[0]
+    if parts:
+        return parts[0]
+    return None
+
+
+def _year_from_text(value: Optional[str]) -> Optional[int]:
+    if not value:
+        return None
+    match = re.search(r"\b(19|20)\d{2}\b", str(value))
+    return int(match.group(0)) if match else None
+
+
+def _looks_like_openreview_fallback_venue(value: Optional[str]) -> bool:
+    text = str(value or "").strip()
+    canonical = set(OPENREVIEW_VENUE_ALIASES.values())
+    return text in canonical or normalize_openreview_venue_id(text) in canonical
 
 
 def note_to_dict(note: Any) -> Dict[str, Any]:
@@ -154,6 +247,21 @@ class OpenReviewAPIDownloader:
         self.token = token
         self.output_dir = Path(output_dir) if output_dir else None
         self.client = None
+        self._last_request_at: Optional[float] = None
+
+    def _wait_for_request_slot(self, context: str) -> None:
+        if self._last_request_at is None:
+            return
+        elapsed = time.monotonic() - self._last_request_at
+        wait_seconds = OPENREVIEW_MIN_REQUEST_INTERVAL_SECONDS - elapsed
+        if wait_seconds <= 0:
+            return
+        logger.info(
+            "Throttling OpenReview request while %s; sleeping %.1f seconds.",
+            context,
+            wait_seconds,
+        )
+        time.sleep(wait_seconds)
 
     def _get_client(self):
         openreview = try_import_openreview()
@@ -176,6 +284,21 @@ class OpenReviewAPIDownloader:
 
         logger.warning("No OpenReview credentials provided. Set username/password or token.")
         return None
+
+    def _call_with_rate_limit_retry(self, func, *args, context: str, **kwargs):
+        for attempt in range(1, OPENREVIEW_MAX_RATE_LIMIT_RETRIES + 1):
+            try:
+                self._wait_for_request_slot(context)
+                self._last_request_at = time.monotonic()
+                return func(*args, **kwargs)
+            except Exception as exc:
+                if attempt < OPENREVIEW_MAX_RATE_LIMIT_RETRIES and _sleep_for_rate_limit_if_needed(
+                    exc,
+                    context=context,
+                    attempt=attempt,
+                ):
+                    continue
+                raise
 
     def _get_venue_id(self) -> str:
         return f"{self.venue}/{self.year}/Conference"
@@ -252,7 +375,13 @@ class OpenReviewAPIDownloader:
         direct_replies = details.get("directReplies", []) if isinstance(details, dict) else []
 
         try:
-            forum_notes = list(client.get_all_notes(forum=submission.id))
+            forum_notes = list(
+                self._call_with_rate_limit_retry(
+                    client.get_all_notes,
+                    forum=submission.id,
+                    context=f"fetching forum notes for {submission.id}",
+                )
+            )
         except Exception as exc:
             logger.warning("forum fetch failed for %s: %s", submission.id, exc)
             forum_notes = []
@@ -293,22 +422,41 @@ class OpenReviewAPIDownloader:
     def _build_paper(self, submission: Any):
         from openreview_pipeline.schemas import OpenReviewPaper
 
-        content = getattr(submission, "content", {}) or {}
+        content = normalize_content(getattr(submission, "content", {}) or {})
         title = content.get("title", "")
         abstract = content.get("abstract", "")
-        venueid = content.get("venueid")
+        venueid = _first_nonempty(content.get("venueid"))
+        invitation = getattr(submission, "invitation", None)
+        invitations = getattr(submission, "invitations", None) or []
+        invitation_text = " ".join(
+            [str(invitation or "")] + [str(item) for item in invitations]
+        ).strip()
+        venue = _first_nonempty(
+            content.get("venue"),
+            content.get("venue_name"),
+            _venue_from_venueid(venueid),
+            _venue_from_venueid(invitation_text),
+            venueid,
+            self.venue,
+        )
+        year = (
+            _year_from_text(_first_nonempty(content.get("year")))
+            or _year_from_text(venueid)
+            or _year_from_text(invitation_text)
+            or self.year
+        )
         paper_id = submission.id
 
         paper_data = {
             "id": paper_id,
-            "title": unwrap_value(title) if isinstance(title, dict) else str(title),
-            "abstract": unwrap_value(abstract) if isinstance(abstract, dict) else str(abstract),
+            "title": str(title),
+            "abstract": str(abstract),
             "authors": self._extract_authors(submission),
-            "venue": self.venue,
-            "year": self.year,
+            "venue": venue,
+            "year": year,
             "pdf_url": f"https://openreview.net/pdf?id={paper_id}",
             "keywords": self._extract_keywords(submission),
-            "venueid": unwrap_value(venueid) if isinstance(venueid, dict) else venueid,
+            "venueid": venueid,
             "submission_number": getattr(submission, "number", None),
         }
         return OpenReviewPaper(**paper_data)
@@ -478,9 +626,17 @@ class OpenReviewAPIDownloader:
             return []
 
         try:
-            submission = client.get_note(forum_id)
+            submission = self._call_with_rate_limit_retry(
+                client.get_note,
+                forum_id,
+                context=f"fetching forum {forum_id}",
+            )
         except TypeError:
-            submission = client.get_note(id=forum_id)
+            submission = self._call_with_rate_limit_retry(
+                client.get_note,
+                id=forum_id,
+                context=f"fetching forum {forum_id}",
+            )
         except Exception as exc:
             logger.error("Failed to fetch forum %s: %s", forum_id, exc)
             return []
@@ -611,12 +767,51 @@ class DatasetDownloader:
         from openreview_pipeline.utils import load_json, save_json
 
         forum_ids = parse_forum_ids(forum_ids) + parse_forum_ids(forum_id)
-        papers = self.fetch_recent_papers(limit=limit, forum_ids=forum_ids)
-        if forum_ids and output_path.exists():
-            existing_dataset = load_json(output_path, DownloadedPapersDataset)
-            papers = merge_papers_by_id(existing_dataset.papers, papers)
-        dataset = DownloadedPapersDataset(papers=papers, total_count=len(papers))
-        save_json(output_path, dataset)
+        if forum_ids:
+            papers = []
+            if output_path.exists():
+                existing_dataset = load_json(output_path, DownloadedPapersDataset)
+                papers = list(existing_dataset.papers)
+
+            downloaded_ids = {paper.paper.id for paper in papers}
+            papers_by_id = {paper.paper.id: paper for paper in papers}
+            for forum_id in forum_ids:
+                if forum_id in downloaded_ids:
+                    existing_paper = papers_by_id.get(forum_id)
+                    existing_venue = existing_paper.paper.venue if existing_paper else None
+                    if not _looks_like_openreview_fallback_venue(existing_venue):
+                        logger.info("Download stage resume: forum %s already exists; skipping.", forum_id)
+                        continue
+                    logger.info(
+                        "Download stage refresh: forum %s has fallback venue %r; refetching metadata.",
+                        forum_id,
+                        existing_venue,
+                    )
+                fetched_papers = self.fetch_recent_papers(limit=limit, forum_ids=[forum_id])
+                if fetched_papers:
+                    papers = merge_papers_by_id(papers, fetched_papers)
+                    downloaded_ids = {paper.paper.id for paper in papers}
+                    papers_by_id = {paper.paper.id: paper for paper in papers}
+                    dataset = DownloadedPapersDataset(papers=papers, total_count=len(papers))
+                    save_json(output_path, dataset)
+
+            dataset = DownloadedPapersDataset(papers=papers, total_count=len(papers))
+            save_json(output_path, dataset)
+            downloaded_ids = {paper.paper.id for paper in papers}
+            success_count = sum(1 for forum_id in forum_ids if forum_id in downloaded_ids)
+            requested_count = len(forum_ids)
+        else:
+            papers = self.fetch_recent_papers(limit=limit, forum_ids=forum_ids)
+            dataset = DownloadedPapersDataset(papers=papers, total_count=len(papers))
+            save_json(output_path, dataset)
+            success_count = len(papers)
+            requested_count = limit or len(papers)
+        logger.info(
+            "Download stage success: %s/%s papers (%.1f%%).",
+            success_count,
+            requested_count,
+            (success_count / requested_count * 100) if requested_count else 100.0,
+        )
 
 
 def deduplicate_papers_by_id(papers: Iterable) -> List:

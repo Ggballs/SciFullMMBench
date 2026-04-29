@@ -26,11 +26,13 @@ SRC_ROOT = REPO_ROOT / "src"
 if SRC_ROOT.exists() and str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+from openreview_pipeline.app_logging import configure_project_logging  # noqa: E402
 from openreview_pipeline.utils.db.human_feedback_mysql import (  # noqa: E402
     load_query_feedback,
     save_query_feedback,
 )
 
+configure_project_logging()
 
 ADMIN_FEEDBACK_PASSWORD = "westlakenlp"
 
@@ -644,14 +646,49 @@ def get_filtered_queries(paper: Dict[str, Any], source_view: str) -> List[Dict[s
     return [query for query in queries if query.get("source_view") == source_view]
 
 
-def build_query_label_map(paper: Dict[str, Any], source_view: str) -> List[Tuple[str, str]]:
+def has_saved_feedback_payload(payload: Dict[str, Any]) -> bool:
+    if not payload:
+        return False
+    query_relevance = payload.get("query_paper_relevance") or {}
+    human_like = payload.get("human_like_search") or {}
+    candidate_checks = payload.get("candidate_checks") or {}
+    return bool(query_relevance or human_like or candidate_checks)
+
+
+def has_saved_query_feedback(
+    paper: Dict[str, Any],
+    query: Dict[str, Any],
+    reviewer_username: Optional[str],
+) -> bool:
+    reviewer_username = str(reviewer_username or "").strip()
+    if not reviewer_username:
+        return False
+    context = {
+        "query_key": build_query_key(paper, query),
+        "paper_id": paper.get("paper_id", ""),
+        "query_text": query.get("query_text", ""),
+        "source_view": query.get("source_view", ""),
+    }
+    try:
+        return has_saved_feedback_payload(load_query_feedback(context, reviewer_username))
+    except Exception:
+        return False
+
+
+def build_query_label_map(
+    paper: Dict[str, Any],
+    source_view: str,
+    reviewer_username: Optional[str] = None,
+) -> List[Tuple[str, str]]:
     out = []
     for idx, query in enumerate(paper.get("queries", []), start=1):
         if source_view != "all" and query.get("source_view") != source_view:
             continue
         decision = safe_get(query, "query_analysis", "decision", default="N/A")
         decision_label = "𝐊𝐞𝐞𝐩" if str(decision).lower() == "keep" else str(decision)
+        saved_label = " | [saved]" if has_saved_query_feedback(paper, query, reviewer_username) else ""
         label = f"Q{idx} | {query.get('source_view', 'N/A')} | {decision_label}"
+        label = f"{label}{saved_label}"
         out.append((label, query.get("query_text", "")))
     return out
 
@@ -1361,6 +1398,7 @@ def render_paper(
     paper_id: str,
     source_view: Optional[str] = None,
     query_label: Optional[str] = None,
+    reviewer_username: Optional[str] = None,
 ):
     paper = get_paper_by_id(final_data, paper_id)
     if paper is None:
@@ -1379,7 +1417,7 @@ def render_paper(
     available_views = [value for _, value in view_choices]
     selected_view = source_view if source_view in available_views else "all"
 
-    label_map = build_query_label_map(paper, selected_view)
+    label_map = build_query_label_map(paper, selected_view, reviewer_username)
     if label_map:
         selected_label = query_label if query_label in {label for label, _ in label_map} else label_map[0][0]
         selected_query_text = dict(label_map).get(selected_label)
@@ -1405,6 +1443,7 @@ def get_selected_query_context(
     paper_id: str,
     source_view: Optional[str] = None,
     query_label: Optional[str] = None,
+    reviewer_username: Optional[str] = None,
 ) -> Dict[str, Any]:
     paper = get_paper_by_id(final_data, paper_id)
     if paper is None:
@@ -1412,12 +1451,40 @@ def get_selected_query_context(
 
     available_views = [value for _, value in build_view_choices(paper)]
     selected_view = source_view if source_view in available_views else "all"
-    label_map = build_query_label_map(paper, selected_view)
+    label_map = build_query_label_map(paper, selected_view, reviewer_username)
     if not label_map:
         return {}
     selected_label = query_label if query_label in {label for label, _ in label_map} else label_map[0][0]
     selected_query = get_query_by_text(paper, dict(label_map).get(selected_label, ""))
     return build_query_context(paper, selected_query)
+
+
+def build_query_selector_update(
+    final_data: Dict[str, Any],
+    paper_id: str,
+    source_view: Optional[str],
+    query_label: Optional[str],
+    reviewer_username: Optional[str],
+    selected_query_text: Optional[str] = None,
+):
+    paper = get_paper_by_id(final_data, paper_id)
+    if paper is None:
+        return gr.update(choices=[], value=None)
+
+    available_views = [value for _, value in build_view_choices(paper)]
+    selected_view = source_view if source_view in available_views else "all"
+    label_map = build_query_label_map(paper, selected_view, reviewer_username)
+    if not label_map:
+        return gr.update(choices=[], value=None)
+
+    label_by_query_text = {query_text: label for label, query_text in label_map}
+    if selected_query_text and selected_query_text in label_by_query_text:
+        selected_label = label_by_query_text[selected_query_text]
+    elif query_label in {label for label, _ in label_map}:
+        selected_label = str(query_label)
+    else:
+        selected_label = label_map[0][0]
+    return gr.update(choices=[label for label, _ in label_map], value=selected_label)
 
 
 def launch_app(
@@ -1607,7 +1674,14 @@ def launch_app(
                 source_view: Optional[str] = None,
                 query_label: Optional[str] = None,
             ):
-                rendered = render_paper(final_data, human_summary, paper_id, source_view=source_view, query_label=query_label)
+                rendered = render_paper(
+                    final_data,
+                    human_summary,
+                    paper_id,
+                    source_view=source_view,
+                    query_label=query_label,
+                    reviewer_username=reviewer_username,
+                )
                 view_update = rendered[1]
                 query_update = rendered[2]
                 context = get_selected_query_context(
@@ -1615,6 +1689,7 @@ def launch_app(
                     paper_id,
                     source_view=view_update["value"],
                     query_label=query_update["value"],
+                    reviewer_username=reviewer_username,
                 )
                 feedback_updates, status = safe_human_judgment_updates(context, reviewer_username)
                 return (
@@ -1655,6 +1730,9 @@ def launch_app(
             def _save_judgment(
                 reviewer_username: str,
                 context: Dict[str, Any],
+                paper_id: str,
+                source_view: str,
+                query_label: str,
                 query_relevance_value: Optional[str],
                 query_notes_value: str,
                 real_researcher_search_value: Optional[str],
@@ -1663,7 +1741,7 @@ def launch_app(
                 human_like_notes_value: str,
                 *candidate_values: Any,
             ):
-                return save_current_human_judgment(
+                status = save_current_human_judgment(
                     reviewer_username,
                     context,
                     query_relevance_value,
@@ -1674,6 +1752,15 @@ def launch_app(
                     human_like_notes_value,
                     *candidate_values,
                 )
+                query_update = build_query_selector_update(
+                    final_data,
+                    paper_id or context.get("paper_id", ""),
+                    source_view or context.get("source_view", "all"),
+                    query_label,
+                    reviewer_username,
+                    selected_query_text=context.get("query_text"),
+                )
+                return status, query_update
 
             render_outputs = [
                 paper_html,
@@ -1709,15 +1796,29 @@ def launch_app(
                 feedback_outputs.extend(components)
             feedback_outputs.append(judge_status)
 
-            def _on_load(context: Dict[str, Any], request: gr.Request):
+            def _on_load(
+                context: Dict[str, Any],
+                paper_id: str,
+                source_view: str,
+                query_label: str,
+                request: gr.Request,
+            ):
                 reviewer_username = request_username(request)
                 feedback_updates, status = safe_human_judgment_updates(context, reviewer_username)
-                return (reviewer_username or "",) + feedback_updates + (gr.update(value=status),)
+                query_update = build_query_selector_update(
+                    final_data,
+                    paper_id or context.get("paper_id", ""),
+                    source_view or context.get("source_view", "all"),
+                    query_label,
+                    reviewer_username,
+                    selected_query_text=context.get("query_text"),
+                )
+                return (reviewer_username or "", query_update) + feedback_updates + (gr.update(value=status),)
 
             demo.load(
                 _on_load,
-                inputs=query_context_state,
-                outputs=[reviewer_username_state] + feedback_outputs,
+                inputs=[query_context_state, paper_selector, view_selector, query_selector],
+                outputs=[reviewer_username_state, query_selector] + feedback_outputs,
             )
 
             paper_selector.change(
@@ -1756,6 +1857,9 @@ def launch_app(
                 inputs=[
                     reviewer_username_state,
                     query_context_state,
+                    paper_selector,
+                    view_selector,
+                    query_selector,
                     query_relevance,
                     query_notes,
                     real_researcher_search,
@@ -1768,7 +1872,7 @@ def launch_app(
                     for _, candidate_label_correct, candidate_wrong_type, candidate_notes in candidate_components
                     for component in (candidate_label_correct, candidate_wrong_type, candidate_notes)
                 ],
-                outputs=judge_status,
+                outputs=[judge_status, query_selector],
             )
 
     demo.launch(

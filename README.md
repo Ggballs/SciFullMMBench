@@ -80,9 +80,63 @@ openreview-pipeline run-all --output-dir data --venue ICLR --year 2025 --max-pap
 
 # Run all stages for known OpenReview forum ids
 openreview-pipeline run-all --output-dir outputs/forum_batch --forum-id XZNXSM4rHG,ID_2,ID_3
+
+# Run all stages for known forum ids without stage-1 filtering
+openreview-pipeline run-all --output-dir outputs/forum_batch --forum-id XZNXSM4rHG,ID_2,ID_3 --skip-filter
 ```
 
 When `--forum-id` is used, the value may be a comma-separated list. Re-running with the same output directory merges newly fetched papers into `00_downloaded.json` and updates existing rows with the same paper id. Venue/year downloads without `--forum-id` keep the normal fresh overwrite behavior.
+Use `--skip-filter` when you want every downloaded paper to continue into summarization.
+Stages are resume-aware: existing output files are loaded first, completed paper/query rows are counted as successful, and the run continues from missing items.
+
+### Logs
+
+Project logs are written to `logs/` by default:
+
+- `openreview_pipeline.log` contains Python logging output.
+- `openreview_pipeline.stdout.log` captures `print()` output and stderr while still showing it in the console.
+- `human_feedback_mysql.log` keeps MySQL feedback access logs.
+
+Set `OPENREVIEW_PIPELINE_LOG_DIR` to write logs somewhere else:
+
+```bash
+OPENREVIEW_PIPELINE_LOG_DIR=/path/to/logs openreview-pipeline run-all --output-dir data
+```
+
+When running with Docker Compose, the container writes to `/app/logs`, and Compose bind-mounts that path to `${SCIFULL_LOGS_DIR:-./logs}` on the host. On a server, point `SCIFULL_LOGS_DIR` at a real host directory so logs survive rebuilds:
+
+```bash
+mkdir -p /srv/scifullmmbench/logs
+SCIFULL_LOGS_DIR=/srv/scifullmmbench/logs docker compose up --build
+```
+
+### Export Human Feedback
+
+Export MySQL `human_feedback` rows to JSON:
+
+```bash
+python scripts/export_human_feedback_mysql.py --output outputs/human_feedback_mysql_export.json
+```
+
+Export and enrich an existing final pipeline artifact:
+
+```bash
+python scripts/export_human_feedback_mysql.py \
+  --output outputs/human_feedback_mysql_export.json \
+  --final-output outputs/final_pipeline_output.json \
+  --combined-output outputs/final_pipeline_output_with_human_feedback.json
+```
+
+The enriched final output adds `human_feedback` to each matched query and adds a top-level `human_feedback_summary`. Matching uses `paper_id` plus `query_text`.
+
+For Docker/server runs, mount outputs to a host directory too:
+
+```bash
+mkdir -p /srv/scifullmmbench/logs /srv/scifullmmbench/outputs
+SCIFULL_LOGS_DIR=/srv/scifullmmbench/logs \
+SCIFULL_OUTPUTS_DIR=/srv/scifullmmbench/outputs \
+docker compose up --build
+```
 
 ### Python API
 

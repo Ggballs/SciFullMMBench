@@ -135,15 +135,37 @@ class QueryGenerator:
             queries_by_view=queries,
         )
 
-    def apply(self, dataset: SummarizedPapersDataset) -> GeneratedQueriesDataset:
+    def apply(
+        self,
+        dataset: SummarizedPapersDataset,
+        checkpoint_path: Optional[Path] = None,
+    ) -> GeneratedQueriesDataset:
         logger.info(f"Generating queries for {dataset.total_papers} papers")
 
         papers_queries = []
-        total_queries = 0
+        completed_ids = set()
+        target_ids = {summary.paper_id for summary in dataset.summaries}
+        if checkpoint_path and checkpoint_path.exists():
+            try:
+                checkpoint = load_json(checkpoint_path, GeneratedQueriesDataset)
+                papers_queries = [
+                    paper for paper in checkpoint.papers_queries if paper.paper_id in target_ids
+                ]
+                completed_ids = {paper.paper_id for paper in papers_queries}
+                if completed_ids:
+                    logger.info(
+                        "Loaded %s existing query-generation results from %s",
+                        len(completed_ids),
+                        checkpoint_path,
+                    )
+            except Exception as exc:
+                logger.warning("Could not load query-generation checkpoint %s: %s", checkpoint_path, exc)
+
+        work_items = [summary for summary in dataset.summaries if summary.paper_id not in completed_ids]
 
         progress = tqdm(
-            dataset.summaries,
-            total=dataset.total_papers,
+            work_items,
+            total=len(work_items),
             desc="Generating queries",
             unit="paper",
             dynamic_ncols=True,
@@ -155,18 +177,43 @@ class QueryGenerator:
                 summary=summary,
             )
             papers_queries.append(paper_queries)
-            total_queries += len(paper_queries.queries_by_view)
-            progress.set_postfix_str(f"queries={total_queries}")
+            completed_ids.add(summary.paper_id)
+            if checkpoint_path:
+                save_json(
+                    checkpoint_path,
+                    GeneratedQueriesDataset(
+                        papers_queries=papers_queries,
+                        total_papers=len(papers_queries),
+                        total_queries=sum(len(paper.queries_by_view) for paper in papers_queries),
+                    ),
+                )
+            progress.set_postfix_str(
+                f"queries={sum(len(paper.queries_by_view) for paper in papers_queries)}"
+            )
         progress.close()
 
-        return GeneratedQueriesDataset(
+        papers_by_id = {paper.paper_id: paper for paper in papers_queries}
+        papers_queries = [
+            papers_by_id[summary.paper_id]
+            for summary in dataset.summaries
+            if summary.paper_id in papers_by_id
+        ]
+        result = GeneratedQueriesDataset(
             papers_queries=papers_queries,
             total_papers=len(papers_queries),
-            total_queries=total_queries,
+            total_queries=sum(len(paper.queries_by_view) for paper in papers_queries),
         )
+        logger.info(
+            "Generate-queries stage success: %s/%s papers (%.1f%%), %s queries.",
+            len(papers_queries),
+            dataset.total_papers,
+            (len(papers_queries) / dataset.total_papers * 100) if dataset.total_papers else 100.0,
+            result.total_queries,
+        )
+        return result
 
     def run(self, input_path: Path, output_path: Path) -> None:
         logger.info(f"Running generate-queries stage: {input_path} -> {output_path}")
         dataset = load_json(input_path, SummarizedPapersDataset)
-        result = self.apply(dataset)
+        result = self.apply(dataset, checkpoint_path=output_path)
         save_json(output_path, result)

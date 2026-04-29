@@ -158,10 +158,13 @@ class Summarizer:
 
         summaries = []
         completed_ids = set()
+        target_ids = {result.paper.paper.id for result in passed_papers[:limit]}
         if checkpoint_path and checkpoint_path.exists():
             try:
                 checkpoint = load_json(checkpoint_path, SummarizedPapersDataset)
-                summaries = list(checkpoint.summaries)
+                summaries = [
+                    summary for summary in checkpoint.summaries if summary.paper_id in target_ids
+                ]
                 completed_ids = {summary.paper_id for summary in summaries}
                 if completed_ids:
                     logger.info("Loaded %s existing summaries from %s", len(completed_ids), checkpoint_path)
@@ -194,6 +197,18 @@ class Summarizer:
             progress.set_postfix_str(f"done={len(summaries)}")
         progress.close()
 
+        summaries_by_id = {summary.paper_id: summary for summary in summaries}
+        summaries = [
+            summaries_by_id[result.paper.paper.id]
+            for result in passed_papers[:limit]
+            if result.paper.paper.id in summaries_by_id
+        ]
+        logger.info(
+            "Summarize stage success: %s/%s papers (%.1f%%).",
+            len(summaries),
+            min(limit, total),
+            (len(summaries) / min(limit, total) * 100) if min(limit, total) else 100.0,
+        )
         return SummarizedPapersDataset(summaries=summaries, total_papers=len(summaries))
 
     def run(self, input_path: Path, output_path: Path) -> None:
