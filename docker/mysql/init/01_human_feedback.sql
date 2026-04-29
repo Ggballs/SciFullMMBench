@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS human_feedback (
   ),
 
   KEY idx_query_id (query_id),
-  KEY idx_reviewer_username (reviewer_username),
+  KEY idx_reviewer_username (reviewer_username)
 ) ENGINE=InnoDB
   DEFAULT CHARSET=utf8mb4
   COLLATE=utf8mb4_unicode_ci
