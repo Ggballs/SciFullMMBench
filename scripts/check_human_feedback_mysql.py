@@ -27,6 +27,7 @@ def print_recent_rows(engine, limit: int) -> None:
           reviewer_username,
           paper_forum_id,
           query_id,
+          query_text,
           feedback_item_id,
           judgement,
           updated_at
@@ -49,7 +50,7 @@ def print_recent_rows(engine, limit: int) -> None:
             query_id = query_id[:45] + "..."
         print(
             f"id={row['id']} user={row['reviewer_username']} paper={row['paper_forum_id']} "
-            f"query={query_id} item={row['feedback_item_id']} judgement={row['judgement']} "
+            f"query={query_id}  query_text={row['query_text']} item={row['feedback_item_id']} judgement={row['judgement']} "
             f"updated={row['updated_at']}"
         )
 
