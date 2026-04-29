@@ -1,0 +1,1135 @@
+{
+  "dataset_overview": {
+    "pasa": {
+      "total_queries": 50,
+      "filtering_applied": "all human queries, min_tokens=2"
+    },
+    "combined": {
+      "total_queries": 50
+    }
+  },
+  "filtering_rules": {
+    "litsearch": {
+      "human_flag_column": "__no_human_flag__",
+      "human_flag_value_prefix": "manual",
+      "min_token_count": 2
+    },
+    "pasa": {
+      "human_flag_column": "none (all human)",
+      "human_flag_value": "all queries are human",
+      "min_token_count": 2
+    }
+  },
+  "metrics": {
+    "combined": {
+      "length_stats": {
+        "char_length": {
+          "mean": 103.66,
+          "std": 47.76007118922668,
+          "min": 45,
+          "max": 265,
+          "median": 95.0,
+          "p25": 66.75,
+          "p75": 131.0
+        },
+        "token_length": {
+          "mean": 15.56,
+          "std": 7.063030511048356,
+          "min": 6,
+          "max": 38,
+          "median": 14.0,
+          "p25": 10.5,
+          "p75": 18.75
+        },
+        "total_queries": 50
+      },
+      "constraint_count": {
+        "method": "llm_as_judge",
+        "scale": "exact non-negative integer semantic constraint count",
+        "constraints_per_query": {
+          "mean": 2.0,
+          "std": 0.6928203230275509,
+          "min": 0,
+          "max": 3,
+          "median": 2.0
+        },
+        "queries_with_constraints": 48,
+        "constraint_ratio": 0.96
+      },
+      "question_templates": {
+        "template_distribution": {
+          "Give me papers [that/on/about]...": 34,
+          "I am looking for...": 1,
+          "Do [X/they]...": 1,
+          "Is there a paper/method that/which...": 1,
+          "What [open-source/latest/first] method...": 2,
+          "Can [we/X]...": 2,
+          "I would like to...": 1,
+          "Help me search/find...": 1,
+          "Could [we/X]...": 1,
+          "Using [X for Y]...": 1,
+          "How can [we/X]...": 1
+        },
+        "template_ratios": {
+          "Give me papers [that/on/about]...": 0.68,
+          "I am looking for...": 0.02,
+          "Do [X/they]...": 0.02,
+          "Is there a paper/method that/which...": 0.02,
+          "What [open-source/latest/first] method...": 0.04,
+          "Can [we/X]...": 0.04,
+          "I would like to...": 0.02,
+          "Help me search/find...": 0.02,
+          "Could [we/X]...": 0.02,
+          "Using [X for Y]...": 0.02,
+          "How can [we/X]...": 0.02
+        },
+        "unmatched_count": 4,
+        "unmatched_ratio": 0.08,
+        "template_examples": {
+          "Give me papers [that/on/about]...": [
+            "Give me papers which show that using a smaller dataset in large language model pre-training can result in better models than using bigger datasets.",
+            "Give me papers that share some insights about how large language models gain in-context learning capability in the process of pre-training.",
+            "List all papers that use autoregressive transformer to generate videos."
+          ],
+          "I am looking for...": [
+            "I am looking for research papers on the construction of multimodal foundation models that support both visual and audio inputs. These models should be pre-trained on large-scale datasets, including visual, audio, and audio-visual data. Please exclude survey papers."
+          ],
+          "Do [X/they]...": [
+            "Do you know some papers about using reward shaping methods to train large language model agent."
+          ],
+          "Is there a paper/method that/which...": [
+            "Is there any work that analyzes the scaling law of the multi-module models, such as video-text, image-text models?"
+          ],
+          "What [open-source/latest/first] method...": [
+            "What papers discuss the use of transformer architecture in 3d video generation",
+            "What are the researches that have explored the application of Crypto-based Private Learning in privacy-preserving machine learning?."
+          ],
+          "Can [we/X]...": [
+            "Can LLMs detect LLM-generated text in a zero-shot manner? Do they perform better than supervised fine-tuned small classification models? Provide related papers.",
+            "Can you help me find research papers that explore the use of large vision-language models as agents to automatically play PC games?"
+          ],
+          "I would like to...": [
+            "I would like to find some research papers about test time training topic, in LLM research area."
+          ],
+          "Help me search/find...": [
+            "Help me search for the work related to the synthetic data of large language models. I want to know how to automatically generate large-scale, high-quality, diverse, difficult, and valuable long thought data for learning."
+          ],
+          "Could [we/X]...": [
+            "Could you list research that demonstrates the advantages of Quantization-Aware Training (QAT), which can enable the model to learn better representations for low-bit weights?."
+          ],
+          "Using [X for Y]...": [
+            "Using synthesis data for scaling up sft data."
+          ],
+          "How can [we/X]...": [
+            "How can LLM agents be evaluated and benchmarked for financial tasks? Note that I am referring to agents."
+          ]
+        },
+        "total_templates": 11
+      },
+      "qualitative_metrics": {
+        "method": "llm_as_judge",
+        "specificity_calibration": {
+          "scale": "1=severely under-specified, 2=under-specified, 3=well-calibrated (ideal), 4=over-specified, 5=pathologically over-specified",
+          "ideal_score": 3,
+          "mean": 2.66,
+          "std": 0.7644605941446556,
+          "min": 1.0,
+          "max": 4.0,
+          "median": 3.0
+        },
+        "specificity_calibration_fit": {
+          "scale": "0-1 closeness to ideal centered score of 3, computed as 1 - abs(score - 3) / 2",
+          "ideal_score": 1.0,
+          "mean": 0.71,
+          "std": 0.3014962686336267,
+          "min": 0.0,
+          "max": 1.0,
+          "median": 0.5
+        },
+        "lexical_naturalism": {
+          "scale": "1=keyword dump / fragmented, 2=stilted or awkward, 3=natural researcher register (ideal), 4=over-formalized / essay-register, 5=synthetic fluent / LLM-polished prose",
+          "ideal_score": 3,
+          "mean": 2.74,
+          "std": 0.8674099376880576,
+          "min": 1.0,
+          "max": 4.0,
+          "median": 3.0
+        },
+        "lexical_naturalism_fit": {
+          "scale": "0-1 closeness to ideal centered score of 3, computed as 1 - abs(score - 3) / 2",
+          "ideal_score": 1.0,
+          "mean": 0.63,
+          "std": 0.2609597670139978,
+          "min": 0.0,
+          "max": 1.0,
+          "median": 0.5
+        },
+        "specificity": {
+          "mean": 0.71,
+          "std": 0.3014962686336267,
+          "min": 0.0,
+          "max": 1.0,
+          "median": 0.5
+        },
+        "naturalness": {
+          "mean": 0.63,
+          "std": 0.2609597670139978,
+          "min": 0.0,
+          "max": 1.0,
+          "median": 0.5
+        }
+      },
+      "semantic_constraint_analysis": {
+        "method": "llm_as_judge",
+        "scale": "exact non-negative integer semantic constraint count",
+        "semantic_constraints_per_query": {
+          "mean": 2.0,
+          "std": 0.6928203230275509,
+          "min": 0,
+          "max": 3,
+          "median": 2.0
+        },
+        "queries_with_constraints": 48,
+        "constraint_ratio": 0.96,
+        "per_query": [
+          {
+            "index": 1,
+            "query": "Give me papers which show that using a smaller dataset in large language model pre-training can result in better models than using bigger datasets.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 2,
+            "query": "Give me papers that share some insights about how large language models gain in-context learning capability in the process of pre-training.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 3,
+            "query": "List all papers that use autoregressive transformer to generate videos.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 4,
+            "query": "I am looking for research papers on the construction of multimodal foundation models that support both visual and audio inputs. These models should be pre-trained on large-scale datasets, including visual, audio, and audio-visual data. Please exclude survey papers.",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 5,
+            "query": "Provide me with all papers that discuss reinforcement learning training for Large Language Model agent tasks.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 6,
+            "query": "Papers that apply RLHF to address the hallucination problem in image and video description.",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 7,
+            "query": "Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 8,
+            "query": "Show me research on the long video description. Here, long videos are defined as those with a duration of at least several minutes.",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 9,
+            "query": "Do you know some papers about using reward shaping methods to train large language model agent.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 10,
+            "query": "Give me papers about how to rank search results by the use of LLM.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 11,
+            "query": "Is there any work that analyzes the scaling law of the multi-module models, such as video-text, image-text models?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 12,
+            "query": "Give me all visual-LLM models that are MoE architecture",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 13,
+            "query": "What papers discuss the use of transformer architecture in 3d video generation",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 14,
+            "query": "Provide papers demonstrating that the self-correction of LLMs does not enhance their performance.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 15,
+            "query": "Find papers that use LLMs or LLM-based agents to automatically write surveys or summaries for multiple scholarly documents.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 16,
+            "query": "Provide papers claiming that reinforcement learning can negatively impact the performance of supervised fine-tuned LLMs.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 17,
+            "query": "Find papers on trigger-free document-level event extraction methods that do not use human-annotated triggers.",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 18,
+            "query": "Provide papers explaining why the in-context learning performance of LLMs cannot surpass that of supervised fine-tuned small language models in information extraction tasks, such as NER, RE, and EE.",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 19,
+            "query": "Can LLMs detect LLM-generated text in a zero-shot manner? Do they perform better than supervised fine-tuned small classification models? Provide related papers.",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 20,
+            "query": "Provide papers on methods that protect the generation quality of LLMs under vocabulary watermarking settings.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 21,
+            "query": "Find papers supporting the claim that knowledgeable LLMs have sufficient inductive capacity to analyze the relationships between multiple papers and systematically write a survey on them.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 22,
+            "query": "Search for papers related to large language models that demonstrate how the same prompt with different responses can improve the performance of the SFT model.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 23,
+            "query": "Papers on solving common sense problems in machine translation.",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 24,
+            "query": "Show me papers utilizing reinforcement learning to optimize diffusion models for video generation.",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 25,
+            "query": "Show me all research papers on machine translation agents.",
+            "has_constraint": false,
+            "semantic_constraint_count": 0
+          },
+          {
+            "index": 26,
+            "query": "Video aesthetics score, using multimodal large models.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 27,
+            "query": "Scaling Laws for Fine-Grained Mixture of Experts.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 28,
+            "query": "Show me research on rejection sampling finetuning.",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 29,
+            "query": "Show me code evaluation datasets with a mid-level hardness. It show be harder than HumanEval and MBPP, but easier than code_contests.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 30,
+            "query": "Research on teaching llms to do math prove and solve IMO level math problems.",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 31,
+            "query": "I would like to find some research papers about test time training topic, in LLM research area.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 32,
+            "query": "DPO training for large-scale vision-language models.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 33,
+            "query": "Show me cutting edge research works on neural network based quantum Monte Carlo.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 34,
+            "query": "Show me some popular papers on generating textual adversarial examples for machine translation.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 35,
+            "query": "Show me research on 3d scene understanding leveraging progress on 3D AIGC foundation models.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 36,
+            "query": "Give me papers about LLM quantized pretraining.",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 37,
+            "query": "Show me research on identity preservation video generation.",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 38,
+            "query": "Give me some papers showing that LLM agents can do schedule planning.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 39,
+            "query": "Show me research on image encoding distributions.",
+            "has_constraint": false,
+            "semantic_constraint_count": 0
+          },
+          {
+            "index": 40,
+            "query": "Help me search for the work related to the synthetic data of large language models. I want to know how to automatically generate large-scale, high-quality, diverse, difficult, and valuable long thought data for learning.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 41,
+            "query": "Could you list research that demonstrates the advantages of Quantization-Aware Training (QAT), which can enable the model to learn better representations for low-bit weights?.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 42,
+            "query": "Using synthesis data for scaling up sft data.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 43,
+            "query": "Show me research on how to select frames when doing video understanding.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 44,
+            "query": "AI for Science papers, especially protein design and DPO of antibody design.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 45,
+            "query": "What are the researches that have explored the application of Crypto-based Private Learning in privacy-preserving machine learning?.",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 46,
+            "query": "All papers about controllability of video generation.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 47,
+            "query": "Show me research on robot decision making and task planning, especially relevant datasets and benchmarks.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 48,
+            "query": "How can LLM agents be evaluated and benchmarked for financial tasks? Note that I am referring to agents.",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 49,
+            "query": "Papers that explore using large language models for mining factors in stock exchange analysis.",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 50,
+            "query": "Can you help me find research papers that explore the use of large vision-language models as agents to automatically play PC games?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          }
+        ]
+      }
+    },
+    "pasa": {
+      "length_stats": {
+        "char_length": {
+          "mean": 103.66,
+          "std": 47.76007118922668,
+          "min": 45,
+          "max": 265,
+          "median": 95.0,
+          "p25": 66.75,
+          "p75": 131.0
+        },
+        "token_length": {
+          "mean": 15.56,
+          "std": 7.063030511048356,
+          "min": 6,
+          "max": 38,
+          "median": 14.0,
+          "p25": 10.5,
+          "p75": 18.75
+        },
+        "total_queries": 50
+      },
+      "constraint_count": {
+        "method": "llm_as_judge",
+        "scale": "exact non-negative integer semantic constraint count",
+        "constraints_per_query": {
+          "mean": 2.0,
+          "std": 0.6928203230275509,
+          "min": 0,
+          "max": 3,
+          "median": 2.0
+        },
+        "queries_with_constraints": 48,
+        "constraint_ratio": 0.96
+      },
+      "question_templates": {
+        "template_distribution": {
+          "Give me papers [that/on/about]...": 34,
+          "I am looking for...": 1,
+          "Do [X/they]...": 1,
+          "Is there a paper/method that/which...": 1,
+          "What [open-source/latest/first] method...": 2,
+          "Can [we/X]...": 2,
+          "I would like to...": 1,
+          "Help me search/find...": 1,
+          "Could [we/X]...": 1,
+          "Using [X for Y]...": 1,
+          "How can [we/X]...": 1
+        },
+        "template_ratios": {
+          "Give me papers [that/on/about]...": 0.68,
+          "I am looking for...": 0.02,
+          "Do [X/they]...": 0.02,
+          "Is there a paper/method that/which...": 0.02,
+          "What [open-source/latest/first] method...": 0.04,
+          "Can [we/X]...": 0.04,
+          "I would like to...": 0.02,
+          "Help me search/find...": 0.02,
+          "Could [we/X]...": 0.02,
+          "Using [X for Y]...": 0.02,
+          "How can [we/X]...": 0.02
+        },
+        "unmatched_count": 4,
+        "unmatched_ratio": 0.08,
+        "template_examples": {
+          "Give me papers [that/on/about]...": [
+            "Give me papers which show that using a smaller dataset in large language model pre-training can result in better models than using bigger datasets.",
+            "Give me papers that share some insights about how large language models gain in-context learning capability in the process of pre-training.",
+            "List all papers that use autoregressive transformer to generate videos."
+          ],
+          "I am looking for...": [
+            "I am looking for research papers on the construction of multimodal foundation models that support both visual and audio inputs. These models should be pre-trained on large-scale datasets, including visual, audio, and audio-visual data. Please exclude survey papers."
+          ],
+          "Do [X/they]...": [
+            "Do you know some papers about using reward shaping methods to train large language model agent."
+          ],
+          "Is there a paper/method that/which...": [
+            "Is there any work that analyzes the scaling law of the multi-module models, such as video-text, image-text models?"
+          ],
+          "What [open-source/latest/first] method...": [
+            "What papers discuss the use of transformer architecture in 3d video generation",
+            "What are the researches that have explored the application of Crypto-based Private Learning in privacy-preserving machine learning?."
+          ],
+          "Can [we/X]...": [
+            "Can LLMs detect LLM-generated text in a zero-shot manner? Do they perform better than supervised fine-tuned small classification models? Provide related papers.",
+            "Can you help me find research papers that explore the use of large vision-language models as agents to automatically play PC games?"
+          ],
+          "I would like to...": [
+            "I would like to find some research papers about test time training topic, in LLM research area."
+          ],
+          "Help me search/find...": [
+            "Help me search for the work related to the synthetic data of large language models. I want to know how to automatically generate large-scale, high-quality, diverse, difficult, and valuable long thought data for learning."
+          ],
+          "Could [we/X]...": [
+            "Could you list research that demonstrates the advantages of Quantization-Aware Training (QAT), which can enable the model to learn better representations for low-bit weights?."
+          ],
+          "Using [X for Y]...": [
+            "Using synthesis data for scaling up sft data."
+          ],
+          "How can [we/X]...": [
+            "How can LLM agents be evaluated and benchmarked for financial tasks? Note that I am referring to agents."
+          ]
+        },
+        "total_templates": 11
+      },
+      "qualitative_metrics": {
+        "method": "llm_as_judge",
+        "specificity_calibration": {
+          "scale": "1=severely under-specified, 2=under-specified, 3=well-calibrated (ideal), 4=over-specified, 5=pathologically over-specified",
+          "ideal_score": 3,
+          "mean": 2.66,
+          "std": 0.7644605941446556,
+          "min": 1.0,
+          "max": 4.0,
+          "median": 3.0
+        },
+        "specificity_calibration_fit": {
+          "scale": "0-1 closeness to ideal centered score of 3, computed as 1 - abs(score - 3) / 2",
+          "ideal_score": 1.0,
+          "mean": 0.71,
+          "std": 0.3014962686336267,
+          "min": 0.0,
+          "max": 1.0,
+          "median": 0.5
+        },
+        "lexical_naturalism": {
+          "scale": "1=keyword dump / fragmented, 2=stilted or awkward, 3=natural researcher register (ideal), 4=over-formalized / essay-register, 5=synthetic fluent / LLM-polished prose",
+          "ideal_score": 3,
+          "mean": 2.74,
+          "std": 0.8674099376880576,
+          "min": 1.0,
+          "max": 4.0,
+          "median": 3.0
+        },
+        "lexical_naturalism_fit": {
+          "scale": "0-1 closeness to ideal centered score of 3, computed as 1 - abs(score - 3) / 2",
+          "ideal_score": 1.0,
+          "mean": 0.63,
+          "std": 0.2609597670139978,
+          "min": 0.0,
+          "max": 1.0,
+          "median": 0.5
+        },
+        "specificity": {
+          "mean": 0.71,
+          "std": 0.3014962686336267,
+          "min": 0.0,
+          "max": 1.0,
+          "median": 0.5
+        },
+        "naturalness": {
+          "mean": 0.63,
+          "std": 0.2609597670139978,
+          "min": 0.0,
+          "max": 1.0,
+          "median": 0.5
+        }
+      },
+      "semantic_constraint_analysis": {
+        "method": "llm_as_judge",
+        "scale": "exact non-negative integer semantic constraint count",
+        "semantic_constraints_per_query": {
+          "mean": 2.0,
+          "std": 0.6928203230275509,
+          "min": 0,
+          "max": 3,
+          "median": 2.0
+        },
+        "queries_with_constraints": 48,
+        "constraint_ratio": 0.96,
+        "per_query": [
+          {
+            "index": 1,
+            "query": "Give me papers which show that using a smaller dataset in large language model pre-training can result in better models than using bigger datasets.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 2,
+            "query": "Give me papers that share some insights about how large language models gain in-context learning capability in the process of pre-training.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 3,
+            "query": "List all papers that use autoregressive transformer to generate videos.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 4,
+            "query": "I am looking for research papers on the construction of multimodal foundation models that support both visual and audio inputs. These models should be pre-trained on large-scale datasets, including visual, audio, and audio-visual data. Please exclude survey papers.",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 5,
+            "query": "Provide me with all papers that discuss reinforcement learning training for Large Language Model agent tasks.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 6,
+            "query": "Papers that apply RLHF to address the hallucination problem in image and video description.",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 7,
+            "query": "Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 8,
+            "query": "Show me research on the long video description. Here, long videos are defined as those with a duration of at least several minutes.",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 9,
+            "query": "Do you know some papers about using reward shaping methods to train large language model agent.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 10,
+            "query": "Give me papers about how to rank search results by the use of LLM.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 11,
+            "query": "Is there any work that analyzes the scaling law of the multi-module models, such as video-text, image-text models?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 12,
+            "query": "Give me all visual-LLM models that are MoE architecture",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 13,
+            "query": "What papers discuss the use of transformer architecture in 3d video generation",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 14,
+            "query": "Provide papers demonstrating that the self-correction of LLMs does not enhance their performance.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 15,
+            "query": "Find papers that use LLMs or LLM-based agents to automatically write surveys or summaries for multiple scholarly documents.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 16,
+            "query": "Provide papers claiming that reinforcement learning can negatively impact the performance of supervised fine-tuned LLMs.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 17,
+            "query": "Find papers on trigger-free document-level event extraction methods that do not use human-annotated triggers.",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 18,
+            "query": "Provide papers explaining why the in-context learning performance of LLMs cannot surpass that of supervised fine-tuned small language models in information extraction tasks, such as NER, RE, and EE.",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 19,
+            "query": "Can LLMs detect LLM-generated text in a zero-shot manner? Do they perform better than supervised fine-tuned small classification models? Provide related papers.",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 20,
+            "query": "Provide papers on methods that protect the generation quality of LLMs under vocabulary watermarking settings.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 21,
+            "query": "Find papers supporting the claim that knowledgeable LLMs have sufficient inductive capacity to analyze the relationships between multiple papers and systematically write a survey on them.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 22,
+            "query": "Search for papers related to large language models that demonstrate how the same prompt with different responses can improve the performance of the SFT model.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 23,
+            "query": "Papers on solving common sense problems in machine translation.",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 24,
+            "query": "Show me papers utilizing reinforcement learning to optimize diffusion models for video generation.",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 25,
+            "query": "Show me all research papers on machine translation agents.",
+            "has_constraint": false,
+            "semantic_constraint_count": 0
+          },
+          {
+            "index": 26,
+            "query": "Video aesthetics score, using multimodal large models.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 27,
+            "query": "Scaling Laws for Fine-Grained Mixture of Experts.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 28,
+            "query": "Show me research on rejection sampling finetuning.",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 29,
+            "query": "Show me code evaluation datasets with a mid-level hardness. It show be harder than HumanEval and MBPP, but easier than code_contests.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 30,
+            "query": "Research on teaching llms to do math prove and solve IMO level math problems.",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 31,
+            "query": "I would like to find some research papers about test time training topic, in LLM research area.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 32,
+            "query": "DPO training for large-scale vision-language models.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 33,
+            "query": "Show me cutting edge research works on neural network based quantum Monte Carlo.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 34,
+            "query": "Show me some popular papers on generating textual adversarial examples for machine translation.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 35,
+            "query": "Show me research on 3d scene understanding leveraging progress on 3D AIGC foundation models.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 36,
+            "query": "Give me papers about LLM quantized pretraining.",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 37,
+            "query": "Show me research on identity preservation video generation.",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 38,
+            "query": "Give me some papers showing that LLM agents can do schedule planning.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 39,
+            "query": "Show me research on image encoding distributions.",
+            "has_constraint": false,
+            "semantic_constraint_count": 0
+          },
+          {
+            "index": 40,
+            "query": "Help me search for the work related to the synthetic data of large language models. I want to know how to automatically generate large-scale, high-quality, diverse, difficult, and valuable long thought data for learning.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 41,
+            "query": "Could you list research that demonstrates the advantages of Quantization-Aware Training (QAT), which can enable the model to learn better representations for low-bit weights?.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 42,
+            "query": "Using synthesis data for scaling up sft data.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 43,
+            "query": "Show me research on how to select frames when doing video understanding.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 44,
+            "query": "AI for Science papers, especially protein design and DPO of antibody design.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 45,
+            "query": "What are the researches that have explored the application of Crypto-based Private Learning in privacy-preserving machine learning?.",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 46,
+            "query": "All papers about controllability of video generation.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 47,
+            "query": "Show me research on robot decision making and task planning, especially relevant datasets and benchmarks.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 48,
+            "query": "How can LLM agents be evaluated and benchmarked for financial tasks? Note that I am referring to agents.",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 49,
+            "query": "Papers that explore using large language models for mining factors in stock exchange analysis.",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 50,
+            "query": "Can you help me find research papers that explore the use of large vision-language models as agents to automatically play PC games?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          }
+        ]
+      }
+    }
+  },
+  "comparative_findings": {
+    "shared_traits": [],
+    "dataset_specific": {}
+  },
+  "human_style_principles": {
+    "template_usage": {
+      "principle": "Use common question templates",
+      "description": "Human queries follow recognizable patterns like 'Is there a paper that...', 'Give me papers on...', 'How to...'",
+      "guidance": [
+        "Prefer templates like 'Are there any papers on X?', 'Give me papers that X', 'How to achieve Y?'",
+        "Avoid overly formal or mechanical phrasing",
+        "Match the natural patterns researchers actually use"
+      ]
+    },
+    "constraint_expression": {
+      "principle": "Express constraints naturally",
+      "description": "Constraints (methods, settings, datasets) are expressed through prepositional phrases",
+      "guidance": [
+        "Include retrieval-narrowing constraints such as task, method, dataset, or comparison when they matter",
+        "Multiple semantic constraints are common and acceptable",
+        "Constraints should help retrieval without turning the query into a paper reconstruction"
+      ]
+    },
+    "length_and_specificity": {
+      "principle": "Balance length with specificity",
+      "description": "Queries should be long enough to be specific but not overloaded",
+      "guidance": [
+        "Optimal length is around 10-20 tokens",
+        "Include enough detail to retrieve relevant papers",
+        "Avoid very short queries (under 5 tokens) unless very specific"
+      ]
+    },
+    "lexical_naturalism": {
+      "principle": "Use natural researcher register",
+      "description": "Queries should sound like something a real researcher would type, not keyword dumps and not polished prose",
+      "guidance": [
+        "Avoid keyword-dump fragments and SEO-style noun lists",
+        "Avoid polished abstract-like prose and polite instruction wording",
+        "Prefer direct, query-like phrasing with natural technical vocabulary"
+      ]
+    }
+  },
+  "representative_examples": [
+    {
+      "query": "Give me papers which show that using a smaller dataset in large language model pre-training can result in better models than using bigger datasets.",
+      "template": "Give me papers [that/on/about]..."
+    },
+    {
+      "query": "I am looking for research papers on the construction of multimodal foundation models that support both visual and audio inputs. These models should be pre-trained on large-scale datasets, including visual, audio, and audio-visual data. Please exclude survey papers.",
+      "template": "I am looking for..."
+    },
+    {
+      "query": "Do you know some papers about using reward shaping methods to train large language model agent.",
+      "template": "Do [X/they]..."
+    },
+    {
+      "query": "Is there any work that analyzes the scaling law of the multi-module models, such as video-text, image-text models?",
+      "template": "Is there a paper/method that/which..."
+    },
+    {
+      "query": "What papers discuss the use of transformer architecture in 3d video generation",
+      "template": "What [open-source/latest/first] method..."
+    },
+    {
+      "query": "Can LLMs detect LLM-generated text in a zero-shot manner? Do they perform better than supervised fine-tuned small classification models? Provide related papers.",
+      "template": "Can [we/X]..."
+    },
+    {
+      "query": "Video aesthetics score, using multimodal large models.",
+      "template": "other"
+    },
+    {
+      "query": "I would like to find some research papers about test time training topic, in LLM research area.",
+      "template": "I would like to..."
+    },
+    {
+      "query": "Help me search for the work related to the synthetic data of large language models. I want to know how to automatically generate large-scale, high-quality, diverse, difficult, and valuable long thought data for learning.",
+      "template": "Help me search/find..."
+    },
+    {
+      "query": "Could you list research that demonstrates the advantages of Quantization-Aware Training (QAT), which can enable the model to learn better representations for low-bit weights?.",
+      "template": "Could [we/X]..."
+    },
+    {
+      "query": "Using synthesis data for scaling up sft data.",
+      "template": "Using [X for Y]..."
+    },
+    {
+      "query": "How can LLM agents be evaluated and benchmarked for financial tasks? Note that I am referring to agents.",
+      "template": "How can [we/X]..."
+    }
+  ],
+  "question_template_distribution": {
+    "template_distribution": {
+      "Give me papers [that/on/about]...": 34,
+      "I am looking for...": 1,
+      "Do [X/they]...": 1,
+      "Is there a paper/method that/which...": 1,
+      "What [open-source/latest/first] method...": 2,
+      "Can [we/X]...": 2,
+      "I would like to...": 1,
+      "Help me search/find...": 1,
+      "Could [we/X]...": 1,
+      "Using [X for Y]...": 1,
+      "How can [we/X]...": 1
+    },
+    "template_ratios": {
+      "Give me papers [that/on/about]...": 0.68,
+      "I am looking for...": 0.02,
+      "Do [X/they]...": 0.02,
+      "Is there a paper/method that/which...": 0.02,
+      "What [open-source/latest/first] method...": 0.04,
+      "Can [we/X]...": 0.04,
+      "I would like to...": 0.02,
+      "Help me search/find...": 0.02,
+      "Could [we/X]...": 0.02,
+      "Using [X for Y]...": 0.02,
+      "How can [we/X]...": 0.02
+    },
+    "unmatched_count": 4,
+    "unmatched_ratio": 0.08,
+    "template_examples": {
+      "Give me papers [that/on/about]...": [
+        "Give me papers which show that using a smaller dataset in large language model pre-training can result in better models than using bigger datasets.",
+        "Give me papers that share some insights about how large language models gain in-context learning capability in the process of pre-training.",
+        "List all papers that use autoregressive transformer to generate videos."
+      ],
+      "I am looking for...": [
+        "I am looking for research papers on the construction of multimodal foundation models that support both visual and audio inputs. These models should be pre-trained on large-scale datasets, including visual, audio, and audio-visual data. Please exclude survey papers."
+      ],
+      "Do [X/they]...": [
+        "Do you know some papers about using reward shaping methods to train large language model agent."
+      ],
+      "Is there a paper/method that/which...": [
+        "Is there any work that analyzes the scaling law of the multi-module models, such as video-text, image-text models?"
+      ],
+      "What [open-source/latest/first] method...": [
+        "What papers discuss the use of transformer architecture in 3d video generation",
+        "What are the researches that have explored the application of Crypto-based Private Learning in privacy-preserving machine learning?."
+      ],
+      "Can [we/X]...": [
+        "Can LLMs detect LLM-generated text in a zero-shot manner? Do they perform better than supervised fine-tuned small classification models? Provide related papers.",
+        "Can you help me find research papers that explore the use of large vision-language models as agents to automatically play PC games?"
+      ],
+      "I would like to...": [
+        "I would like to find some research papers about test time training topic, in LLM research area."
+      ],
+      "Help me search/find...": [
+        "Help me search for the work related to the synthetic data of large language models. I want to know how to automatically generate large-scale, high-quality, diverse, difficult, and valuable long thought data for learning."
+      ],
+      "Could [we/X]...": [
+        "Could you list research that demonstrates the advantages of Quantization-Aware Training (QAT), which can enable the model to learn better representations for low-bit weights?."
+      ],
+      "Using [X for Y]...": [
+        "Using synthesis data for scaling up sft data."
+      ],
+      "How can [we/X]...": [
+        "How can LLM agents be evaluated and benchmarked for financial tasks? Note that I am referring to agents."
+      ]
+    },
+    "total_templates": 11
+  }
+}

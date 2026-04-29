@@ -1,0 +1,1794 @@
+{
+  "dataset_overview": {
+    "litsearch": {
+      "total_queries": 111,
+      "filtering_applied": "query_set starts with 'manual', min_tokens=2"
+    },
+    "combined": {
+      "total_queries": 111
+    }
+  },
+  "filtering_rules": {
+    "litsearch": {
+      "human_flag_column": "__no_human_flag__",
+      "human_flag_value_prefix": "manual",
+      "min_token_count": 2
+    },
+    "pasa": {
+      "human_flag_column": "none (all human)",
+      "human_flag_value": "all queries are human",
+      "min_token_count": 2
+    }
+  },
+  "metrics": {
+    "combined": {
+      "length_stats": {
+        "char_length": {
+          "mean": 119.75675675675676,
+          "std": 34.295277487576065,
+          "min": 37,
+          "max": 202,
+          "median": 115.0,
+          "p25": 94.0,
+          "p75": 139.0
+        },
+        "token_length": {
+          "mean": 17.46846846846847,
+          "std": 5.1251364645770465,
+          "min": 6,
+          "max": 33,
+          "median": 17.0,
+          "p25": 14.0,
+          "p75": 20.0
+        },
+        "total_queries": 111
+      },
+      "constraint_count": {
+        "method": "llm_as_judge",
+        "scale": "exact non-negative integer semantic constraint count",
+        "constraints_per_query": {
+          "mean": 2.189189189189189,
+          "std": 0.6226000916458018,
+          "min": 1,
+          "max": 4,
+          "median": 2.0
+        },
+        "queries_with_constraints": 111,
+        "constraint_ratio": 1.0
+      },
+      "question_templates": {
+        "template_distribution": {
+          "Is there a paper/method that/which...": 42,
+          "How to [achieve/do]...": 2,
+          "If one would like/wants...": 1,
+          "What [open-source/latest/first] method...": 63,
+          "Can [we/X]...": 3
+        },
+        "template_ratios": {
+          "Is there a paper/method that/which...": 0.3783783783783784,
+          "How to [achieve/do]...": 0.018018018018018018,
+          "If one would like/wants...": 0.009009009009009009,
+          "What [open-source/latest/first] method...": 0.5675675675675675,
+          "Can [we/X]...": 0.02702702702702703
+        },
+        "unmatched_count": 0,
+        "unmatched_ratio": 0.0,
+        "template_examples": {
+          "Is there a paper/method that/which...": [
+            "Are there any papers that build dense retrievers with mixture-of-experts architecture where each expert is responsible for different types of queries?",
+            "Is there a decoder-only language model that does not use a tokenizer and operates on raw text bytes?",
+            "Is there a method for measuring the critical errors that a dialogue system makes in its responses?"
+          ],
+          "How to [achieve/do]...": [
+            "How to achieve zero-shot lip reading?",
+            "How to better attract readers to news articles by generating personalized headlines?"
+          ],
+          "If one would like/wants...": [
+            "If one would like to train (or evaluate) a helpful assistant agent that can converse with humans while the humans traverse an environment, which work has the most suitable resource?"
+          ],
+          "What [open-source/latest/first] method...": [
+            "What are some data-efficient ways to learn text embeddings thru contrastive learning?",
+            "What are some methods for solving the class-incremetal continual learning problems?",
+            "What limitations do large language models have in evaluating information-seeking question answering?"
+          ],
+          "Can [we/X]...": [
+            "Can we find the solution of the Bilevel optimization when the lower-level problem is nonconvex?",
+            "Can you find a dataset that shows LLM-based evaluation may not be reliable enough?",
+            "Can you find a research paper that discusses using structured pruning techniques to scale down language models, where the original model being pruned has billions of parameters?"
+          ]
+        },
+        "total_templates": 5
+      },
+      "qualitative_metrics": {
+        "method": "llm_as_judge",
+        "specificity_calibration": {
+          "scale": "1=severely under-specified, 2=under-specified, 3=well-calibrated (ideal), 4=over-specified, 5=pathologically over-specified",
+          "ideal_score": 3,
+          "mean": 3.1531531531531534,
+          "std": 0.7849737265150258,
+          "min": 2.0,
+          "max": 5.0,
+          "median": 3.0
+        },
+        "specificity_calibration_fit": {
+          "scale": "0-1 closeness to ideal centered score of 3, computed as 1 - abs(score - 3) / 2",
+          "ideal_score": 1.0,
+          "mean": 0.7072072072072072,
+          "std": 0.272364260501459,
+          "min": 0.0,
+          "max": 1.0,
+          "median": 0.5
+        },
+        "lexical_naturalism": {
+          "scale": "1=keyword dump / fragmented, 2=stilted or awkward, 3=natural researcher register (ideal), 4=over-formalized / essay-register, 5=synthetic fluent / LLM-polished prose",
+          "ideal_score": 3,
+          "mean": 2.7027027027027026,
+          "std": 0.7302300587084485,
+          "min": 2.0,
+          "max": 5.0,
+          "median": 3.0
+        },
+        "lexical_naturalism_fit": {
+          "scale": "0-1 closeness to ideal centered score of 3, computed as 1 - abs(score - 3) / 2",
+          "ideal_score": 1.0,
+          "mean": 0.7072072072072072,
+          "std": 0.26396550133303803,
+          "min": 0.0,
+          "max": 1.0,
+          "median": 0.5
+        },
+        "specificity": {
+          "mean": 0.7072072072072072,
+          "std": 0.272364260501459,
+          "min": 0.0,
+          "max": 1.0,
+          "median": 0.5
+        },
+        "naturalness": {
+          "mean": 0.7072072072072072,
+          "std": 0.26396550133303803,
+          "min": 0.0,
+          "max": 1.0,
+          "median": 0.5
+        }
+      },
+      "semantic_constraint_analysis": {
+        "method": "llm_as_judge",
+        "scale": "exact non-negative integer semantic constraint count",
+        "semantic_constraints_per_query": {
+          "mean": 2.189189189189189,
+          "std": 0.6226000916458018,
+          "min": 1,
+          "max": 4,
+          "median": 2.0
+        },
+        "queries_with_constraints": 111,
+        "constraint_ratio": 1.0,
+        "per_query": [
+          {
+            "index": 1,
+            "query": "Are there any papers that build dense retrievers with mixture-of-experts architecture where each expert is responsible for different types of queries?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 2,
+            "query": "How to achieve zero-shot lip reading?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 3,
+            "query": "How to better attract readers to news articles by generating personalized headlines?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 4,
+            "query": "If one would like to train (or evaluate) a helpful assistant agent that can converse with humans while the humans traverse an environment, which work has the most suitable resource?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 5,
+            "query": "Is there a decoder-only language model that does not use a tokenizer and operates on raw text bytes?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 6,
+            "query": "Is there a method for measuring the critical errors that a dialogue system makes in its responses?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 7,
+            "query": "Is there a method that measures the information provided in a (model generated) rationale beyond what the original context provided?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 8,
+            "query": "Is there a paper that connects the basic elements of storytelling with biased or imbalanced media reporting?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 9,
+            "query": "Is there a paper that links exposure bias to distillation?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 10,
+            "query": "Is there a paper that shows that language models' error distribution is different for unfamiliar entities that is not apparent when models are evaluated on familiar entities alone?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 11,
+            "query": "Is there a paper that uses Explainable AI techniques to investigate how language models represent the expression of morality?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 12,
+            "query": "Is there a paper that uses similarity scores to check knowledge in diffusion models",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 13,
+            "query": "Is there a paper that utilizes the characteristics of human evolutionary knowledge to guide language models in generating scientific ideas?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 14,
+            "query": "Is there a study that shows how to help the demonstration retriever better integrate feedback from LLMs?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 15,
+            "query": "Is there a tool that can automatically segment speech and the corresponding text transcriptions, to obtain a finer grained alignment?",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 16,
+            "query": "Is there any paper about style transfer for stories?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 17,
+            "query": "Is there any paper exploring real speakers and thus performing multimodal emotion recognition task?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 18,
+            "query": "Is there any paper leverages knowledge distillation of language models for textual out-of-distribution detection or anomaly detection?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 19,
+            "query": "Is there any paper that applies symbolic distillation on black-box generalist language models to harvest high-quality counterfactual data for out-of-distribution generalization?",
+            "has_constraint": true,
+            "semantic_constraint_count": 4
+          },
+          {
+            "index": 20,
+            "query": "Is there any paper that attempts to evaluate the similarity of meaning representations without using annotated data?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 21,
+            "query": "Is there any paper that automatically creates a dataset for summarizing text from one language to another for a large collection of languages?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 22,
+            "query": "Is there any paper that combines causal inference and finetuning for language models?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 23,
+            "query": "Is there any paper that explores and annotates the effectiveness of using testimonials or anecdotes in discussions?",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 24,
+            "query": "Is there any paper that explores using only an encoder-only masked language model for open-ended long text generation (such as story generation)?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 25,
+            "query": "Is there any paper that performs adversarial training on frame level for audio-visual representation learning?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 26,
+            "query": "Is there any paper that proposes a set of criteria to comprehensively evaluate generated conversations?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 27,
+            "query": "Is there any paper that tries to investigate LLMs’ capabilities in solving elliptical constructions by using a test-dataset based on the psycolinguistic notion of Thematic Fit?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 28,
+            "query": "Is there any paper that uses prompt tuning in multi-answer QA?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 29,
+            "query": "Is there any paper that uses token-level loss to enhance sentence-level embedding learning?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 30,
+            "query": "Is there any work that allows large numbers of model outputs to be encoded and compared by causal language models in a single forward pass?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 31,
+            "query": "Is there any works that explores how to achieve balance between representativeness and diversity in chosen samples for few-shot data selection?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 32,
+            "query": "Is there commonsense reasoning dataset which generates diverse sentences to describe the relation between concepts?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 33,
+            "query": "Is there such a factuality evaluation dataset that can be used to evaluate the performance of fact-checking models on summaries generated by latest summarization models?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 34,
+            "query": "Is there such a reading comprehension dataset in understanding a snippet from a long story book, while it requires to integrate the necessary long history texts before the snippet to full understand it?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 35,
+            "query": "What are some data-efficient ways to learn text embeddings thru contrastive learning?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 36,
+            "query": "What are some methods for solving the class-incremetal continual learning problems?",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 37,
+            "query": "What limitations do large language models have in evaluating information-seeking question answering?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 38,
+            "query": "What paper compares humans' and language models' non-literal interpretations of utterances featuring phenomena like deceit, irony, and humor?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 39,
+            "query": "What work attempts to explore multi-hop reasoning by densifying commonsense knowledge graphs?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 40,
+            "query": "Which is the first multimodal model combining text and speech transformers trained without labelled text-speech pairs?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 41,
+            "query": "Which knowledge graph completion method focuses on reducing memory usage by pruning features?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 42,
+            "query": "Which numerical reasoning paper first published a dataset that considers different types of size of numbers and their representations in arithmetic questions?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 43,
+            "query": "Which paper about parameter-efficient finetuning first proposes to feed the pretrained weight instead of the activation to an adapter?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 44,
+            "query": "Which paper employs a two-stage approach in generative models to tackle ABSA tasks across various domains?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 45,
+            "query": "Which paper first applied the chain-of-thought technique in the text summarization field?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 46,
+            "query": "Which paper first apply mixture of experts idea to large language models for domain adaptation?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 47,
+            "query": "Which paper first attempts to take potential dependencies among same-level labels into account in Hierarchical Text Classification?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 48,
+            "query": "Which paper first constructed a structured knowledge base to interconnect different human social roles and attributes?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 49,
+            "query": "Which paper first introduced document content as an intermediate generation target and utilized textual document identifiers in generative retrieval?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 50,
+            "query": "Which paper first shows that it is possible to maintain high LLM reasoning performance with in-context examples that are absurdly wrong?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 51,
+            "query": "Which paper first shows that large language models can be prompted to act like professional annotators to evaluate text generation quality?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 52,
+            "query": "Which paper first studied the efficiency robustness of multi-exit language models?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 53,
+            "query": "Which paper first use the attention weights to guide the simultaneous inference of speech translation models?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 54,
+            "query": "Which paper introduce a DRO (distribution robust optimization) like training objective for doing adversarial training without constructing adversarial samples.",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 55,
+            "query": "Which paper measured how well the source-translation contribution by the translation model can be used to detect its own hallucinations?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 56,
+            "query": "Which paper presents an easy to implement and high performing method for OOD detection with language models?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 57,
+            "query": "Which paper produces a dataset for text simplification in over 12 languages and evaluates both finetuning and in context learning approaches to text simplification in those languages?",
+            "has_constraint": true,
+            "semantic_constraint_count": 4
+          },
+          {
+            "index": 58,
+            "query": "Which paper proposed a learning-based data augmentation method for improving compositional generalization of language models?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 59,
+            "query": "Which paper proposed decomposing the logit update of each of the attention blocks’ inputs to analyze how the context influences the prediction?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 60,
+            "query": "Which paper showed that social relationships were helpful for identifying inappropriate messages?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 61,
+            "query": "Which paper shows assessment of training instabilities at different levels for language models?",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 62,
+            "query": "Which paper studies how current retrieval systems handle queries which contain multiple constraints?",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 63,
+            "query": "Which paper studies the concept of enhancing the coverage of a selective prediction system by re-attempting the questions on which it was not sufficiently confident.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 64,
+            "query": "Which paper surveyed the datasets and tasks of asking clarification questions in conversational systems??",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 65,
+            "query": "Which paper used both automatically generated and manual templates with word tuples to adapt language models from one timestamp to another?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 66,
+            "query": "Which paper utilizes language models to generate singable lyrics that can go well with a predefined melody?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 67,
+            "query": "Which papers develop methods to make in-context learning more computationally efficient?",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 68,
+            "query": "Which research paper leverages event structure information from Abstract Meaning Representation (AMR) graphs to aid in recognizing causal relations between events?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 69,
+            "query": "Which vision-language model can demonstrate that visual grounding could facilitate efficient language acquisition? (OctoBERT)",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 70,
+            "query": "Which vision-language model paper in 2023 developed techniques that reduce input tokens to improve model inference speed?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 71,
+            "query": "Which was the first paper to explore the online adaptation of neural MT metrics for use during the inference stage?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 72,
+            "query": "Which work discusses an analysis of source and target contributions to output generation based on local interpretation when machine translation models experience hallucinations?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 73,
+            "query": "what's the first paper that manages to handle KBQA using LLMs without fine-tuning?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 74,
+            "query": "Are there any papers that construct convolutional networks which are equivariant with respect to non-compact/non-abelian Lie groups?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 75,
+            "query": "Are there any papers that use a world model for planning to ensure that decisions meet constraints?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 76,
+            "query": "Are there sequential learning guarantees for configuring a linear system solver under a distributional assumption on the systems' target vectors?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 77,
+            "query": "Can we find the solution of the Bilevel optimization when the lower-level problem is nonconvex?",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 78,
+            "query": "Can you find a dataset that shows LLM-based evaluation may not be reliable enough?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 79,
+            "query": "Can you find a research paper that discusses using structured pruning techniques to scale down language models, where the original model being pruned has billions of parameters?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 80,
+            "query": "Is there a paper that takes a mixed machine learning and solver based approach to code translation?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 81,
+            "query": "Is there a parameter-efficient fine-tuning method (PEFT) that allows adjusting the number of optimized parameters to any value, irrespective of the model's architecture or choice of the adapter?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 82,
+            "query": "Is there a theory paper that explains why sometimes tuning momentum does not boost performance for training a neural network?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 83,
+            "query": "Is there any paper applies off-shelf GPT-2 model in D4RL tasks, using PEFT techniques?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 84,
+            "query": "Is there any paper that explores ways to parameterize neural networks as proximal operators?",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 85,
+            "query": "Is there any paper that theoretically explains why in-context reinforcement learning works?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 86,
+            "query": "Is there any paper that uses Lipschitz continuity in learning a dynamics model?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 87,
+            "query": "Is there any paper trying to improve MLE for auto-regressive language modeling through the lens of optimal transport?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 88,
+            "query": "What are some evaluation benchmarks for LLM privacy at inference time, targeted towards model input and NOT the training data.",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 89,
+            "query": "What is a paper studying data being collected in bundles in reinforcement learning ?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 90,
+            "query": "What is the first paper that uses the generalized linear model to analyze multi-neural spike train data?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 91,
+            "query": "What open-source dataset combined knowledge retrieval with constraint satisfaction queries?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 92,
+            "query": "What paper first extends rotary positional encoding (RoPE) for camera-geometry encoding in multi-view transformers?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 93,
+            "query": "What paper first proposed a robust perceptual similarity metric with certificates?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 94,
+            "query": "What paper first proposes that simply reversing the output can significantly enhance the sample efficiency and the performance of the arithmetic capability of a decoder-only Transformer model?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 95,
+            "query": "What paper investigated the effect of the relative position (closer or further away) of the most pertinent retrieved code snippets on repository-level code completion performance?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 96,
+            "query": "What paper mitigates the vocabulary size limitation when pretraining multilingual masked language models using a contrastive loss?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 97,
+            "query": "What work proposes a model to learn a latent regular cell complex from data?",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 98,
+            "query": "Which backdoor paper first used the CLIP to suppress benign features and enhance poisoning features to design triggers?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 99,
+            "query": "Which paper considers both weights and activations when pruning large language models?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 100,
+            "query": "Which paper first derived online occupany estimation technique to get sqrt(T) bound for reinforcement learning in adversarial linear MDP?",
+            "has_constraint": true,
+            "semantic_constraint_count": 4
+          },
+          {
+            "index": 101,
+            "query": "Which paper first found that when transformers are trained to in-context learn function classes, they might exhibit generalization followed by memorization, in certain settings?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 102,
+            "query": "Which paper first investigates the knowledge preferences of LLMs when there are conflicts between the context and the parametric memory?",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 103,
+            "query": "Which paper first proved that wide-enough transformer architectures trained with gradient methods on enough data would learn to solve relational reasoning tasks?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 104,
+            "query": "Which paper first tried to fine-tune LLMs with chain-of-thoughts and program-of-thoughts for math reasoning?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 105,
+            "query": "Which paper first used language models to emulate tool executions for studying the risks of language model agents?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 106,
+            "query": "Which paper found that using common character encodings and ciphers, or even just convincing the model that it is not communicating in natural language, can bypass the safety guardrails of large models?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 107,
+            "query": "Which paper is the first to model the helpfulness and harmlessness alignment of LLMs as a Constrained MDP problem?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 108,
+            "query": "Which paper trains on linear regression to hypothesize how fine-tuning affects language models?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 109,
+            "query": "Which paper utilized MMD flows with Riesz kernels to solve Bayesian inverse problems?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 110,
+            "query": "What paper provides generalization bounds for self supervised learning models eg. CLIP",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 111,
+            "query": "Which paper systematically examed the input mismatch between training and sampling in diffusion models",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          }
+        ]
+      }
+    },
+    "litsearch": {
+      "length_stats": {
+        "char_length": {
+          "mean": 119.75675675675676,
+          "std": 34.295277487576065,
+          "min": 37,
+          "max": 202,
+          "median": 115.0,
+          "p25": 94.0,
+          "p75": 139.0
+        },
+        "token_length": {
+          "mean": 17.46846846846847,
+          "std": 5.1251364645770465,
+          "min": 6,
+          "max": 33,
+          "median": 17.0,
+          "p25": 14.0,
+          "p75": 20.0
+        },
+        "total_queries": 111
+      },
+      "constraint_count": {
+        "method": "llm_as_judge",
+        "scale": "exact non-negative integer semantic constraint count",
+        "constraints_per_query": {
+          "mean": 2.189189189189189,
+          "std": 0.6226000916458018,
+          "min": 1,
+          "max": 4,
+          "median": 2.0
+        },
+        "queries_with_constraints": 111,
+        "constraint_ratio": 1.0
+      },
+      "question_templates": {
+        "template_distribution": {
+          "Is there a paper/method that/which...": 42,
+          "How to [achieve/do]...": 2,
+          "If one would like/wants...": 1,
+          "What [open-source/latest/first] method...": 63,
+          "Can [we/X]...": 3
+        },
+        "template_ratios": {
+          "Is there a paper/method that/which...": 0.3783783783783784,
+          "How to [achieve/do]...": 0.018018018018018018,
+          "If one would like/wants...": 0.009009009009009009,
+          "What [open-source/latest/first] method...": 0.5675675675675675,
+          "Can [we/X]...": 0.02702702702702703
+        },
+        "unmatched_count": 0,
+        "unmatched_ratio": 0.0,
+        "template_examples": {
+          "Is there a paper/method that/which...": [
+            "Are there any papers that build dense retrievers with mixture-of-experts architecture where each expert is responsible for different types of queries?",
+            "Is there a decoder-only language model that does not use a tokenizer and operates on raw text bytes?",
+            "Is there a method for measuring the critical errors that a dialogue system makes in its responses?"
+          ],
+          "How to [achieve/do]...": [
+            "How to achieve zero-shot lip reading?",
+            "How to better attract readers to news articles by generating personalized headlines?"
+          ],
+          "If one would like/wants...": [
+            "If one would like to train (or evaluate) a helpful assistant agent that can converse with humans while the humans traverse an environment, which work has the most suitable resource?"
+          ],
+          "What [open-source/latest/first] method...": [
+            "What are some data-efficient ways to learn text embeddings thru contrastive learning?",
+            "What are some methods for solving the class-incremetal continual learning problems?",
+            "What limitations do large language models have in evaluating information-seeking question answering?"
+          ],
+          "Can [we/X]...": [
+            "Can we find the solution of the Bilevel optimization when the lower-level problem is nonconvex?",
+            "Can you find a dataset that shows LLM-based evaluation may not be reliable enough?",
+            "Can you find a research paper that discusses using structured pruning techniques to scale down language models, where the original model being pruned has billions of parameters?"
+          ]
+        },
+        "total_templates": 5
+      },
+      "qualitative_metrics": {
+        "method": "llm_as_judge",
+        "specificity_calibration": {
+          "scale": "1=severely under-specified, 2=under-specified, 3=well-calibrated (ideal), 4=over-specified, 5=pathologically over-specified",
+          "ideal_score": 3,
+          "mean": 3.1531531531531534,
+          "std": 0.7849737265150258,
+          "min": 2.0,
+          "max": 5.0,
+          "median": 3.0
+        },
+        "specificity_calibration_fit": {
+          "scale": "0-1 closeness to ideal centered score of 3, computed as 1 - abs(score - 3) / 2",
+          "ideal_score": 1.0,
+          "mean": 0.7072072072072072,
+          "std": 0.272364260501459,
+          "min": 0.0,
+          "max": 1.0,
+          "median": 0.5
+        },
+        "lexical_naturalism": {
+          "scale": "1=keyword dump / fragmented, 2=stilted or awkward, 3=natural researcher register (ideal), 4=over-formalized / essay-register, 5=synthetic fluent / LLM-polished prose",
+          "ideal_score": 3,
+          "mean": 2.7027027027027026,
+          "std": 0.7302300587084485,
+          "min": 2.0,
+          "max": 5.0,
+          "median": 3.0
+        },
+        "lexical_naturalism_fit": {
+          "scale": "0-1 closeness to ideal centered score of 3, computed as 1 - abs(score - 3) / 2",
+          "ideal_score": 1.0,
+          "mean": 0.7072072072072072,
+          "std": 0.26396550133303803,
+          "min": 0.0,
+          "max": 1.0,
+          "median": 0.5
+        },
+        "specificity": {
+          "mean": 0.7072072072072072,
+          "std": 0.272364260501459,
+          "min": 0.0,
+          "max": 1.0,
+          "median": 0.5
+        },
+        "naturalness": {
+          "mean": 0.7072072072072072,
+          "std": 0.26396550133303803,
+          "min": 0.0,
+          "max": 1.0,
+          "median": 0.5
+        }
+      },
+      "semantic_constraint_analysis": {
+        "method": "llm_as_judge",
+        "scale": "exact non-negative integer semantic constraint count",
+        "semantic_constraints_per_query": {
+          "mean": 2.189189189189189,
+          "std": 0.6226000916458018,
+          "min": 1,
+          "max": 4,
+          "median": 2.0
+        },
+        "queries_with_constraints": 111,
+        "constraint_ratio": 1.0,
+        "per_query": [
+          {
+            "index": 1,
+            "query": "Are there any papers that build dense retrievers with mixture-of-experts architecture where each expert is responsible for different types of queries?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 2,
+            "query": "How to achieve zero-shot lip reading?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 3,
+            "query": "How to better attract readers to news articles by generating personalized headlines?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 4,
+            "query": "If one would like to train (or evaluate) a helpful assistant agent that can converse with humans while the humans traverse an environment, which work has the most suitable resource?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 5,
+            "query": "Is there a decoder-only language model that does not use a tokenizer and operates on raw text bytes?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 6,
+            "query": "Is there a method for measuring the critical errors that a dialogue system makes in its responses?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 7,
+            "query": "Is there a method that measures the information provided in a (model generated) rationale beyond what the original context provided?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 8,
+            "query": "Is there a paper that connects the basic elements of storytelling with biased or imbalanced media reporting?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 9,
+            "query": "Is there a paper that links exposure bias to distillation?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 10,
+            "query": "Is there a paper that shows that language models' error distribution is different for unfamiliar entities that is not apparent when models are evaluated on familiar entities alone?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 11,
+            "query": "Is there a paper that uses Explainable AI techniques to investigate how language models represent the expression of morality?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 12,
+            "query": "Is there a paper that uses similarity scores to check knowledge in diffusion models",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 13,
+            "query": "Is there a paper that utilizes the characteristics of human evolutionary knowledge to guide language models in generating scientific ideas?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 14,
+            "query": "Is there a study that shows how to help the demonstration retriever better integrate feedback from LLMs?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 15,
+            "query": "Is there a tool that can automatically segment speech and the corresponding text transcriptions, to obtain a finer grained alignment?",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 16,
+            "query": "Is there any paper about style transfer for stories?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 17,
+            "query": "Is there any paper exploring real speakers and thus performing multimodal emotion recognition task?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 18,
+            "query": "Is there any paper leverages knowledge distillation of language models for textual out-of-distribution detection or anomaly detection?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 19,
+            "query": "Is there any paper that applies symbolic distillation on black-box generalist language models to harvest high-quality counterfactual data for out-of-distribution generalization?",
+            "has_constraint": true,
+            "semantic_constraint_count": 4
+          },
+          {
+            "index": 20,
+            "query": "Is there any paper that attempts to evaluate the similarity of meaning representations without using annotated data?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 21,
+            "query": "Is there any paper that automatically creates a dataset for summarizing text from one language to another for a large collection of languages?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 22,
+            "query": "Is there any paper that combines causal inference and finetuning for language models?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 23,
+            "query": "Is there any paper that explores and annotates the effectiveness of using testimonials or anecdotes in discussions?",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 24,
+            "query": "Is there any paper that explores using only an encoder-only masked language model for open-ended long text generation (such as story generation)?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 25,
+            "query": "Is there any paper that performs adversarial training on frame level for audio-visual representation learning?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 26,
+            "query": "Is there any paper that proposes a set of criteria to comprehensively evaluate generated conversations?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 27,
+            "query": "Is there any paper that tries to investigate LLMs’ capabilities in solving elliptical constructions by using a test-dataset based on the psycolinguistic notion of Thematic Fit?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 28,
+            "query": "Is there any paper that uses prompt tuning in multi-answer QA?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 29,
+            "query": "Is there any paper that uses token-level loss to enhance sentence-level embedding learning?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 30,
+            "query": "Is there any work that allows large numbers of model outputs to be encoded and compared by causal language models in a single forward pass?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 31,
+            "query": "Is there any works that explores how to achieve balance between representativeness and diversity in chosen samples for few-shot data selection?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 32,
+            "query": "Is there commonsense reasoning dataset which generates diverse sentences to describe the relation between concepts?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 33,
+            "query": "Is there such a factuality evaluation dataset that can be used to evaluate the performance of fact-checking models on summaries generated by latest summarization models?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 34,
+            "query": "Is there such a reading comprehension dataset in understanding a snippet from a long story book, while it requires to integrate the necessary long history texts before the snippet to full understand it?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 35,
+            "query": "What are some data-efficient ways to learn text embeddings thru contrastive learning?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 36,
+            "query": "What are some methods for solving the class-incremetal continual learning problems?",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 37,
+            "query": "What limitations do large language models have in evaluating information-seeking question answering?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 38,
+            "query": "What paper compares humans' and language models' non-literal interpretations of utterances featuring phenomena like deceit, irony, and humor?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 39,
+            "query": "What work attempts to explore multi-hop reasoning by densifying commonsense knowledge graphs?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 40,
+            "query": "Which is the first multimodal model combining text and speech transformers trained without labelled text-speech pairs?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 41,
+            "query": "Which knowledge graph completion method focuses on reducing memory usage by pruning features?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 42,
+            "query": "Which numerical reasoning paper first published a dataset that considers different types of size of numbers and their representations in arithmetic questions?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 43,
+            "query": "Which paper about parameter-efficient finetuning first proposes to feed the pretrained weight instead of the activation to an adapter?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 44,
+            "query": "Which paper employs a two-stage approach in generative models to tackle ABSA tasks across various domains?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 45,
+            "query": "Which paper first applied the chain-of-thought technique in the text summarization field?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 46,
+            "query": "Which paper first apply mixture of experts idea to large language models for domain adaptation?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 47,
+            "query": "Which paper first attempts to take potential dependencies among same-level labels into account in Hierarchical Text Classification?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 48,
+            "query": "Which paper first constructed a structured knowledge base to interconnect different human social roles and attributes?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 49,
+            "query": "Which paper first introduced document content as an intermediate generation target and utilized textual document identifiers in generative retrieval?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 50,
+            "query": "Which paper first shows that it is possible to maintain high LLM reasoning performance with in-context examples that are absurdly wrong?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 51,
+            "query": "Which paper first shows that large language models can be prompted to act like professional annotators to evaluate text generation quality?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 52,
+            "query": "Which paper first studied the efficiency robustness of multi-exit language models?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 53,
+            "query": "Which paper first use the attention weights to guide the simultaneous inference of speech translation models?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 54,
+            "query": "Which paper introduce a DRO (distribution robust optimization) like training objective for doing adversarial training without constructing adversarial samples.",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 55,
+            "query": "Which paper measured how well the source-translation contribution by the translation model can be used to detect its own hallucinations?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 56,
+            "query": "Which paper presents an easy to implement and high performing method for OOD detection with language models?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 57,
+            "query": "Which paper produces a dataset for text simplification in over 12 languages and evaluates both finetuning and in context learning approaches to text simplification in those languages?",
+            "has_constraint": true,
+            "semantic_constraint_count": 4
+          },
+          {
+            "index": 58,
+            "query": "Which paper proposed a learning-based data augmentation method for improving compositional generalization of language models?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 59,
+            "query": "Which paper proposed decomposing the logit update of each of the attention blocks’ inputs to analyze how the context influences the prediction?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 60,
+            "query": "Which paper showed that social relationships were helpful for identifying inappropriate messages?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 61,
+            "query": "Which paper shows assessment of training instabilities at different levels for language models?",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 62,
+            "query": "Which paper studies how current retrieval systems handle queries which contain multiple constraints?",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 63,
+            "query": "Which paper studies the concept of enhancing the coverage of a selective prediction system by re-attempting the questions on which it was not sufficiently confident.",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 64,
+            "query": "Which paper surveyed the datasets and tasks of asking clarification questions in conversational systems??",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 65,
+            "query": "Which paper used both automatically generated and manual templates with word tuples to adapt language models from one timestamp to another?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 66,
+            "query": "Which paper utilizes language models to generate singable lyrics that can go well with a predefined melody?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 67,
+            "query": "Which papers develop methods to make in-context learning more computationally efficient?",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 68,
+            "query": "Which research paper leverages event structure information from Abstract Meaning Representation (AMR) graphs to aid in recognizing causal relations between events?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 69,
+            "query": "Which vision-language model can demonstrate that visual grounding could facilitate efficient language acquisition? (OctoBERT)",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 70,
+            "query": "Which vision-language model paper in 2023 developed techniques that reduce input tokens to improve model inference speed?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 71,
+            "query": "Which was the first paper to explore the online adaptation of neural MT metrics for use during the inference stage?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 72,
+            "query": "Which work discusses an analysis of source and target contributions to output generation based on local interpretation when machine translation models experience hallucinations?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 73,
+            "query": "what's the first paper that manages to handle KBQA using LLMs without fine-tuning?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 74,
+            "query": "Are there any papers that construct convolutional networks which are equivariant with respect to non-compact/non-abelian Lie groups?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 75,
+            "query": "Are there any papers that use a world model for planning to ensure that decisions meet constraints?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 76,
+            "query": "Are there sequential learning guarantees for configuring a linear system solver under a distributional assumption on the systems' target vectors?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 77,
+            "query": "Can we find the solution of the Bilevel optimization when the lower-level problem is nonconvex?",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 78,
+            "query": "Can you find a dataset that shows LLM-based evaluation may not be reliable enough?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 79,
+            "query": "Can you find a research paper that discusses using structured pruning techniques to scale down language models, where the original model being pruned has billions of parameters?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 80,
+            "query": "Is there a paper that takes a mixed machine learning and solver based approach to code translation?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 81,
+            "query": "Is there a parameter-efficient fine-tuning method (PEFT) that allows adjusting the number of optimized parameters to any value, irrespective of the model's architecture or choice of the adapter?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 82,
+            "query": "Is there a theory paper that explains why sometimes tuning momentum does not boost performance for training a neural network?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 83,
+            "query": "Is there any paper applies off-shelf GPT-2 model in D4RL tasks, using PEFT techniques?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 84,
+            "query": "Is there any paper that explores ways to parameterize neural networks as proximal operators?",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 85,
+            "query": "Is there any paper that theoretically explains why in-context reinforcement learning works?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 86,
+            "query": "Is there any paper that uses Lipschitz continuity in learning a dynamics model?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 87,
+            "query": "Is there any paper trying to improve MLE for auto-regressive language modeling through the lens of optimal transport?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 88,
+            "query": "What are some evaluation benchmarks for LLM privacy at inference time, targeted towards model input and NOT the training data.",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 89,
+            "query": "What is a paper studying data being collected in bundles in reinforcement learning ?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 90,
+            "query": "What is the first paper that uses the generalized linear model to analyze multi-neural spike train data?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 91,
+            "query": "What open-source dataset combined knowledge retrieval with constraint satisfaction queries?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 92,
+            "query": "What paper first extends rotary positional encoding (RoPE) for camera-geometry encoding in multi-view transformers?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 93,
+            "query": "What paper first proposed a robust perceptual similarity metric with certificates?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 94,
+            "query": "What paper first proposes that simply reversing the output can significantly enhance the sample efficiency and the performance of the arithmetic capability of a decoder-only Transformer model?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 95,
+            "query": "What paper investigated the effect of the relative position (closer or further away) of the most pertinent retrieved code snippets on repository-level code completion performance?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 96,
+            "query": "What paper mitigates the vocabulary size limitation when pretraining multilingual masked language models using a contrastive loss?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 97,
+            "query": "What work proposes a model to learn a latent regular cell complex from data?",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 98,
+            "query": "Which backdoor paper first used the CLIP to suppress benign features and enhance poisoning features to design triggers?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 99,
+            "query": "Which paper considers both weights and activations when pruning large language models?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 100,
+            "query": "Which paper first derived online occupany estimation technique to get sqrt(T) bound for reinforcement learning in adversarial linear MDP?",
+            "has_constraint": true,
+            "semantic_constraint_count": 4
+          },
+          {
+            "index": 101,
+            "query": "Which paper first found that when transformers are trained to in-context learn function classes, they might exhibit generalization followed by memorization, in certain settings?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 102,
+            "query": "Which paper first investigates the knowledge preferences of LLMs when there are conflicts between the context and the parametric memory?",
+            "has_constraint": true,
+            "semantic_constraint_count": 1
+          },
+          {
+            "index": 103,
+            "query": "Which paper first proved that wide-enough transformer architectures trained with gradient methods on enough data would learn to solve relational reasoning tasks?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 104,
+            "query": "Which paper first tried to fine-tune LLMs with chain-of-thoughts and program-of-thoughts for math reasoning?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 105,
+            "query": "Which paper first used language models to emulate tool executions for studying the risks of language model agents?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 106,
+            "query": "Which paper found that using common character encodings and ciphers, or even just convincing the model that it is not communicating in natural language, can bypass the safety guardrails of large models?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 107,
+            "query": "Which paper is the first to model the helpfulness and harmlessness alignment of LLMs as a Constrained MDP problem?",
+            "has_constraint": true,
+            "semantic_constraint_count": 3
+          },
+          {
+            "index": 108,
+            "query": "Which paper trains on linear regression to hypothesize how fine-tuning affects language models?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 109,
+            "query": "Which paper utilized MMD flows with Riesz kernels to solve Bayesian inverse problems?",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 110,
+            "query": "What paper provides generalization bounds for self supervised learning models eg. CLIP",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          },
+          {
+            "index": 111,
+            "query": "Which paper systematically examed the input mismatch between training and sampling in diffusion models",
+            "has_constraint": true,
+            "semantic_constraint_count": 2
+          }
+        ]
+      }
+    }
+  },
+  "comparative_findings": {
+    "shared_traits": [],
+    "dataset_specific": {}
+  },
+  "human_style_principles": {
+    "template_usage": {
+      "principle": "Use common question templates",
+      "description": "Human queries follow recognizable patterns like 'Is there a paper that...', 'Give me papers on...', 'How to...'",
+      "guidance": [
+        "Prefer templates like 'Are there any papers on X?', 'Give me papers that X', 'How to achieve Y?'",
+        "Avoid overly formal or mechanical phrasing",
+        "Match the natural patterns researchers actually use"
+      ]
+    },
+    "constraint_expression": {
+      "principle": "Express constraints naturally",
+      "description": "Constraints (methods, settings, datasets) are expressed through prepositional phrases",
+      "guidance": [
+        "Include retrieval-narrowing constraints such as task, method, dataset, or comparison when they matter",
+        "Multiple semantic constraints are common and acceptable",
+        "Constraints should help retrieval without turning the query into a paper reconstruction"
+      ]
+    },
+    "length_and_specificity": {
+      "principle": "Balance length with specificity",
+      "description": "Queries should be long enough to be specific but not overloaded",
+      "guidance": [
+        "Optimal length is around 10-20 tokens",
+        "Include enough detail to retrieve relevant papers",
+        "Avoid very short queries (under 5 tokens) unless very specific"
+      ]
+    },
+    "lexical_naturalism": {
+      "principle": "Use natural researcher register",
+      "description": "Queries should sound like something a real researcher would type, not keyword dumps and not polished prose",
+      "guidance": [
+        "Avoid keyword-dump fragments and SEO-style noun lists",
+        "Avoid polished abstract-like prose and polite instruction wording",
+        "Prefer direct, query-like phrasing with natural technical vocabulary"
+      ]
+    }
+  },
+  "representative_examples": [
+    {
+      "query": "Are there any papers that build dense retrievers with mixture-of-experts architecture where each expert is responsible for different types of queries?",
+      "template": "Is there a paper/method that/which..."
+    },
+    {
+      "query": "Is there a decoder-only language model that does not use a tokenizer and operates on raw text bytes?",
+      "template": "Is there a paper/method that/which..."
+    },
+    {
+      "query": "Is there a method for measuring the critical errors that a dialogue system makes in its responses?",
+      "template": "Is there a paper/method that/which..."
+    },
+    {
+      "query": "Is there a method that measures the information provided in a (model generated) rationale beyond what the original context provided?",
+      "template": "Is there a paper/method that/which..."
+    },
+    {
+      "query": "How to achieve zero-shot lip reading?",
+      "template": "How to [achieve/do]..."
+    },
+    {
+      "query": "How to better attract readers to news articles by generating personalized headlines?",
+      "template": "How to [achieve/do]..."
+    },
+    {
+      "query": "If one would like to train (or evaluate) a helpful assistant agent that can converse with humans while the humans traverse an environment, which work has the most suitable resource?",
+      "template": "If one would like/wants..."
+    },
+    {
+      "query": "What are some data-efficient ways to learn text embeddings thru contrastive learning?",
+      "template": "What [open-source/latest/first] method..."
+    },
+    {
+      "query": "What are some methods for solving the class-incremetal continual learning problems?",
+      "template": "What [open-source/latest/first] method..."
+    },
+    {
+      "query": "What limitations do large language models have in evaluating information-seeking question answering?",
+      "template": "What [open-source/latest/first] method..."
+    },
+    {
+      "query": "What paper compares humans' and language models' non-literal interpretations of utterances featuring phenomena like deceit, irony, and humor?",
+      "template": "What [open-source/latest/first] method..."
+    },
+    {
+      "query": "Can we find the solution of the Bilevel optimization when the lower-level problem is nonconvex?",
+      "template": "Can [we/X]..."
+    },
+    {
+      "query": "Can you find a dataset that shows LLM-based evaluation may not be reliable enough?",
+      "template": "Can [we/X]..."
+    },
+    {
+      "query": "Can you find a research paper that discusses using structured pruning techniques to scale down language models, where the original model being pruned has billions of parameters?",
+      "template": "Can [we/X]..."
+    }
+  ],
+  "question_template_distribution": {
+    "template_distribution": {
+      "Is there a paper/method that/which...": 42,
+      "How to [achieve/do]...": 2,
+      "If one would like/wants...": 1,
+      "What [open-source/latest/first] method...": 63,
+      "Can [we/X]...": 3
+    },
+    "template_ratios": {
+      "Is there a paper/method that/which...": 0.3783783783783784,
+      "How to [achieve/do]...": 0.018018018018018018,
+      "If one would like/wants...": 0.009009009009009009,
+      "What [open-source/latest/first] method...": 0.5675675675675675,
+      "Can [we/X]...": 0.02702702702702703
+    },
+    "unmatched_count": 0,
+    "unmatched_ratio": 0.0,
+    "template_examples": {
+      "Is there a paper/method that/which...": [
+        "Are there any papers that build dense retrievers with mixture-of-experts architecture where each expert is responsible for different types of queries?",
+        "Is there a decoder-only language model that does not use a tokenizer and operates on raw text bytes?",
+        "Is there a method for measuring the critical errors that a dialogue system makes in its responses?"
+      ],
+      "How to [achieve/do]...": [
+        "How to achieve zero-shot lip reading?",
+        "How to better attract readers to news articles by generating personalized headlines?"
+      ],
+      "If one would like/wants...": [
+        "If one would like to train (or evaluate) a helpful assistant agent that can converse with humans while the humans traverse an environment, which work has the most suitable resource?"
+      ],
+      "What [open-source/latest/first] method...": [
+        "What are some data-efficient ways to learn text embeddings thru contrastive learning?",
+        "What are some methods for solving the class-incremetal continual learning problems?",
+        "What limitations do large language models have in evaluating information-seeking question answering?"
+      ],
+      "Can [we/X]...": [
+        "Can we find the solution of the Bilevel optimization when the lower-level problem is nonconvex?",
+        "Can you find a dataset that shows LLM-based evaluation may not be reliable enough?",
+        "Can you find a research paper that discusses using structured pruning techniques to scale down language models, where the original model being pruned has billions of parameters?"
+      ]
+    },
+    "total_templates": 5
+  }
+}

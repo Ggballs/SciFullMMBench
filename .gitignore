@@ -83,6 +83,12 @@ config.yaml
 data/
 outputs/*
 !outputs/display_final_pipeline_gradio.py
+!outputs/query_analysis_comparison/
+outputs/query_analysis_comparison/*
+!outputs/query_analysis_comparison/02_pasa_realscholar/
+!outputs/query_analysis_comparison/02_pasa_realscholar/style_analysis.json
+!outputs/query_analysis_comparison/03_litsearch_human/
+!outputs/query_analysis_comparison/03_litsearch_human/style_analysis.json
 test_data/
 
 # Logs
