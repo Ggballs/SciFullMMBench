@@ -17,11 +17,8 @@ SRC_ROOT = REPO_ROOT / "src"
 if SRC_ROOT.exists() and str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from openreview_pipeline.app_logging import configure_project_logging  # noqa: E402
 from openreview_pipeline.utils.db.human_feedback_mysql import rows_to_feedback_payload  # noqa: E402
 
-
-configure_project_logging()
 
 DEFAULT_DB_URL = "mysql+pymysql://scifull:westlakenlp@127.0.0.1:3306/scifullmmbench?charset=utf8mb4"
 DEFAULT_OUTPUT = REPO_ROOT / "outputs" / "human_feedback_mysql_export.json"

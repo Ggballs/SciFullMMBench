@@ -81,9 +81,6 @@ def configure_sql_access_logging(log_dir: Optional[Path] = None) -> None:
     logger.propagate = True
 
 
-configure_sql_access_logging()
-
-
 def get_engine(db_url: Optional[str] = None) -> Engine:
     """Create a SQLAlchemy engine from an explicit URL or environment."""
     url = db_url or os.getenv("HUMAN_FEEDBACK_DB_URL") or os.getenv("DATABASE_URL")
