@@ -17,7 +17,7 @@ COPY prompts ./prompts
 COPY configs ./configs
 
 RUN pip install --no-cache-dir -U pip \
-    && pip install --no-cache-dir -e ".[deploy-mysql]"
+    && pip install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir -e ".[deploy-mysql]"
 
 EXPOSE 7860
 

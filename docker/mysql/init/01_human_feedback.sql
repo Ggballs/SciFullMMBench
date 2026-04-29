@@ -4,14 +4,14 @@ CREATE TABLE IF NOT EXISTS human_feedback (
 
   paper_forum_id VARCHAR(128) NOT NULL
     COMMENT 'OpenReview forum id for the paper associated with this query.',
-  query_id VARCHAR(512) NOT NULL
+  query_id VARCHAR(64) NOT NULL
     COMMENT 'Stable query identifier.',
   query_text TEXT NOT NULL
     COMMENT 'Original generated retrieval query shown to the human reviewer.',
 
   feedback_item_id VARCHAR(64) NOT NULL
     COMMENT 'Stable feedback item id. Example: query_relevance, human_like, hard_negative:1, positive:1.',
-  reviewer_username VARCHAR(128) NOT NULL
+  reviewer_username VARCHAR(64) NOT NULL
     COMMENT 'Username authenticated by the Gradio login layer.',
 
   judgement VARCHAR(32) NOT NULL
@@ -39,10 +39,7 @@ CREATE TABLE IF NOT EXISTS human_feedback (
   ),
 
   KEY idx_query_id (query_id),
-  KEY idx_paper_forum_id (paper_forum_id),
-  KEY idx_feedback_item_id (feedback_item_id),
   KEY idx_reviewer_username (reviewer_username),
-  KEY idx_judgement (judgement)
 ) ENGINE=InnoDB
   DEFAULT CHARSET=utf8mb4
   COLLATE=utf8mb4_unicode_ci
