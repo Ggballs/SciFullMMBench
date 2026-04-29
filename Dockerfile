@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     GRADIO_ANALYTICS_ENABLED=False \
     GRADIO_SERVER_NAME=0.0.0.0 \
     GRADIO_SERVER_PORT=7860 \
-    FINAL_JSON=outputs/test_single/final_pipeline_output.json
+    FINAL_JSON=outputs/final_pipeline_output.json
 
 WORKDIR /app
 
