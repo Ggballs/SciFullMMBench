@@ -420,7 +420,15 @@ def list_feedback_for_query(
         raise
 
     if reviewer_username is not None:
-        return rows_to_feedback_payload(rows)
+        payload = rows_to_feedback_payload(rows)
+        latest_row = max(
+            rows,
+            key=lambda row: (str(row.get("updated_at") or ""), int(row.get("id") or 0)),
+            default={},
+        )
+        payload["_latest_reviewer_username"] = str(latest_row.get("reviewer_username") or "")
+        payload["_latest_update"] = str(latest_row.get("updated_at") or "")
+        return payload
 
     by_reviewer: Dict[str, List[Dict[str, Any]]] = {}
     for row in rows:

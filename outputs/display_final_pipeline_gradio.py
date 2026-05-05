@@ -677,17 +677,15 @@ def has_saved_query_feedback(
         return False
 
 
-def latest_feedback_reviewer_label(paper: Dict[str, Any], query: Dict[str, Any]) -> str:
-    context = {
-        "query_key": build_query_key(paper, query),
-        "paper_id": paper.get("paper_id", ""),
-    }
-    try:
-        feedback = list_feedback_for_query(context["paper_id"], context["query_key"])
-    except Exception:
+def feedback_modified_html(feedback_payload: Dict[str, Any]) -> str:
+    reviewer = str(feedback_payload.get("_latest_reviewer_username") or "").strip()
+    if not reviewer:
         return ""
-    reviewer = str(feedback.get("latest_reviewer_username") or "").strip()
-    return f"\nlast modified by {reviewer}" if reviewer else ""
+    return (
+        "<div style='font-size:12px;color:#6b7280;margin:0 0 8px 0'>"
+        f"last modified by {esc(reviewer)}"
+        "</div>"
+    )
 
 
 def build_query_label_map(
@@ -702,9 +700,8 @@ def build_query_label_map(
         decision = safe_get(query, "query_analysis", "decision", default="N/A")
         decision_label = "𝐊𝐞𝐞𝐩" if str(decision).lower() == "keep" else str(decision)
         saved_label = " | [saved]" if has_saved_query_feedback(paper, query, reviewer_username) else ""
-        modified_label = latest_feedback_reviewer_label(paper, query) if saved_label else ""
         label = f"Q{idx} | {query.get('source_view', 'N/A')} | {decision_label}"
-        label = f"{label}{saved_label}{modified_label}"
+        label = f"{label}{saved_label}"
         out.append((label, query.get("query_text", "")))
     return out
 
@@ -1094,6 +1091,7 @@ def human_judgment_updates(context: Dict[str, Any], reviewer_username: Optional[
     query_paper = item.get("query_paper_relevance", {}) or {}
     human_like = item.get("human_like_search", {}) or {}
     candidates = item.get("candidate_checks", {}) or {}
+    modified_html = feedback_modified_html(item)
     candidate_items = context.get("candidate_items", []) if context else []
     real_researcher_search = human_like.get("real_researcher_search")
     show_non_human_type = real_researcher_search == "No"
@@ -1136,6 +1134,13 @@ def human_judgment_updates(context: Dict[str, Any], reviewer_username: Optional[
                     gr.update(value="", visible=False),
                 ]
             )
+    updates.extend(
+        [
+            gr.update(value=modified_html),
+            gr.update(value=modified_html),
+            gr.update(value=modified_html),
+        ]
+    )
     return tuple(updates)
 
 
@@ -1607,6 +1612,7 @@ def launch_app(
                 with gr.Column(scale=1):
                     with gr.Group():
                         gr.Markdown("**Query-Paper Relevance**")
+                        query_feedback_modified = gr.HTML(value=initial_judgment_updates[-3]["value"])
                         query_relevance = gr.Radio(
                             ["Yes", "No", "Unsure"],
                             value=initial_judgment_updates[0]["value"],
@@ -1623,6 +1629,7 @@ def launch_app(
                 with gr.Column(scale=1):
                     with gr.Group():
                         gr.Markdown("**Human-Like Search**")
+                        human_like_feedback_modified = gr.HTML(value=initial_judgment_updates[-2]["value"])
                         real_researcher_search = gr.Radio(
                             ["Yes", "No", "Unsure"],
                             value=initial_judgment_updates[2]["value"],
@@ -1647,6 +1654,7 @@ def launch_app(
                         )
 
             gr.Markdown("### Candidate Checks")
+            candidate_feedback_modified = gr.HTML(value=initial_judgment_updates[-1]["value"])
             candidate_review_header = gr.HTML(value=initial_candidate_review_header)
             candidate_components = []
             candidate_start = 6
@@ -1776,7 +1784,8 @@ def launch_app(
                     reviewer_username,
                     selected_query_text=context.get("query_text"),
                 )
-                return status, query_update
+                feedback_updates, _ = safe_human_judgment_updates(context, reviewer_username)
+                return (status, query_update) + feedback_updates[-3:]
 
             render_outputs = [
                 paper_html,
@@ -1798,6 +1807,9 @@ def launch_app(
             ]
             for components in candidate_components:
                 render_outputs.extend(components)
+            render_outputs.append(query_feedback_modified)
+            render_outputs.append(human_like_feedback_modified)
+            render_outputs.append(candidate_feedback_modified)
             render_outputs.append(judge_status)
 
             feedback_outputs = [
@@ -1810,6 +1822,9 @@ def launch_app(
             ]
             for components in candidate_components:
                 feedback_outputs.extend(components)
+            feedback_outputs.append(query_feedback_modified)
+            feedback_outputs.append(human_like_feedback_modified)
+            feedback_outputs.append(candidate_feedback_modified)
             feedback_outputs.append(judge_status)
 
             def _on_load(
@@ -1888,7 +1903,13 @@ def launch_app(
                     for _, candidate_label_correct, candidate_wrong_type, candidate_notes in candidate_components
                     for component in (candidate_label_correct, candidate_wrong_type, candidate_notes)
                 ],
-                outputs=[judge_status, query_selector],
+                outputs=[
+                    judge_status,
+                    query_selector,
+                    query_feedback_modified,
+                    human_like_feedback_modified,
+                    candidate_feedback_modified,
+                ],
             )
 
     demo.launch(
