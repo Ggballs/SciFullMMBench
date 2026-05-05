@@ -94,10 +94,9 @@ openreview-pipeline summarize \
 Useful options:
 
 - `--base-url`
-- `--api-token`
 - `--model`
 
-These override `config.yaml` for the LLM backend.
+These override `config.yaml` for the LLM backend. API keys are read from `llm.api_tokens`.
 
 ### 4. Generate Queries
 
@@ -112,7 +111,6 @@ openreview-pipeline generate-queries \
 Useful options:
 
 - `--base-url`
-- `--api-token`
 - `--model`
 
 ### 5. Query Analysis
@@ -131,12 +129,10 @@ Useful options:
 
 - `--downloaded-input`: optional stage-0 dataset
 - `--base-url`
-- `--api-token`
 - `--model`
-- `--judge-batch-size`: default `10`; ignored when `--llm-judge-mode single_query`
-- `--llm-judge-mode`: `batch` or `single_query`
-- `--judge-max-concurrency`: default `1`
-- `--retrieval-batch-size`: default `10`; batches retrieval-effectiveness checks per paper
+
+Stage-4 processes papers concurrently according to `stages.max_concurrent_papers`. For each paper,
+all queries are sent together in one style-judge request and one retrieval-evaluation request.
 
 Expected output directory contents typically include:
 
@@ -157,7 +153,6 @@ openreview-pipeline hard-negative-mining \
 Useful options:
 
 - `--base-url`
-- `--api-token`
 - `--model`
 - `--query-analysis-input`: optional stage-4 query analysis directory used to keep only surviving queries
 - `--scholar-provider`: `serpapi` or `scholarly`
@@ -183,13 +178,8 @@ Useful options:
 
 - `--forum-id`: run against one or more known papers as a comma-separated list
 - `--base-url`
-- `--api-token`
 - `--model`
 - `--summarize-limit`: maximum papers to summarize with the LLM
-- `--judge-batch-size`
-- `--llm-judge-mode`
-- `--judge-max-concurrency`
-- `--retrieval-batch-size`
 - `--skip-filter`: create an all-passed `01_filtered.json` instead of applying stage-1 rules
 
 For a single-paper smoke test:
@@ -289,7 +279,33 @@ The CLI reads configuration from:
 
 - [config.yaml](/Users/marswei/Documents/SciFullMMBench/config.yaml:1)
 
-CLI flags such as `--base-url`, `--api-token`, `--model`, `--username`, and `--token` override config values for that invocation.
+CLI flags such as `--base-url`, `--model`, `--username`, and `--token` override config values for that invocation. LLM API keys are configured only through `llm.api_tokens`.
+
+The LLM config uses a unified multi-key request manager:
+
+```yaml
+llm:
+  base_url: "https://api.chatanywhere.tech/v1"
+  model: "gpt-5.4-mini-ca"
+  api_tokens:
+    - "key_1"
+    - "key_2"
+  per_key_request_interval_seconds: 2.0
+  per_key_max_concurrent_requests: 1
+  max_retries: 3
+  retry_backoff_seconds: 8.0
+  max_tokens: 4096
+  temperature: 0.0
+
+stages:
+  max_concurrent_papers: 5
+  hard_negative_mining:
+    review_max_workers: 1
+```
+
+`stages.max_concurrent_papers` controls paper-level concurrency in stage-2, stage-3, and stage-4.
+The LLM manager then assigns each request to an API key using round-robin selection. Each key has
+its own request interval and in-flight request cap.
 
 ## Output Layout
 

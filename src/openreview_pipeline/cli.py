@@ -74,15 +74,13 @@ def filter(input_path: str, output: str):
 @click.option("--input", "-i", "input_path", type=click.Path(exists=True), required=True, help="Input dataset path")
 @click.option("--output", "-o", type=click.Path(), default="data/02_summarized.json", help="Output path")
 @click.option("--base-url", default=None, help="LLM API base URL (overrides config)")
-@click.option("--api-token", default=None, help="LLM API token (overrides config)")
 @click.option("--model", default=None, help="Model name (overrides config)")
-def summarize(input_path: str, output: str, base_url: str, api_token: str, model: str):
+def summarize(input_path: str, output: str, base_url: str, model: str):
     run_summarize_stage(
         input_path=Path(input_path),
         output_path=Path(output),
         config_path=CONFIG_PATH,
         base_url=base_url,
-        api_token=api_token,
         model=model,
     )
 
@@ -91,15 +89,13 @@ def summarize(input_path: str, output: str, base_url: str, api_token: str, model
 @click.option("--input", "-i", "input_path", type=click.Path(exists=True), required=True, help="Input summarized dataset path")
 @click.option("--output", "-o", type=click.Path(), default="data/03_queries.json", help="Output path")
 @click.option("--base-url", default=None, help="LLM API base URL (overrides config)")
-@click.option("--api-token", default=None, help="LLM API token (overrides config)")
 @click.option("--model", default=None, help="Model name (overrides config)")
-def generate_queries(input_path: str, output: str, base_url: str, api_token: str, model: str):
+def generate_queries(input_path: str, output: str, base_url: str, model: str):
     run_generate_queries_stage(
         input_path=Path(input_path),
         output_path=Path(output),
         config_path=CONFIG_PATH,
         base_url=base_url,
-        api_token=api_token,
         model=model,
     )
 
@@ -109,7 +105,6 @@ def generate_queries(input_path: str, output: str, base_url: str, api_token: str
 @click.option("--query-analysis-input", type=click.Path(exists=True), default=None, help="Optional stage-4 query analysis directory used to keep only surviving queries")
 @click.option("--output", "-o", type=click.Path(), default="data/05_hard_negatives.json", help="Output path")
 @click.option("--base-url", default=None, help="LLM API base URL (overrides config)")
-@click.option("--api-token", default=None, help="LLM API token (overrides config)")
 @click.option("--model", default=None, help="Model name (overrides config)")
 @click.option("--scholar-provider", default=None, help="Google Scholar backend: 'serpapi' or 'scholarly' (overrides config)")
 @click.option("--serpapi-api-key", default=None, help="SerpAPI key for real Google Scholar search (overrides config)")
@@ -121,7 +116,6 @@ def hard_negative_mining(
     query_analysis_input: str,
     output: str,
     base_url: str,
-    api_token: str,
     model: str,
     scholar_provider: str,
     serpapi_api_key: str,
@@ -135,7 +129,6 @@ def hard_negative_mining(
         query_analysis_output_dir=Path(query_analysis_input) if query_analysis_input else None,
         config_path=CONFIG_PATH,
         base_url=base_url,
-        api_token=api_token,
         model=model,
         scholar_provider=scholar_provider,
         serpapi_api_key=serpapi_api_key,
@@ -151,24 +144,14 @@ def hard_negative_mining(
 @click.option("--downloaded-input", type=click.Path(exists=True), default=None, help="Optional stage-0 downloaded dataset path")
 @click.option("--output-dir", "-o", type=click.Path(), default="data/04_query_analysis", help="Output directory")
 @click.option("--base-url", default=None, help="LLM API base URL (overrides config)")
-@click.option("--api-token", default=None, help="LLM API token (overrides config)")
 @click.option("--model", default=None, help="Model name (overrides config)")
-@click.option("--judge-batch-size", default=10, type=int, help="Batch size for LLM-as-a-judge style scoring; ignored in single_query mode")
-@click.option("--llm-judge-mode", default="batch", help="LLM judge mode: batch or single_query")
-@click.option("--judge-max-concurrency", default=1, type=int, help="Max concurrent style-judge batches")
-@click.option("--retrieval-batch-size", default=10, type=int, help="Batch size for retrieval-effectiveness evaluation")
 def query_analysis(
     summarized_input: str,
     queries_input: str,
     downloaded_input: str,
     output_dir: str,
     base_url: str,
-    api_token: str,
     model: str,
-    judge_batch_size: int,
-    llm_judge_mode: str,
-    judge_max_concurrency: int,
-    retrieval_batch_size: int,
 ):
     run_query_analysis_stage(
         summarized_path=Path(summarized_input),
@@ -177,12 +160,7 @@ def query_analysis(
         output_dir=Path(output_dir),
         config_path=CONFIG_PATH,
         base_url=base_url,
-        api_token=api_token,
         model=model,
-        llm_batch_size=judge_batch_size,
-        llm_judge_mode=llm_judge_mode,
-        llm_max_concurrency=judge_max_concurrency,
-        retrieval_batch_size=retrieval_batch_size,
     )
 
 
@@ -192,14 +170,9 @@ def query_analysis(
 @click.option("--year", default=None, type=int, help="Year to download (default: current year)")
 @click.option("--forum-id", default=None, help="OpenReview forum id or comma-separated ids")
 @click.option("--max-papers", default=30, type=int, help="Maximum papers to download")
-@click.option("--summarize-limit", default=5, type=int, help="Maximum papers to summarize with the LLM")
+@click.option("--summarize-limit", default=None, type=int, help="Maximum papers to summarize with the LLM")
 @click.option("--base-url", default=None, help="LLM API base URL (overrides config)")
-@click.option("--api-token", default=None, help="LLM API token (overrides config)")
 @click.option("--model", default=None, help="Model name (overrides config)")
-@click.option("--judge-batch-size", default=10, type=int, help="Batch size for LLM-as-a-judge style scoring; ignored in single_query mode")
-@click.option("--llm-judge-mode", default="batch", help="LLM judge mode: batch or single_query")
-@click.option("--judge-max-concurrency", default=1, type=int, help="Max concurrent style-judge batches")
-@click.option("--retrieval-batch-size", default=10, type=int, help="Batch size for retrieval-effectiveness evaluation")
 @click.option("--download-selected-pdfs", is_flag=True, help="Download selected hard-negative/positive PDFs instead of storing URL-only metadata")
 @click.option("--skip-filter", is_flag=True, help="Mark all downloaded papers as passed instead of applying stage-1 filtering")
 @click.option("--final-output", type=click.Path(), default=None, help="Final combined JSON path")
@@ -211,12 +184,7 @@ def run_all(
     max_papers: int,
     summarize_limit: int,
     base_url: str,
-    api_token: str,
     model: str,
-    judge_batch_size: int,
-    llm_judge_mode: str,
-    judge_max_concurrency: int,
-    retrieval_batch_size: int,
     download_selected_pdfs: bool,
     skip_filter: bool,
     final_output: str,
@@ -231,12 +199,7 @@ def run_all(
         llm_limit=summarize_limit,
         config_path=CONFIG_PATH,
         base_url=base_url,
-        api_token=api_token,
         model=model,
-        llm_batch_size=judge_batch_size,
-        llm_judge_mode=llm_judge_mode,
-        llm_max_concurrency=judge_max_concurrency,
-        retrieval_batch_size=retrieval_batch_size,
         download_selected_pdfs=download_selected_pdfs,
         skip_filter=skip_filter,
     )

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 import logging
 from pathlib import Path
@@ -10,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from openreview_pipeline.llm.base import create_openai_compatible_backend, load_llm_config
+from openreview_pipeline.llm.base import LLMBackend
 
 logger = logging.getLogger(__name__)
 
@@ -31,18 +30,6 @@ def _render_prompt_template(filename: str, **replacements: str) -> str:
     for key, value in replacements.items():
         prompt = prompt.replace(f"{{{{{key}}}}}", value)
     return prompt
-
-
-def _normalize_judge_mode(judge_mode: str) -> str:
-    normalized = str(judge_mode).strip().lower()
-    if normalized not in {"batch", "single_query"}:
-        raise ValueError("judge_mode must be 'batch' or 'single_query'")
-    return normalized
-
-
-def _build_batches(queries: List[str], batch_size: int, judge_mode: str) -> List[tuple[int, List[str]]]:
-    effective_batch_size = 1 if _normalize_judge_mode(judge_mode) == "single_query" else max(1, batch_size)
-    return [(start, queries[start:start + effective_batch_size]) for start in range(0, len(queries), effective_batch_size)]
 
 
 def build_style_analysis_prompt(queries: List[str]) -> str:
@@ -107,48 +94,12 @@ def normalize_judge_results(queries: List[str], raw_results: Dict[str, Any]) -> 
     return normalized
 
 
-def _score_batches(
-    queries: List[str],
-    base_url: str,
-    api_token: str,
-    model: str,
-    batch_size: int,
-    judge_mode: str,
-    max_concurrency: int,
-    seed: Optional[int],
-) -> List[Dict[str, Any]]:
-    judge_mode = _normalize_judge_mode(judge_mode)
-    batches = _build_batches(queries, batch_size=batch_size, judge_mode=judge_mode)
-    max_concurrency = max(1, int(max_concurrency))
-
-    def _score_single_batch(start: int, batch: List[str]) -> List[Dict[str, Any]]:
-        backend = create_openai_compatible_backend(
-            base_url=base_url,
-            api_token=api_token,
-            model=model,
-            temperature=0.0,
-            seed=seed,
-        )
-        logger.info("LLM judge scoring queries %s-%s/%s (%s)", start + 1, start + len(batch), len(queries), judge_mode)
-        raw_results = backend.generate_json(build_style_analysis_prompt(batch))
-        batch_results = normalize_judge_results(batch, raw_results)
-        for item in batch_results:
-            item["index"] = start + item["index"]
-        return batch_results
-
-    if max_concurrency == 1 or len(batches) <= 1:
-        per_query: List[Dict[str, Any]] = []
-        for start, batch in batches:
-            per_query.extend(_score_single_batch(start, batch))
-        return per_query
-
-    per_query: List[Dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
-        futures = {executor.submit(_score_single_batch, start, batch): start for start, batch in batches}
-        for future in as_completed(futures):
-            per_query.extend(future.result())
-    per_query.sort(key=lambda item: item.get("index", 0))
-    return per_query
+def score_queries(queries: List[str], llm: LLMBackend) -> List[Dict[str, Any]]:
+    if not queries:
+        return []
+    logger.info("LLM judge scoring %s queries in one paper-level request", len(queries))
+    raw_results = llm.generate_json(build_style_analysis_prompt(queries))
+    return normalize_judge_results(queries, raw_results)
 
 
 def summarize_judge_results(per_query: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -199,22 +150,22 @@ def summarize_semantic_constraints(per_query: List[Dict[str, Any]]) -> Dict[str,
     }
 
 
-def compute_llm_judged_metrics(queries: List[str], base_url: str, api_token: str, model: str, batch_size: int = 25, judge_mode: str = "batch", max_concurrency: int = 1, seed: Optional[int] = None) -> Dict[str, Any]:
-    return summarize_judge_results(_score_batches(queries, base_url, api_token, model, batch_size, judge_mode, max_concurrency, seed))
+def compute_llm_judged_metrics(queries: List[str], llm: LLMBackend) -> Dict[str, Any]:
+    return summarize_judge_results(score_queries(queries, llm))
 
 
-def compute_llm_semantic_constraint_metrics(queries: List[str], base_url: str, api_token: str, model: str, batch_size: int = 25, judge_mode: str = "batch", max_concurrency: int = 1, seed: Optional[int] = None) -> Dict[str, Any]:
-    return summarize_semantic_constraints(_score_batches(queries, base_url, api_token, model, batch_size, judge_mode, max_concurrency, seed))
+def compute_llm_semantic_constraint_metrics(queries: List[str], llm: LLMBackend) -> Dict[str, Any]:
+    return summarize_semantic_constraints(score_queries(queries, llm))
 
 
-def analyze_query(query: str, base_url: str, api_token: str, model: str, judge_mode: str = "single_query", max_concurrency: int = 1, seed: Optional[int] = None) -> Dict[str, Any]:
-    combined = analyze_queries([query], base_url=base_url, api_token=api_token, model=model, batch_size=1, judge_mode=judge_mode, max_concurrency=max_concurrency, seed=seed)
+def analyze_query(query: str, llm: LLMBackend) -> Dict[str, Any]:
+    combined = analyze_queries([query], llm=llm)
     return {
         "llm_judge": combined.get("llm_judge", {}).get("per_query", [{}])[0] if combined.get("llm_judge", {}).get("per_query") else {},
         "semantic_constraint_analysis": combined.get("semantic_constraint_analysis", {}).get("per_query", [{}])[0] if combined.get("semantic_constraint_analysis", {}).get("per_query") else {},
     }
 
 
-def analyze_queries(queries: List[str], base_url: str, api_token: str, model: str, batch_size: int = 25, judge_mode: str = "batch", max_concurrency: int = 1, seed: Optional[int] = None) -> Dict[str, Any]:
-    per_query = _score_batches(queries, base_url, api_token, model, batch_size, judge_mode, max_concurrency, seed)
+def analyze_queries(queries: List[str], llm: LLMBackend) -> Dict[str, Any]:
+    per_query = score_queries(queries, llm)
     return {**summarize_judge_results(per_query), **summarize_semantic_constraints(per_query)}

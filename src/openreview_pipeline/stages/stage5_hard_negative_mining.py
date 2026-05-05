@@ -367,7 +367,7 @@ class HardNegativeMiner:
         scholar_max_results: int = 10,
         download_selected_pdfs: bool = False,
         pdf_output_dir: Optional[Path] = None,
-        review_max_workers: int = 4,
+        review_max_workers: int = 1,
     ):
         self.llm = llm
         self.scholar_client = scholar_client

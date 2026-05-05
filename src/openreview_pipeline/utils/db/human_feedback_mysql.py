@@ -384,11 +384,12 @@ def list_feedback_for_query(
         select(human_feedback)
         .where(human_feedback.c.paper_forum_id == str(paper_forum_id))
         .where(human_feedback.c.query_id == str(query_id))
-        .order_by(human_feedback.c.feedback_item_id)
+        .order_by(
+            human_feedback.c.feedback_item_id,
+            human_feedback.c.updated_at,
+            human_feedback.c.id,
+        )
     )
-    if reviewer is not None:
-        stmt = stmt.where(human_feedback.c.reviewer_username == reviewer)
-
     operation = "load" if reviewer is not None else "list"
     logger.info(
         "%s query start reviewer=%s paper=%s query=%s",
@@ -424,7 +425,14 @@ def list_feedback_for_query(
     by_reviewer: Dict[str, List[Dict[str, Any]]] = {}
     for row in rows:
         by_reviewer.setdefault(str(row.get("reviewer_username") or ""), []).append(row)
+    latest_row = max(
+        rows,
+        key=lambda row: (str(row.get("updated_at") or ""), int(row.get("id") or 0)),
+        default={},
+    )
     return {
+        "latest_reviewer_username": str(latest_row.get("reviewer_username") or ""),
+        "latest_update": str(latest_row.get("updated_at") or ""),
         "reviewers": {
             reviewer: rows_to_feedback_payload(reviewer_rows)
             for reviewer, reviewer_rows in by_reviewer.items()

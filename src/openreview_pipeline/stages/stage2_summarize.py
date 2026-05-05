@@ -1,6 +1,7 @@
 import logging
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional, List
 
@@ -17,11 +18,19 @@ DEFAULT_VIEWS = ["contribution", "method/dataset", "experiment/result", "limitat
 
 
 class Summarizer:
-    def __init__(self, llm: LLMBackend, views: Optional[List[str]] = None, prompt_template: Optional[str] = None, llm_limit: Optional[int] = None):
+    def __init__(
+        self,
+        llm: LLMBackend,
+        views: Optional[List[str]] = None,
+        prompt_template: Optional[str] = None,
+        llm_limit: Optional[int] = None,
+        max_concurrent_papers: int = 1,
+    ):
         self.llm = llm
         self.views = views or DEFAULT_VIEWS
         self._prompt_template = prompt_template
         self.llm_limit = llm_limit
+        self.max_concurrent_papers = max(1, int(max_concurrent_papers))
 
     def _get_prompt_template(self) -> str:
         if self._prompt_template:
@@ -172,29 +181,31 @@ class Summarizer:
                 logger.warning("Could not load summarize checkpoint %s: %s", checkpoint_path, exc)
 
         work_items = [result for result in passed_papers[:limit] if result.paper.paper.id not in completed_ids]
-        progress = tqdm(
-            work_items,
-            total=len(work_items),
-            desc="Summarizing papers",
-            unit="paper",
-            dynamic_ncols=True,
-        )
-        for result in progress:
+        progress = tqdm(total=len(work_items), desc="Summarizing papers", unit="paper", dynamic_ncols=True)
+
+        def _summarize_result(result) -> PaperSummary:
             paper = result.paper.paper
-            summary = self.summarize_paper(
+            return self.summarize_paper(
                 paper_id=paper.id,
                 paper_title=paper.title,
                 paper_abstract=paper.abstract,
                 paper_meta=result.paper,
             )
-            summaries.append(summary)
-            completed_ids.add(paper.id)
-            if checkpoint_path:
-                save_json(
-                    checkpoint_path,
-                    SummarizedPapersDataset(summaries=summaries, total_papers=len(summaries)),
-                )
-            progress.set_postfix_str(f"done={len(summaries)}")
+
+        max_workers = min(self.max_concurrent_papers, len(work_items)) if work_items else 1
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_summarize_result, result): result for result in work_items}
+            for future in as_completed(futures):
+                summary = future.result()
+                summaries.append(summary)
+                completed_ids.add(summary.paper_id)
+                if checkpoint_path:
+                    save_json(
+                        checkpoint_path,
+                        SummarizedPapersDataset(summaries=summaries, total_papers=len(summaries)),
+                    )
+                progress.update(1)
+                progress.set_postfix_str(f"done={len(summaries)}")
         progress.close()
 
         summaries_by_id = {summary.paper_id: summary for summary in summaries}

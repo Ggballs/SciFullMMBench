@@ -1,4 +1,5 @@
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
 
@@ -13,9 +14,15 @@ logger = logging.getLogger(__name__)
 
 
 class QueryGenerator:
-    def __init__(self, llm: LLMBackend, prompt_template: Optional[str] = None):
+    def __init__(
+        self,
+        llm: LLMBackend,
+        prompt_template: Optional[str] = None,
+        max_concurrent_papers: int = 1,
+    ):
         self.llm = llm
         self._prompt_template = prompt_template
+        self.max_concurrent_papers = max(1, int(max_concurrent_papers))
 
     def _get_prompt_template(self) -> str:
         if self._prompt_template:
@@ -163,33 +170,35 @@ class QueryGenerator:
 
         work_items = [summary for summary in dataset.summaries if summary.paper_id not in completed_ids]
 
-        progress = tqdm(
-            work_items,
-            total=len(work_items),
-            desc="Generating queries",
-            unit="paper",
-            dynamic_ncols=True,
-        )
-        for summary in progress:
-            paper_queries = self.generate_queries_for_paper(
+        progress = tqdm(total=len(work_items), desc="Generating queries", unit="paper", dynamic_ncols=True)
+
+        def _generate_for_summary(summary) -> GeneratedQueriesForPaper:
+            return self.generate_queries_for_paper(
                 paper_id=summary.paper_id,
                 paper_title=summary.paper_title,
                 summary=summary,
             )
-            papers_queries.append(paper_queries)
-            completed_ids.add(summary.paper_id)
-            if checkpoint_path:
-                save_json(
-                    checkpoint_path,
-                    GeneratedQueriesDataset(
-                        papers_queries=papers_queries,
-                        total_papers=len(papers_queries),
-                        total_queries=sum(len(paper.queries_by_view) for paper in papers_queries),
-                    ),
+
+        max_workers = min(self.max_concurrent_papers, len(work_items)) if work_items else 1
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_generate_for_summary, summary): summary for summary in work_items}
+            for future in as_completed(futures):
+                paper_queries = future.result()
+                papers_queries.append(paper_queries)
+                completed_ids.add(paper_queries.paper_id)
+                if checkpoint_path:
+                    save_json(
+                        checkpoint_path,
+                        GeneratedQueriesDataset(
+                            papers_queries=papers_queries,
+                            total_papers=len(papers_queries),
+                            total_queries=sum(len(paper.queries_by_view) for paper in papers_queries),
+                        ),
+                    )
+                progress.update(1)
+                progress.set_postfix_str(
+                    f"queries={sum(len(paper.queries_by_view) for paper in papers_queries)}"
                 )
-            progress.set_postfix_str(
-                f"queries={sum(len(paper.queries_by_view) for paper in papers_queries)}"
-            )
         progress.close()
 
         papers_by_id = {paper.paper_id: paper for paper in papers_queries}

@@ -1,5 +1,6 @@
 from .base import (
     LLMBackend,
+    LLMRequestManager,
     MockLLMBackend,
     OpenAICompatibleBackend,
     create_openai_compatible_backend,
@@ -8,6 +9,7 @@ from .base import (
 
 __all__ = [
     "LLMBackend",
+    "LLMRequestManager",
     "MockLLMBackend",
     "OpenAICompatibleBackend",
     "create_openai_compatible_backend",

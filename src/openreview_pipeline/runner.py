@@ -9,7 +9,7 @@ from typing import Optional, Sequence
 
 import yaml
 
-from openreview_pipeline.llm import MockLLMBackend, OpenAICompatibleBackend
+from openreview_pipeline.llm import OpenAICompatibleBackend
 from openreview_pipeline.schemas import DownloadedPapersDataset
 from openreview_pipeline.schemas.schemas_filter import FilteredPapersDataset, FilterResult, FilterRuleResult
 from openreview_pipeline.schemas.schemas_queries import GeneratedQueriesDataset, GeneratedQueriesForPaper
@@ -95,15 +95,53 @@ def resolve_llm_settings(
     config_path: Optional[Path | str] = None,
     *,
     base_url: Optional[str] = None,
-    api_token: Optional[str] = None,
     model: Optional[str] = None,
-) -> dict[str, str]:
+) -> dict[str, object]:
     config = load_config(config_path)
     llm_config = config.get("llm", {})
+    if not isinstance(llm_config, dict):
+        llm_config = {}
+
+    settings = {
+        "base_url": llm_config.get("base_url", ""),
+        "model": llm_config.get("model", "gpt-4o-mini"),
+        "api_tokens": llm_config.get("api_tokens", []),
+        "per_key_request_interval_seconds": llm_config.get("per_key_request_interval_seconds", 0.0),
+        "per_key_max_concurrent_requests": llm_config.get("per_key_max_concurrent_requests", 1),
+        "max_retries": llm_config.get("max_retries", 3),
+        "retry_backoff_seconds": llm_config.get("retry_backoff_seconds", 8.0),
+        "max_tokens": llm_config.get("max_tokens", 4096),
+        "temperature": llm_config.get("temperature", 0.0),
+        "seed": llm_config.get("seed"),
+    }
+
+    if base_url:
+        settings["base_url"] = base_url
+    if model:
+        settings["model"] = model
+
+    if not settings["base_url"]:
+        raise ValueError("Missing llm.base_url in config.yaml")
+    api_tokens = settings.get("api_tokens")
+    if not isinstance(api_tokens, list) or not [token for token in api_tokens if str(token).strip()]:
+        raise ValueError("Missing llm.api_tokens in config.yaml; expected a non-empty list")
+
+    return settings
+
+
+def resolve_stage_settings(
+    config_path: Optional[Path | str] = None,
+) -> dict[str, int]:
+    config = load_config(config_path)
+    stages_config = config.get("stages", {})
+    if not isinstance(stages_config, dict):
+        stages_config = {}
+    hard_negative_config = stages_config.get("hard_negative_mining", {})
+    if not isinstance(hard_negative_config, dict):
+        hard_negative_config = {}
     return {
-        "base_url": base_url or llm_config.get("base_url", ""),
-        "api_token": api_token or llm_config.get("api_token", ""),
-        "model": model or llm_config.get("model", "gpt-4o-mini"),
+        "max_concurrent_papers": max(1, int(stages_config.get("max_concurrent_papers", 1))),
+        "hard_negative_review_max_workers": max(1, int(hard_negative_config.get("review_max_workers", 1))),
     }
 
 
@@ -155,23 +193,26 @@ def build_llm_backend(
     config_path: Optional[Path | str] = None,
     *,
     base_url: Optional[str] = None,
-    api_token: Optional[str] = None,
     model: Optional[str] = None,
 ):
     settings = resolve_llm_settings(
         config_path,
         base_url=base_url,
-        api_token=api_token,
         model=model,
     )
-    if settings["base_url"] and settings["api_token"]:
-        return OpenAICompatibleBackend(
-            base_url=settings["base_url"],
-            api_token=settings["api_token"],
-            model=settings["model"],
-        )
-    logger.warning("LLM credentials are incomplete; using mock backend.")
-    return MockLLMBackend()
+    seed = settings.get("seed")
+    return OpenAICompatibleBackend(
+        base_url=str(settings["base_url"]),
+        api_tokens=[str(token) for token in settings["api_tokens"]],
+        model=str(settings["model"]),
+        max_tokens=int(settings.get("max_tokens", 4096)),
+        temperature=float(settings.get("temperature", 0.0)),
+        seed=int(seed) if seed is not None else None,
+        per_key_request_interval_seconds=float(settings.get("per_key_request_interval_seconds", 0.0)),
+        per_key_max_concurrent_requests=int(settings.get("per_key_max_concurrent_requests", 1)),
+        max_retries=int(settings.get("max_retries", 3)),
+        retry_backoff_seconds=float(settings.get("retry_backoff_seconds", 8.0)),
+    )
 
 
 def normalize_stage_name(name: str) -> str:
@@ -461,7 +502,6 @@ def run_summarize_stage(
     output_path: Path | str,
     config_path: Optional[Path | str] = None,
     base_url: Optional[str] = None,
-    api_token: Optional[str] = None,
     model: Optional[str] = None,
     llm_limit: Optional[int] = None,
     llm_backend=None,
@@ -473,10 +513,14 @@ def run_summarize_stage(
     llm_backend = llm_backend or build_llm_backend(
         config_path,
         base_url=base_url,
-        api_token=api_token,
         model=model,
     )
-    summarizer = Summarizer(llm=llm_backend, llm_limit=llm_limit)
+    stage_settings = resolve_stage_settings(config_path)
+    summarizer = Summarizer(
+        llm=llm_backend,
+        llm_limit=llm_limit,
+        max_concurrent_papers=int(stage_settings["max_concurrent_papers"]),
+    )
     summarizer.run(input_path, output_path)
     return output_path
 
@@ -487,7 +531,6 @@ def run_generate_queries_stage(
     output_path: Path | str,
     config_path: Optional[Path | str] = None,
     base_url: Optional[str] = None,
-    api_token: Optional[str] = None,
     model: Optional[str] = None,
     llm_backend=None,
 ) -> Path:
@@ -498,10 +541,13 @@ def run_generate_queries_stage(
     llm_backend = llm_backend or build_llm_backend(
         config_path,
         base_url=base_url,
-        api_token=api_token,
         model=model,
     )
-    generator = QueryGenerator(llm=llm_backend)
+    stage_settings = resolve_stage_settings(config_path)
+    generator = QueryGenerator(
+        llm=llm_backend,
+        max_concurrent_papers=int(stage_settings["max_concurrent_papers"]),
+    )
     generator.run(input_path, output_path)
     return output_path
 
@@ -513,7 +559,6 @@ def run_hard_negative_mining_stage(
     query_analysis_output_dir: Optional[Path | str] = None,
     config_path: Optional[Path | str] = None,
     base_url: Optional[str] = None,
-    api_token: Optional[str] = None,
     model: Optional[str] = None,
     scholar_provider: Optional[str] = None,
     serpapi_api_key: Optional[str] = None,
@@ -529,9 +574,9 @@ def run_hard_negative_mining_stage(
     llm_backend = llm_backend or build_llm_backend(
         config_path,
         base_url=base_url,
-        api_token=api_token,
         model=model,
     )
+    stage_settings = resolve_stage_settings(config_path)
     search_settings = resolve_search_settings(
         config_path,
         provider=scholar_provider,
@@ -549,6 +594,7 @@ def run_hard_negative_mining_stage(
         scholar_client=scholar_client,
         scholar_max_results=int(search_settings["max_results"]),
         download_selected_pdfs=download_selected_pdfs,
+        review_max_workers=int(stage_settings["hard_negative_review_max_workers"]),
     )
 
     query_dataset = load_json(input_path, GeneratedQueriesDataset)
@@ -568,12 +614,7 @@ def run_query_analysis_stage(
     config_path: Optional[Path | str] = None,
     downloaded_path: Optional[Path | str] = None,
     base_url: Optional[str] = None,
-    api_token: Optional[str] = None,
     model: Optional[str] = None,
-    llm_batch_size: int = 10,
-    llm_judge_mode: str = "batch",
-    llm_max_concurrency: int = 1,
-    retrieval_batch_size: int = 10,
     llm_backend=None,
 ) -> Path:
     summarized_path = _require_input("query_analysis", _normalize_path(summarized_path))
@@ -584,9 +625,9 @@ def run_query_analysis_stage(
     llm_backend = llm_backend or build_llm_backend(
         config_path,
         base_url=base_url,
-        api_token=api_token,
         model=model,
     )
+    stage_settings = resolve_stage_settings(config_path)
     run_stage4_query_analysis(
         llm=llm_backend,
         summarized_path=summarized_path,
@@ -594,10 +635,7 @@ def run_query_analysis_stage(
         output_dir=output_dir,
         config_path=_normalize_path(config_path) or DEFAULT_CONFIG_PATH,
         downloaded_path=_normalize_path(downloaded_path),
-        llm_batch_size=llm_batch_size,
-        llm_judge_mode=llm_judge_mode,
-        llm_max_concurrency=llm_max_concurrency,
-        retrieval_batch_size=retrieval_batch_size,
+        max_concurrent_papers=int(stage_settings["max_concurrent_papers"]),
     )
     return output_dir
 
@@ -622,7 +660,6 @@ def run_selected_stages(
     rules_config_path: Optional[Path | str] = None,
     config_path: Optional[Path | str] = None,
     base_url: Optional[str] = None,
-    api_token: Optional[str] = None,
     model: Optional[str] = None,
     username: Optional[str] = None,
     password: Optional[str] = None,
@@ -631,10 +668,6 @@ def run_selected_stages(
     serpapi_api_key: Optional[str] = None,
     scholar_max_results: Optional[int] = None,
     scholar_language: Optional[str] = None,
-    llm_batch_size: int = 10,
-    llm_judge_mode: str = "batch",
-    llm_max_concurrency: int = 1,
-    retrieval_batch_size: int = 10,
     download_selected_pdfs: bool = False,
     skip_filter: bool = False,
 ) -> PipelinePaths:
@@ -654,19 +687,6 @@ def run_selected_stages(
         query_analysis_output_dir=query_analysis_output_dir,
         hard_negatives_path=hard_negatives_path,
     )
-
-    needs_llm = any(
-        stage in {"summarize", "generate_queries", "query_analysis", "hard_negative_mining"}
-        for stage in stages
-    )
-    llm_backend = None
-    if needs_llm:
-        llm_backend = build_llm_backend(
-            config_path,
-            base_url=base_url,
-            api_token=api_token,
-            model=model,
-        )
 
     downloaded_source = paths.downloaded_path if paths.downloaded_path.is_file() else None
     filtered_source = paths.filtered_path if paths.filtered_path.is_file() else None
@@ -707,10 +727,8 @@ def run_selected_stages(
                 output_path=paths.summarized_path,
                 config_path=config_path,
                 base_url=base_url,
-                api_token=api_token,
                 model=model,
                 llm_limit=llm_limit,
-                llm_backend=llm_backend,
             )
             summarized_source = current_input
         elif stage == "generate_queries":
@@ -719,9 +737,7 @@ def run_selected_stages(
                 output_path=paths.queries_path,
                 config_path=config_path,
                 base_url=base_url,
-                api_token=api_token,
                 model=model,
-                llm_backend=llm_backend,
             )
             queries_source = current_input
         elif stage == "query_analysis":
@@ -734,31 +750,30 @@ def run_selected_stages(
                 downloaded_path=downloaded_source,
                 config_path=config_path,
                 base_url=base_url,
-                api_token=api_token,
                 model=model,
-                llm_batch_size=llm_batch_size,
-                llm_judge_mode=llm_judge_mode,
-                llm_max_concurrency=llm_max_concurrency,
-                retrieval_batch_size=retrieval_batch_size,
-                llm_backend=llm_backend,
             )
             current_input = query_input
         elif stage == "hard_negative_mining":
-            query_input = _require_input(stage, queries_source or current_input or paths.queries_path)
+            query_input = _require_input(
+                stage,
+                queries_source or current_input or paths.queries_path,
+            )
             run_hard_negative_mining_stage(
                 input_path=query_input,
                 output_path=paths.hard_negatives_path,
-                query_analysis_output_dir=paths.query_analysis_output_dir if paths.query_analysis_output_dir.is_dir() else None,
+                query_analysis_output_dir=(
+                    paths.query_analysis_output_dir
+                    if paths.query_analysis_output_dir.is_dir()
+                    else None
+                ),
                 config_path=config_path,
                 base_url=base_url,
-                api_token=api_token,
                 model=model,
                 scholar_provider=scholar_provider,
                 serpapi_api_key=serpapi_api_key,
                 scholar_max_results=scholar_max_results,
                 scholar_language=scholar_language,
                 download_selected_pdfs=download_selected_pdfs,
-                llm_backend=llm_backend,
             )
             current_input = query_input
 

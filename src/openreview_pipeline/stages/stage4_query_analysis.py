@@ -4,6 +4,7 @@ import json
 import logging
 import re
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -89,41 +90,31 @@ class RetrievalEvaluator:
         paper_title: str,
         abstract: str,
         query_texts: list[str],
-        batch_size: int = 10,
     ) -> list[RetrievalEvaluation]:
         if not query_texts:
             return []
 
         prompt_template = self._get_prompt_template()
-        effective_batch_size = max(1, int(batch_size))
-        evaluations: list[RetrievalEvaluation] = []
+        numbered_queries = "\n".join(
+            f"{index}. {query_text}"
+            for index, query_text in enumerate(query_texts, start=1)
+        )
+        logger.info(
+            "Retrieval evaluation scoring %s queries for %s in one paper-level request",
+            len(query_texts),
+            paper_title or "unknown paper",
+        )
+        prompt = prompt_template
+        prompt = prompt.replace("{{paper_title}}", paper_title or "Unknown title")
+        prompt = prompt.replace("{{abstract}}", abstract or "N/A")
+        prompt = prompt.replace("{{queries}}", numbered_queries)
 
-        for start in range(0, len(query_texts), effective_batch_size):
-            batch = query_texts[start:start + effective_batch_size]
-            numbered_queries = "\n".join(
-                f"{index}. {query_text}"
-                for index, query_text in enumerate(batch, start=start + 1)
-            )
-            logger.info(
-                "Retrieval evaluation scoring queries %s-%s/%s for %s",
-                start + 1,
-                start + len(batch),
-                len(query_texts),
-                paper_title or "unknown paper",
-            )
-            prompt = prompt_template
-            prompt = prompt.replace("{{paper_title}}", paper_title or "Unknown title")
-            prompt = prompt.replace("{{abstract}}", abstract or "N/A")
-            prompt = prompt.replace("{{queries}}", numbered_queries)
-
-            raw = self.llm.generate(prompt)
-            parsed_items = self._parse_llm_response(raw)
-
-            for offset in range(len(batch)):
-                parsed = parsed_items[offset] if offset < len(parsed_items) else {}
-                evaluations.append(self._to_retrieval_evaluation(parsed))
-
-        return evaluations
+        raw = self.llm.generate(prompt)
+        parsed_items = self._parse_llm_response(raw)
+        return [
+            self._to_retrieval_evaluation(parsed_items[offset] if offset < len(parsed_items) else {})
+            for offset in range(len(query_texts))
+        ]
 
     def evaluate_query(
         self,
@@ -136,7 +127,6 @@ class RetrievalEvaluator:
             paper_title=paper_title,
             abstract=abstract,
             query_texts=[query_text],
-            batch_size=1,
         )[0]
 
 
@@ -340,10 +330,6 @@ def apply(
     queries_dataset: GeneratedQueriesDataset,
     downloaded_dataset: Optional[DownloadedPapersDataset] = None,
     config_path: Optional[Path | str] = None,
-    llm_batch_size: int = 10,
-    llm_judge_mode: str = "batch",
-    llm_max_concurrency: int = 1,
-    retrieval_batch_size: int = 10,
 ) -> QueryAnalysisDataset:
     paper_meta = _paper_metadata_map(downloaded_dataset)
     summary_by_id = {item.paper_id: item for item in summarized_dataset.summaries}
@@ -355,18 +341,7 @@ def apply(
     ]
     rule_report = rule_judge.analyze_queries(all_queries)
 
-    if config_path is None:
-        raise ValueError("config_path is required for stage-4 LLM-based analysis")
-    llm_config = llm_judge.load_llm_config(Path(config_path))
-    llm_report = llm_judge.analyze_queries(
-        all_queries,
-        base_url=llm_config["base_url"],
-        api_token=llm_config["api_token"],
-        model=llm_config["model"],
-        batch_size=llm_batch_size,
-        judge_mode=llm_judge_mode,
-        max_concurrency=llm_max_concurrency,
-    )
+    llm_report = llm_judge.analyze_queries(all_queries, llm=llm)
 
     rule_per_query = {
         item["index"]: item
@@ -402,7 +377,6 @@ def apply(
             paper_title=paper_title,
             abstract=abstract or "",
             query_texts=[query.query_text for query in query_entries],
-            batch_size=retrieval_batch_size,
         )
 
         for query, retrieval_evaluation in zip(query_entries, retrieval_evaluations):
@@ -525,10 +499,7 @@ def run(
     output_dir: Path,
     config_path: Path | str,
     downloaded_path: Optional[Path] = None,
-    llm_batch_size: int = 10,
-    llm_judge_mode: str = "batch",
-    llm_max_concurrency: int = 1,
-    retrieval_batch_size: int = 10,
+    max_concurrent_papers: int = 1,
 ) -> dict[str, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -575,7 +546,8 @@ def run(
     new_papers_by_id = {}
     if missing_query_papers:
         existing_papers_by_id = {paper.paper_id: paper for paper in existing_papers}
-        for missing_query_paper in missing_query_papers:
+
+        def _analyze_paper(missing_query_paper) -> list[PaperQueryAnalysis]:
             summary = summary_by_id.get(missing_query_paper.paper_id)
             missing_summaries = [summary] if summary else []
             paper_artifact = apply(
@@ -591,27 +563,32 @@ def run(
                 ),
                 downloaded_dataset=downloaded_dataset,
                 config_path=config_path,
-                llm_batch_size=llm_batch_size,
-                llm_judge_mode=llm_judge_mode,
-                llm_max_concurrency=llm_max_concurrency,
-                retrieval_batch_size=retrieval_batch_size,
             )
-            for paper in paper_artifact.papers:
-                new_papers_by_id[paper.paper_id] = paper
+            return paper_artifact.papers
 
-            checkpoint_papers = []
-            for paper_queries in queries_dataset.papers_queries:
-                paper = existing_papers_by_id.get(paper_queries.paper_id) or new_papers_by_id.get(paper_queries.paper_id)
-                if paper is not None:
-                    checkpoint_papers.append(paper)
-            checkpoint_artifact = QueryAnalysisDataset(
-                papers=checkpoint_papers,
-                total_papers=len(checkpoint_papers),
-                total_queries=sum(len(paper.queries) for paper in checkpoint_papers),
-                dataset_summary=_build_dataset_summary_from_papers(checkpoint_papers),
-            )
-            save_json(json_path, checkpoint_artifact)
-            md_path.write_text(_render_markdown(checkpoint_artifact), encoding="utf-8")
+        max_workers = min(max(1, int(max_concurrent_papers)), len(missing_query_papers))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(_analyze_paper, missing_query_paper): missing_query_paper
+                for missing_query_paper in missing_query_papers
+            }
+            for future in as_completed(futures):
+                for paper in future.result():
+                    new_papers_by_id[paper.paper_id] = paper
+
+                checkpoint_papers = []
+                for paper_queries in queries_dataset.papers_queries:
+                    paper = existing_papers_by_id.get(paper_queries.paper_id) or new_papers_by_id.get(paper_queries.paper_id)
+                    if paper is not None:
+                        checkpoint_papers.append(paper)
+                checkpoint_artifact = QueryAnalysisDataset(
+                    papers=checkpoint_papers,
+                    total_papers=len(checkpoint_papers),
+                    total_queries=sum(len(paper.queries) for paper in checkpoint_papers),
+                    dataset_summary=_build_dataset_summary_from_papers(checkpoint_papers),
+                )
+                save_json(json_path, checkpoint_artifact)
+                md_path.write_text(_render_markdown(checkpoint_artifact), encoding="utf-8")
     else:
         logger.info("Query-analysis stage found no missing papers to process.")
 

@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import wasserstein_distance
 
-from openreview_pipeline.llm.base import load_llm_config
+from openreview_pipeline.llm.base import create_openai_compatible_backend, load_llm_config
 from . import llm_judge, rule_judge
 
 FIT_SCALE = "0-1 closeness to ideal centered score of 3, computed as 1 - abs(score - 3) / 2"
@@ -74,11 +74,23 @@ def _empty_llm_metrics() -> Dict[str, Any]:
     }
 
 
-def build_analysis(dataset_name: str, queries: List[str], llm_judge_config: Optional[Dict[str, Any]] = None, llm_judge_batch_size: int = 25, llm_judge_mode: str = "batch", llm_max_concurrency: int = 1, llm_seed: Optional[int] = None) -> Dict[str, Any]:
+def build_analysis(dataset_name: str, queries: List[str], llm_judge_config: Optional[Dict[str, Any]] = None, llm_seed: Optional[int] = None) -> Dict[str, Any]:
     rule_results = rule_judge.analyze_queries(queries)
     combined_metrics = {"length_stats": rule_results["length_stats"], "question_templates": rule_results["question_templates"], **_empty_llm_metrics()}
     if llm_judge_config and queries:
-        combined_metrics.update(llm_judge.analyze_queries(queries=queries, batch_size=llm_judge_batch_size, judge_mode=llm_judge_mode, max_concurrency=llm_max_concurrency, seed=llm_seed, **llm_judge_config))
+        backend = create_openai_compatible_backend(
+            base_url=str(llm_judge_config["base_url"]),
+            api_tokens=[str(token) for token in llm_judge_config["api_tokens"]],
+            model=str(llm_judge_config["model"]),
+            max_tokens=int(llm_judge_config.get("max_tokens", 4096)),
+            temperature=float(llm_judge_config.get("temperature", 0.0)),
+            seed=llm_seed,
+            per_key_request_interval_seconds=float(llm_judge_config.get("per_key_request_interval_seconds", 0.0)),
+            per_key_max_concurrent_requests=int(llm_judge_config.get("per_key_max_concurrent_requests", 1)),
+            max_retries=int(llm_judge_config.get("max_retries", 3)),
+            retry_backoff_seconds=float(llm_judge_config.get("retry_backoff_seconds", 8.0)),
+        )
+        combined_metrics.update(llm_judge.analyze_queries(queries=queries, llm=backend))
     return {
         "dataset": dataset_name,
         "dataset_overview": {"generated_queries": {"total_queries": len(queries), "source": "generated query JSON"}, "combined": {"total_queries": len(queries)}},
@@ -184,9 +196,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", required=True, help="Directory for style_analysis outputs.")
     parser.add_argument("--dataset-name", default=None, help="Optional dataset name.")
     parser.add_argument("--config", default="config.yaml", help="Path to config.yaml with LLM settings.")
-    parser.add_argument("--batch-size", type=int, default=25, help="Batch size for LLM judge scoring.")
-    parser.add_argument("--llm-judge-mode", choices=["batch", "single_query"], default="batch")
-    parser.add_argument("--llm-max-concurrency", type=int, default=1)
     parser.add_argument("--llm-seed", type=int, default=None)
     parser.add_argument("--no-llm-judge", action="store_true")
     return parser
@@ -209,7 +218,7 @@ def main() -> int:
             llm_seed = llm_config.pop("seed", None)
         else:
             llm_config.pop("seed", None)
-    analysis = build_analysis(dataset_name=dataset_name, queries=queries, llm_judge_config=llm_config, llm_judge_batch_size=args.batch_size, llm_judge_mode=args.llm_judge_mode, llm_max_concurrency=args.llm_max_concurrency, llm_seed=llm_seed)
+    analysis = build_analysis(dataset_name=dataset_name, queries=queries, llm_judge_config=llm_config, llm_seed=llm_seed)
     json_path = output_dir / "style_analysis.json"
     md_path = output_dir / "style_analysis.md"
     write_text(json_path, json.dumps(analysis, indent=2, ensure_ascii=False))

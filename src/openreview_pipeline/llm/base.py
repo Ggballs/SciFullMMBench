@@ -1,8 +1,12 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 import logging
 from pathlib import Path
+import re
+from threading import BoundedSemaphore
+import threading
 import time
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import argparse
 import json
@@ -38,52 +42,146 @@ class MockLLMBackend(LLMBackend):
         return self._response
 
 
-class OpenAICompatibleBackend(LLMBackend):
+@dataclass
+class _LLMKeySlot:
+    client: Any
+    masked_token: str
+    semaphore: BoundedSemaphore
+    lock: threading.Lock
+    last_request_started_at: float = 0.0
+
+
+class LLMRequestManager:
     def __init__(
         self,
+        *,
         base_url: str,
-        api_token: str,
-        model: str = "gpt-4o-mini",
-        max_tokens: int = 4096,
-        temperature: float = 0.0,
-        seed: Optional[int] = None,
-        max_retries: int = 5,
+        api_tokens: list[str],
+        per_key_request_interval_seconds: float = 0.0,
+        per_key_max_concurrent_requests: int = 1,
+        max_retries: int = 3,
         retry_backoff_seconds: float = 8.0,
     ):
         from openai import OpenAI
+
+        cleaned_tokens = [str(token).strip() for token in api_tokens if str(token).strip()]
+        if not cleaned_tokens:
+            raise ValueError("llm.api_tokens must contain at least one API token")
+
         self.base_url = base_url.rstrip("/")
-        self.api_token = api_token
-        self.model = model
-        self.max_tokens = max_tokens
-        self.temperature = temperature
-        self.seed = seed
+        self.per_key_request_interval_seconds = max(0.0, float(per_key_request_interval_seconds))
+        self.per_key_max_concurrent_requests = max(1, int(per_key_max_concurrent_requests))
         self.max_retries = max(1, int(max_retries))
         self.retry_backoff_seconds = max(0.0, float(retry_backoff_seconds))
-        self._client = OpenAI(
-            api_key=api_token,
-            base_url=base_url,
-        )
+        self._slots = [
+            _LLMKeySlot(
+                client=OpenAI(api_key=token, base_url=self.base_url),
+                masked_token=self._mask_token(token),
+                semaphore=BoundedSemaphore(self.per_key_max_concurrent_requests),
+                lock=threading.Lock(),
+            )
+            for token in cleaned_tokens
+        ]
+        self._lock = threading.Lock()
+        self._next_slot_index = 0
 
-    def _with_retries(self, operation_name: str, fn):
+    @staticmethod
+    def _mask_token(token: str) -> str:
+        token = token.strip()
+        if len(token) <= 4:
+            return "****"
+        return f"...{token[-4:]}"
+
+    def _ordered_slots(self, avoid_slot: Optional[_LLMKeySlot] = None) -> list[_LLMKeySlot]:
+        with self._lock:
+            start_index = self._next_slot_index
+            self._next_slot_index = (self._next_slot_index + 1) % len(self._slots)
+            ordered = [
+                self._slots[(start_index + offset) % len(self._slots)]
+                for offset in range(len(self._slots))
+            ]
+            if avoid_slot is not None and len(self._slots) > 1:
+                ordered = [slot for slot in ordered if slot is not avoid_slot]
+            return ordered or list(self._slots)
+
+    def _acquire_slot(self, avoid_slot: Optional[_LLMKeySlot] = None) -> _LLMKeySlot:
+        ordered = self._ordered_slots(avoid_slot=avoid_slot)
+        for slot in ordered:
+            if slot.semaphore.acquire(blocking=False):
+                return slot
+
+        slot = ordered[0]
+        slot.semaphore.acquire()
+        return slot
+
+    def _wait_for_slot_interval(self, slot: _LLMKeySlot) -> None:
+        with slot.lock:
+            if self.per_key_request_interval_seconds > 0 and slot.last_request_started_at > 0:
+                elapsed = time.monotonic() - slot.last_request_started_at
+                sleep_seconds = self.per_key_request_interval_seconds - elapsed
+                if sleep_seconds > 0:
+                    time.sleep(sleep_seconds)
+            slot.last_request_started_at = time.monotonic()
+
+    def call(self, operation_name: str, fn: Callable[[Any], Any]) -> Any:
         last_exc = None
+        failed_slot: Optional[_LLMKeySlot] = None
         for attempt in range(1, self.max_retries + 1):
+            slot = self._acquire_slot(avoid_slot=failed_slot)
+            retry_sleep_seconds: Optional[float] = None
             try:
-                return fn()
+                self._wait_for_slot_interval(slot)
+                return fn(slot.client)
             except Exception as exc:
                 last_exc = exc
+                failed_slot = slot
                 if attempt >= self.max_retries:
                     break
                 sleep_seconds = self.retry_backoff_seconds * attempt
                 logger.warning(
-                    "%s failed on attempt %s/%s: %s. Retrying in %.1fs.",
+                    "%s failed with API key %s on attempt %s/%s: %s. Retrying in %.1fs.",
                     operation_name,
+                    slot.masked_token,
                     attempt,
                     self.max_retries,
                     exc,
                     sleep_seconds,
                 )
-                time.sleep(sleep_seconds)
+                retry_sleep_seconds = sleep_seconds
+            finally:
+                slot.semaphore.release()
+            if retry_sleep_seconds is not None:
+                time.sleep(retry_sleep_seconds)
         raise last_exc
+
+
+class OpenAICompatibleBackend(LLMBackend):
+    def __init__(
+        self,
+        base_url: str,
+        api_tokens: list[str],
+        model: str = "gpt-4o-mini",
+        max_tokens: int = 4096,
+        temperature: float = 0.0,
+        seed: Optional[int] = None,
+        per_key_request_interval_seconds: float = 0.0,
+        per_key_max_concurrent_requests: int = 1,
+        max_retries: int = 3,
+        retry_backoff_seconds: float = 8.0,
+    ):
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self.seed = seed
+        self.request_manager = LLMRequestManager(
+            base_url=base_url,
+            api_tokens=api_tokens,
+            per_key_request_interval_seconds=per_key_request_interval_seconds,
+            per_key_max_concurrent_requests=per_key_max_concurrent_requests,
+            max_retries=max_retries,
+            retry_backoff_seconds=retry_backoff_seconds,
+        )
 
     def _chat_completion_kwargs(self) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
@@ -106,9 +204,9 @@ class OpenAICompatibleBackend(LLMBackend):
         return kwargs
 
     def generate(self, prompt: str, **kwargs) -> str:
-        response = self._with_retries(
+        response = self.request_manager.call(
             "chat completion",
-            lambda: self._client.chat.completions.create(
+            lambda client: client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
                 **self._chat_completion_kwargs(),
             ),
@@ -118,9 +216,9 @@ class OpenAICompatibleBackend(LLMBackend):
         return response.choices[0].message.content
 
     def response(self, prompt: str, **kwargs) -> Any:
-        response = self._with_retries(
+        response = self.request_manager.call(
             "responses completion",
-            lambda: self._client.responses.create(
+            lambda client: client.responses.create(
                 input=prompt,
                 **self._responses_kwargs(),
             ),
@@ -129,10 +227,9 @@ class OpenAICompatibleBackend(LLMBackend):
         return response
 
     def generate_json(self, prompt: str, **kwargs) -> dict[str, Any]:
-        import re
-        response = self._with_retries(
+        response = self.request_manager.call(
             "chat JSON completion",
-            lambda: self._client.chat.completions.create(
+            lambda client: client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
                 **self._chat_completion_kwargs(),
             ),
@@ -201,9 +298,9 @@ class OpenAICompatibleBackend(LLMBackend):
             print("responses_payload:")
             print(json.dumps(payload, indent=2, default=str))
 
-        response = self._with_retries(
+        response = self.request_manager.call(
             "PDF URL response completion",
-            lambda: self._client.responses.create(**payload),
+            lambda client: client.responses.create(**payload),
         )
 
         if debug:
@@ -221,10 +318,12 @@ def load_llm_config(config_path: Path) -> dict[str, Any]:
     if not isinstance(llm_config, dict):
         raise ValueError("config.yaml 'llm' section must be a mapping")
 
-    required_keys = ["base_url", "api_token", "model"]
+    required_keys = ["base_url", "api_tokens", "model"]
     missing = [key for key in required_keys if not llm_config.get(key)]
     if missing:
         raise ValueError(f"Missing llm config keys: {', '.join(missing)}")
+    if not isinstance(llm_config["api_tokens"], list) or not llm_config["api_tokens"]:
+        raise ValueError("llm.api_tokens must be a non-empty list")
 
     return llm_config
 
@@ -232,19 +331,27 @@ def load_llm_config(config_path: Path) -> dict[str, Any]:
 def create_openai_compatible_backend(
     *,
     base_url: str,
-    api_token: str,
+    api_tokens: list[str],
     model: str,
     max_tokens: int = 4096,
     temperature: float = 0.0,
     seed: Optional[int] = None,
+    per_key_request_interval_seconds: float = 0.0,
+    per_key_max_concurrent_requests: int = 1,
+    max_retries: int = 3,
+    retry_backoff_seconds: float = 8.0,
 ) -> OpenAICompatibleBackend:
     return OpenAICompatibleBackend(
         base_url=base_url,
-        api_token=api_token,
+        api_tokens=api_tokens,
         model=model,
         max_tokens=max_tokens,
         temperature=temperature,
         seed=seed,
+        per_key_request_interval_seconds=per_key_request_interval_seconds,
+        per_key_max_concurrent_requests=per_key_max_concurrent_requests,
+        max_retries=max_retries,
+        retry_backoff_seconds=retry_backoff_seconds,
     )
 
 
@@ -282,8 +389,14 @@ def main() -> None:
 
     backend = OpenAICompatibleBackend(
         base_url=llm_config["base_url"],
-        api_token=llm_config["api_token"],
+        api_tokens=llm_config["api_tokens"],
         model=llm_config["model"],
+        max_tokens=int(llm_config.get("max_tokens", 4096)),
+        temperature=float(llm_config.get("temperature", 0.0)),
+        per_key_request_interval_seconds=float(llm_config.get("per_key_request_interval_seconds", 0.0)),
+        per_key_max_concurrent_requests=int(llm_config.get("per_key_max_concurrent_requests", 1)),
+        max_retries=int(llm_config.get("max_retries", 3)),
+        retry_backoff_seconds=float(llm_config.get("retry_backoff_seconds", 8.0)),
     )
 
     print(f"config: {config_path}")

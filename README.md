@@ -70,13 +70,13 @@ openreview-pipeline summarize --input data/01_filtered.json --output data/02_sum
 openreview-pipeline generate-queries --input data/02_summarized.json --output data/03_queries.json
 
 # Analyze generated query quality
-openreview-pipeline query-analysis --summarized-input data/02_summarized.json --queries-input data/03_queries.json --output-dir data/04_query_analysis --judge-batch-size 10 --retrieval-batch-size 10
+openreview-pipeline query-analysis --summarized-input data/02_summarized.json --queries-input data/03_queries.json --output-dir data/04_query_analysis
 
 # Mine hard negatives for surviving queries
 openreview-pipeline hard-negative-mining --input data/03_queries.json --query-analysis-input data/04_query_analysis --output data/05_hard_negatives.json
 
 # Run all stages
-openreview-pipeline run-all --output-dir data --venue ICLR --year 2025 --max-papers 10 --summarize-limit 5 --judge-batch-size 10 --retrieval-batch-size 10
+openreview-pipeline run-all --output-dir data --venue ICLR --year 2025 --max-papers 10 --summarize-limit 5
 
 # Run all stages for known OpenReview forum ids
 openreview-pipeline run-all --output-dir outputs/forum_batch --forum-id XZNXSM4rHG,ID_2,ID_3
@@ -88,6 +88,36 @@ openreview-pipeline run-all --output-dir outputs/forum_batch --forum-id XZNXSM4r
 When `--forum-id` is used, the value may be a comma-separated list. Re-running with the same output directory merges newly fetched papers into `00_downloaded.json` and updates existing rows with the same paper id. Venue/year downloads without `--forum-id` keep the normal fresh overwrite behavior.
 Use `--skip-filter` when you want every downloaded paper to continue into summarization.
 Stages are resume-aware: existing output files are loaded first, completed paper/query rows are counted as successful, and the run continues from missing items.
+
+### LLM Configuration
+
+All LLM calls use the same multi-key request manager. Configure keys in `config.yaml`:
+
+```yaml
+llm:
+  base_url: "https://api.chatanywhere.tech/v1"
+  model: "gpt-5.4-mini-ca"
+  api_tokens:
+    - "key_1"
+    - "key_2"
+  per_key_request_interval_seconds: 2.0
+  per_key_max_concurrent_requests: 1
+  max_retries: 3
+  retry_backoff_seconds: 8.0
+  max_tokens: 4096
+  temperature: 0.0
+
+stages:
+  max_concurrent_papers: 5
+  hard_negative_mining:
+    review_max_workers: 1
+```
+
+`api_tokens` is required. Requests are round-robin balanced across keys, throttled by
+`per_key_request_interval_seconds` and `per_key_max_concurrent_requests` per key, and retried with
+the next key on failure. Stage-2/3/4 paper-level concurrency is controlled by
+`stages.max_concurrent_papers`. Stage-5 PDF review defaults to one worker because remote PDF calls
+are the least stable part of the pipeline.
 
 ### Logs
 

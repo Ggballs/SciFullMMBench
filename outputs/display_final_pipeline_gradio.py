@@ -28,6 +28,7 @@ if SRC_ROOT.exists() and str(SRC_ROOT) not in sys.path:
 
 from openreview_pipeline.app_logging import configure_project_logging  # noqa: E402
 from openreview_pipeline.utils.db.human_feedback_mysql import (  # noqa: E402
+    list_feedback_for_query,
     load_query_feedback,
     save_query_feedback,
 )
@@ -660,9 +661,6 @@ def has_saved_query_feedback(
     query: Dict[str, Any],
     reviewer_username: Optional[str],
 ) -> bool:
-    reviewer_username = str(reviewer_username or "").strip()
-    if not reviewer_username:
-        return False
     context = {
         "query_key": build_query_key(paper, query),
         "paper_id": paper.get("paper_id", ""),
@@ -670,9 +668,26 @@ def has_saved_query_feedback(
         "source_view": query.get("source_view", ""),
     }
     try:
-        return has_saved_feedback_payload(load_query_feedback(context, reviewer_username))
+        feedback = list_feedback_for_query(context["paper_id"], context["query_key"])
+        return any(
+            has_saved_feedback_payload(payload)
+            for payload in (feedback.get("reviewers", {}) or {}).values()
+        )
     except Exception:
         return False
+
+
+def latest_feedback_reviewer_label(paper: Dict[str, Any], query: Dict[str, Any]) -> str:
+    context = {
+        "query_key": build_query_key(paper, query),
+        "paper_id": paper.get("paper_id", ""),
+    }
+    try:
+        feedback = list_feedback_for_query(context["paper_id"], context["query_key"])
+    except Exception:
+        return ""
+    reviewer = str(feedback.get("latest_reviewer_username") or "").strip()
+    return f"\nlast modified by {reviewer}" if reviewer else ""
 
 
 def build_query_label_map(
@@ -687,8 +702,9 @@ def build_query_label_map(
         decision = safe_get(query, "query_analysis", "decision", default="N/A")
         decision_label = "𝐊𝐞𝐞𝐩" if str(decision).lower() == "keep" else str(decision)
         saved_label = " | [saved]" if has_saved_query_feedback(paper, query, reviewer_username) else ""
+        modified_label = latest_feedback_reviewer_label(paper, query) if saved_label else ""
         label = f"Q{idx} | {query.get('source_view', 'N/A')} | {decision_label}"
-        label = f"{label}{saved_label}"
+        label = f"{label}{saved_label}{modified_label}"
         out.append((label, query.get("query_text", "")))
     return out
 
