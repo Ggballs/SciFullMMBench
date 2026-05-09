@@ -164,6 +164,7 @@ class OpenAICompatibleBackend(LLMBackend):
         max_tokens: int = 4096,
         temperature: float = 0.0,
         seed: Optional[int] = None,
+        embedding_model: Optional[str] = None,
         per_key_request_interval_seconds: float = 0.0,
         per_key_max_concurrent_requests: int = 1,
         max_retries: int = 3,
@@ -174,6 +175,7 @@ class OpenAICompatibleBackend(LLMBackend):
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.seed = seed
+        self.embedding_model = embedding_model
         self.request_manager = LLMRequestManager(
             base_url=base_url,
             api_tokens=api_tokens,
@@ -239,6 +241,22 @@ class OpenAICompatibleBackend(LLMBackend):
         if json_match:
             return json.loads(json_match.group())
         return {"raw": content}
+
+    def embed_texts(self, texts: list[str], model: Optional[str] = None) -> list[list[float]]:
+        embedding_model = model or self.embedding_model
+        if not embedding_model:
+            raise ValueError("An embedding model is required. Pass model=... or set embedding_model.")
+        if not texts:
+            return []
+
+        response = self.request_manager.call(
+            "embedding",
+            lambda client: client.embeddings.create(
+                model=embedding_model,
+                input=texts,
+            ),
+        )
+        return [list(item.embedding) for item in response.data]
 
     def _extract_response_text(self, response: Any) -> str:
         output_text = getattr(response, "output_text", None)
@@ -336,6 +354,7 @@ def create_openai_compatible_backend(
     max_tokens: int = 4096,
     temperature: float = 0.0,
     seed: Optional[int] = None,
+    embedding_model: Optional[str] = None,
     per_key_request_interval_seconds: float = 0.0,
     per_key_max_concurrent_requests: int = 1,
     max_retries: int = 3,
@@ -348,6 +367,7 @@ def create_openai_compatible_backend(
         max_tokens=max_tokens,
         temperature=temperature,
         seed=seed,
+        embedding_model=embedding_model,
         per_key_request_interval_seconds=per_key_request_interval_seconds,
         per_key_max_concurrent_requests=per_key_max_concurrent_requests,
         max_retries=max_retries,

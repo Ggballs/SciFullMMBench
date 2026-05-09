@@ -39,7 +39,12 @@ class QueryGenerator:
             for i, bp in enumerate(view.bullet_points, 1):
                 bullet_index = getattr(bp, "index", i)
                 bullet_text = getattr(bp, "text", str(bp))
-                parts.append(f"{bullet_index}. {bullet_text}")
+                multimodal_ref = getattr(bp, "multimodal_ref", []) or []
+                if multimodal_ref:
+                    refs = ", ".join(str(ref) for ref in multimodal_ref)
+                    parts.append(f"{bullet_index}. {bullet_text} [multimodal_ref: {refs}]")
+                else:
+                    parts.append(f"{bullet_index}. {bullet_text} [multimodal_ref: none]")
             parts.append("")
         return "\n".join(parts)
 

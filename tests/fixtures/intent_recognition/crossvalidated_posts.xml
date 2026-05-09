@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<posts>
+  <row Id="1" PostTypeId="1" CreationDate="2022-03-01T00:00:00.000" Score="6" Title="Good ML question?" Body="Question body" Tags="|machine-learning|python|" />
+  <row Id="2" PostTypeId="2" ParentId="1" CreationDate="2022-03-02T00:00:00.000" Score="6" Body="See https://arxiv.org/abs/2201.00001 for a related method." />
+  <row Id="3" PostTypeId="1" CreationDate="2022-03-01T00:00:00.000" Score="6" Title="Wrong tag?" Body="Question body" Tags="&lt;java&gt;" />
+  <row Id="4" PostTypeId="2" ParentId="3" CreationDate="2022-03-02T00:00:00.000" Score="7" Body="See https://arxiv.org/abs/2201.00002." />
+  <row Id="5" PostTypeId="1" CreationDate="2019-12-31T00:00:00.000" Score="20" Title="Too old?" Body="Question body" Tags="|machine-learning|" />
+  <row Id="6" PostTypeId="2" ParentId="5" CreationDate="2022-03-02T00:00:00.000" Score="20" Body="See https://doi.org/10.1000/example." />
+  <row Id="7" PostTypeId="1" CreationDate="2022-03-01T00:00:00.000" Score="5" Title="Low score?" Body="Question body" Tags="&lt;machine-learning&gt;" />
+  <row Id="8" PostTypeId="2" ParentId="7" CreationDate="2022-03-02T00:00:00.000" Score="20" Body="See https://aclanthology.org/2022.test-1.1/." />
+  <row Id="9" PostTypeId="1" CreationDate="2022-03-01T00:00:00.000" Score="10" Title="No qualifying answer?" Body="Question body" Tags="&lt;machine-learning&gt;" />
+  <row Id="10" PostTypeId="2" ParentId="9" CreationDate="2022-03-02T00:00:00.000" Score="5" Body="See https://arxiv.org/abs/2201.00003." />
+  <row Id="11" PostTypeId="1" CreationDate="2022-03-01T00:00:00.000" Score="10" Title="Declarative title" Body="Question body" Tags="&lt;machine-learning&gt;" />
+  <row Id="12" PostTypeId="2" ParentId="11" CreationDate="2022-03-02T00:00:00.000" Score="20" Body="See https://arxiv.org/abs/2201.00004." />
+</posts>

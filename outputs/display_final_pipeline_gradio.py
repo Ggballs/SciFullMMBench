@@ -29,7 +29,6 @@ if SRC_ROOT.exists() and str(SRC_ROOT) not in sys.path:
 from openreview_pipeline.app_logging import configure_project_logging  # noqa: E402
 from openreview_pipeline.utils.db.human_feedback_mysql import (  # noqa: E402
     list_feedback_for_query,
-    load_query_feedback,
     save_query_feedback,
 )
 
@@ -656,11 +655,11 @@ def has_saved_feedback_payload(payload: Dict[str, Any]) -> bool:
     return bool(query_relevance or human_like or candidate_checks)
 
 
-def has_saved_query_feedback(
+def query_feedback_status(
     paper: Dict[str, Any],
     query: Dict[str, Any],
     reviewer_username: Optional[str],
-) -> bool:
+) -> Tuple[bool, bool]:
     context = {
         "query_key": build_query_key(paper, query),
         "paper_id": paper.get("paper_id", ""),
@@ -669,23 +668,105 @@ def has_saved_query_feedback(
     }
     try:
         feedback = list_feedback_for_query(context["paper_id"], context["query_key"])
-        return any(
-            has_saved_feedback_payload(payload)
-            for payload in (feedback.get("reviewers", {}) or {}).values()
+        reviewers = feedback.get("reviewers", {}) or {}
+        has_any_feedback = any(has_saved_feedback_payload(payload) for payload in reviewers.values())
+        reviewer = str(reviewer_username or "").strip()
+        has_reviewer_feedback = (
+            has_saved_feedback_payload(reviewers.get(reviewer, {})) if reviewer else False
         )
+        return has_any_feedback, has_reviewer_feedback
     except Exception:
-        return False
+        return False, False
 
 
-def feedback_modified_html(feedback_payload: Dict[str, Any]) -> str:
-    reviewer = str(feedback_payload.get("_latest_reviewer_username") or "").strip()
-    if not reviewer:
+def has_saved_query_feedback(
+    paper: Dict[str, Any],
+    query: Dict[str, Any],
+    reviewer_username: Optional[str],
+) -> bool:
+    has_any_feedback, _ = query_feedback_status(paper, query, reviewer_username)
+    return has_any_feedback
+
+
+def feedback_value_html(label: str, value: Any) -> str:
+    if value in (None, "", []):
+        return ""
+    if isinstance(value, list):
+        value = ", ".join(str(item) for item in value if str(item).strip())
+    value = str(value or "").strip()
+    if not value:
+        return ""
+    return f"<div><b>{esc(label)}:</b> {esc(value)}</div>"
+
+
+def submitted_feedback_block(title: str, rows: List[str]) -> str:
+    rows = [row for row in rows if row]
+    if not rows:
         return ""
     return (
-        "<div style='font-size:12px;color:#6b7280;margin:0 0 8px 0'>"
-        f"last modified by {esc(reviewer)}"
+        "<div style='margin-top:10px;padding:10px;border:1px solid #e5e7eb;"
+        "border-radius:10px;background:#f9fafb;font-size:13px;line-height:1.5'>"
+        f"<div style='font-weight:800;color:#374151;margin-bottom:6px'>{esc(title)}</div>"
+        + "".join(rows)
+        + "</div>"
+    )
+
+
+def reviewer_feedback_card(reviewer: str, body_html: str) -> str:
+    if not body_html:
+        return ""
+    return (
+        "<div style='padding:8px 0;border-top:1px solid #e5e7eb'>"
+        f"<div style='font-size:12px;font-weight:800;color:#6b7280;margin-bottom:4px'>{esc(reviewer)}</div>"
+        f"{body_html}"
         "</div>"
     )
+
+
+def submitted_feedback_html(
+    feedback_by_reviewer: Dict[str, Dict[str, Any]],
+    section: str,
+    candidate_key: Optional[str] = None,
+) -> str:
+    rows = []
+    for reviewer, payload in sorted((feedback_by_reviewer or {}).items()):
+        if section == "query_paper_relevance":
+            item = (payload.get("query_paper_relevance") or {}) if isinstance(payload, dict) else {}
+            body = "".join(
+                [
+                    feedback_value_html("Judgement", item.get("relevance")),
+                    feedback_value_html("Note", item.get("notes")),
+                ]
+            )
+        elif section == "human_like_search":
+            item = (payload.get("human_like_search") or {}) if isinstance(payload, dict) else {}
+            body = "".join(
+                [
+                    feedback_value_html("Judgement", item.get("real_researcher_search")),
+                    feedback_value_html("Type", item.get("non_human_like_type")),
+                    feedback_value_html("Other", item.get("non_human_like_other")),
+                    feedback_value_html("Note", item.get("notes")),
+                ]
+            )
+        else:
+            candidates = (payload.get("candidate_checks") or {}) if isinstance(payload, dict) else {}
+            item = candidates.get(candidate_key or "", {}) or {}
+            body = "".join(
+                [
+                    feedback_value_html("Judgement", item.get("label_correct")),
+                    feedback_value_html("Wrong-label type", item.get("wrong_label_type")),
+                    feedback_value_html("Note", item.get("notes")),
+                ]
+            )
+        rows.append(reviewer_feedback_card(reviewer, body))
+    return submitted_feedback_block("Submitted feedback", rows)
+
+
+def load_submitted_feedback_by_reviewer(context: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    if not context or not context.get("paper_id") or not context.get("query_key"):
+        return {}
+    feedback = list_feedback_for_query(context["paper_id"], context["query_key"])
+    return feedback.get("reviewers", {}) or {}
 
 
 def build_query_label_map(
@@ -699,9 +780,19 @@ def build_query_label_map(
             continue
         decision = safe_get(query, "query_analysis", "decision", default="N/A")
         decision_label = "𝐊𝐞𝐞𝐩" if str(decision).lower() == "keep" else str(decision)
-        saved_label = " | [saved]" if has_saved_query_feedback(paper, query, reviewer_username) else ""
+        has_any_feedback, has_reviewer_feedback = query_feedback_status(
+            paper,
+            query,
+            reviewer_username,
+        )
+        status_emojis = []
+        if has_any_feedback:
+            status_emojis.append("✅")
+        if str(reviewer_username or "").strip() and not has_reviewer_feedback:
+            status_emojis.append("📝")
+        status_label = f" {' '.join(status_emojis)}" if status_emojis else ""
         label = f"Q{idx} | {query.get('source_view', 'N/A')} | {decision_label}"
-        label = f"{label}{saved_label}"
+        label = f"{label}{status_label}"
         out.append((label, query.get("query_text", "")))
     return out
 
@@ -1084,45 +1175,54 @@ def build_candidate_review_header(context: Dict[str, Any]) -> str:
     """
 
 
-def human_judgment_updates(context: Dict[str, Any], reviewer_username: Optional[str] = None):
-    item: Dict[str, Any] = {}
-    if context and reviewer_username:
-        item = load_query_feedback(context, reviewer_username)
-    query_paper = item.get("query_paper_relevance", {}) or {}
-    human_like = item.get("human_like_search", {}) or {}
-    candidates = item.get("candidate_checks", {}) or {}
-    modified_html = feedback_modified_html(item)
+def human_judgment_updates(
+    context: Dict[str, Any],
+    reviewer_username: Optional[str] = None,
+    feedback_by_reviewer: Optional[Dict[str, Dict[str, Any]]] = None,
+):
+    if feedback_by_reviewer is None:
+        feedback_by_reviewer = load_submitted_feedback_by_reviewer(context) if context else {}
     candidate_items = context.get("candidate_items", []) if context else []
-    real_researcher_search = human_like.get("real_researcher_search")
-    show_non_human_type = real_researcher_search == "No"
-    non_human_like_type = human_like.get("non_human_like_type", [])
-    show_non_human_other = show_non_human_type and "Other" in (non_human_like_type or [])
+    query_submitted_html = submitted_feedback_html(
+        feedback_by_reviewer,
+        "query_paper_relevance",
+    )
+    human_like_submitted_html = submitted_feedback_html(
+        feedback_by_reviewer,
+        "human_like_search",
+    )
+    candidate_submitted_by_key = {}
+    for candidate in candidate_items[:MAX_CANDIDATE_JUDGE_ROWS]:
+        candidate_html = submitted_feedback_html(
+            feedback_by_reviewer,
+            "candidate_checks",
+            candidate.get("key"),
+        )
+        candidate_submitted_by_key[candidate.get("key")] = candidate_html
 
     updates = [
-        gr.update(value=query_paper.get("relevance")),
-        gr.update(value=query_paper.get("notes", "")),
-        gr.update(value=real_researcher_search),
-        gr.update(value=non_human_like_type, visible=show_non_human_type),
-        gr.update(value=human_like.get("non_human_like_other", ""), visible=show_non_human_other),
-        gr.update(value=human_like.get("notes", "")),
+        gr.update(value=None),
+        gr.update(value=""),
+        gr.update(value=None),
+        gr.update(value=[], visible=False),
+        gr.update(value="", visible=False),
+        gr.update(value=""),
     ]
 
     for idx in range(MAX_CANDIDATE_JUDGE_ROWS):
         if idx < len(candidate_items):
             candidate = candidate_items[idx]
-            saved = candidates.get(candidate["key"], {}) or {}
-            label_correct = saved.get("label_correct")
-            show_wrong_type = label_correct == "No"
             updates.extend(
                 [
                     gr.update(value=candidate["html"], visible=True),
-                    gr.update(value=label_correct, visible=True, label=candidate_question_label(candidate)),
+                    gr.update(value=None, visible=True, label=candidate_question_label(candidate)),
                     gr.update(
-                        value=saved.get("wrong_label_type", []),
+                        value=[],
                         choices=candidate_wrong_label_choices(candidate),
-                        visible=show_wrong_type,
+                        visible=False,
                     ),
-                    gr.update(value=saved.get("notes", ""), visible=True),
+                    gr.update(value="", visible=True),
+                    gr.update(value=candidate_submitted_by_key.get(candidate.get("key"), ""), visible=True),
                 ]
             )
         else:
@@ -1132,13 +1232,13 @@ def human_judgment_updates(context: Dict[str, Any], reviewer_username: Optional[
                     gr.update(value=None, visible=False),
                     gr.update(value=[], visible=False),
                     gr.update(value="", visible=False),
+                    gr.update(value="", visible=False),
                 ]
             )
     updates.extend(
         [
-            gr.update(value=modified_html),
-            gr.update(value=modified_html),
-            gr.update(value=modified_html),
+            gr.update(value=query_submitted_html),
+            gr.update(value=human_like_submitted_html),
         ]
     )
     return tuple(updates)
@@ -1159,7 +1259,7 @@ def safe_human_judgment_updates(
     try:
         return human_judgment_updates(context, reviewer_username), mysql_status_message(reviewer_username)
     except Exception as exc:
-        return human_judgment_updates(context, None), mysql_status_message(reviewer_username, exc)
+        return human_judgment_updates(context, None, {}), mysql_status_message(reviewer_username, exc)
 
 
 def build_human_feedback_payload(
@@ -1612,7 +1712,6 @@ def launch_app(
                 with gr.Column(scale=1):
                     with gr.Group():
                         gr.Markdown("**Query-Paper Relevance**")
-                        query_feedback_modified = gr.HTML(value=initial_judgment_updates[-3]["value"])
                         query_relevance = gr.Radio(
                             ["Yes", "No", "Unsure"],
                             value=initial_judgment_updates[0]["value"],
@@ -1623,13 +1722,13 @@ def launch_app(
                             label="Reason / note (optional)",
                             lines=2,
                         )
+                        query_feedback_modified = gr.HTML(value=initial_judgment_updates[-2]["value"])
             with gr.Row():
                 with gr.Column(scale=3):
                     analysis_html = gr.HTML(value=initial_analysis)
                 with gr.Column(scale=1):
                     with gr.Group():
                         gr.Markdown("**Human-Like Search**")
-                        human_like_feedback_modified = gr.HTML(value=initial_judgment_updates[-2]["value"])
                         real_researcher_search = gr.Radio(
                             ["Yes", "No", "Unsure"],
                             value=initial_judgment_updates[2]["value"],
@@ -1652,14 +1751,14 @@ def launch_app(
                             label="Reason / note (optional)",
                             lines=2,
                         )
+                        human_like_feedback_modified = gr.HTML(value=initial_judgment_updates[-1]["value"])
 
             gr.Markdown("### Candidate Checks")
-            candidate_feedback_modified = gr.HTML(value=initial_judgment_updates[-1]["value"])
             candidate_review_header = gr.HTML(value=initial_candidate_review_header)
             candidate_components = []
             candidate_start = 6
             for idx in range(MAX_CANDIDATE_JUDGE_ROWS):
-                offset = candidate_start + idx * 4
+                offset = candidate_start + idx * 5
                 with gr.Row():
                     with gr.Column(scale=3):
                         candidate_html = gr.HTML(
@@ -1685,8 +1784,18 @@ def launch_app(
                             lines=2,
                             visible=initial_judgment_updates[offset + 3].get("visible", False),
                         )
+                        candidate_submitted_feedback = gr.HTML(
+                            value=initial_judgment_updates[offset + 4]["value"],
+                            visible=initial_judgment_updates[offset + 4].get("visible", False),
+                        )
                 candidate_components.append(
-                    (candidate_html, candidate_label_correct, candidate_wrong_type, candidate_notes)
+                    (
+                        candidate_html,
+                        candidate_label_correct,
+                        candidate_wrong_type,
+                        candidate_notes,
+                        candidate_submitted_feedback,
+                    )
                 )
 
             save_judgment_button = gr.Button("Save Human Judgment", variant="primary")
@@ -1784,8 +1893,12 @@ def launch_app(
                     reviewer_username,
                     selected_query_text=context.get("query_text"),
                 )
+                if not status.startswith("Saved human feedback"):
+                    return (status, query_update) + tuple(
+                        gr.update() for _ in feedback_value_outputs
+                    )
                 feedback_updates, _ = safe_human_judgment_updates(context, reviewer_username)
-                return (status, query_update) + feedback_updates[-3:]
+                return (status, query_update) + feedback_updates
 
             render_outputs = [
                 paper_html,
@@ -1809,7 +1922,6 @@ def launch_app(
                 render_outputs.extend(components)
             render_outputs.append(query_feedback_modified)
             render_outputs.append(human_like_feedback_modified)
-            render_outputs.append(candidate_feedback_modified)
             render_outputs.append(judge_status)
 
             feedback_outputs = [
@@ -1824,8 +1936,8 @@ def launch_app(
                 feedback_outputs.extend(components)
             feedback_outputs.append(query_feedback_modified)
             feedback_outputs.append(human_like_feedback_modified)
-            feedback_outputs.append(candidate_feedback_modified)
             feedback_outputs.append(judge_status)
+            feedback_value_outputs = feedback_outputs[:-1]
 
             def _on_load(
                 context: Dict[str, Any],
@@ -1877,7 +1989,7 @@ def launch_app(
                 inputs=non_human_like_type,
                 outputs=non_human_like_other,
             )
-            for _, candidate_label_correct, candidate_wrong_type, _ in candidate_components:
+            for _, candidate_label_correct, candidate_wrong_type, _, _ in candidate_components:
                 candidate_label_correct.change(
                     _toggle_wrong_label_type,
                     inputs=candidate_label_correct,
@@ -1900,16 +2012,14 @@ def launch_app(
                 ]
                 + [
                     component
-                    for _, candidate_label_correct, candidate_wrong_type, candidate_notes in candidate_components
+                    for _, candidate_label_correct, candidate_wrong_type, candidate_notes, _ in candidate_components
                     for component in (candidate_label_correct, candidate_wrong_type, candidate_notes)
                 ],
                 outputs=[
                     judge_status,
                     query_selector,
-                    query_feedback_modified,
-                    human_like_feedback_modified,
-                    candidate_feedback_modified,
-                ],
+                ]
+                + feedback_value_outputs,
             )
 
     demo.launch(

@@ -6,10 +6,14 @@ Write clean literature-review notes about the paper itself, not a narration of t
 
 ## Views
 Organize the output into exactly these views:
-- `contribution`
-- `method_dataset`
-- `experiment_result`
-- `limitation_scope`
+- `motivation`
+- `method`
+- `experiment`
+
+Use the views as follows:
+- `motivation`: the research problem, need, gap, goal, hypothesis, or reason the work matters
+- `method`: the proposed approach, model, algorithm, system, dataset construction process, or implementation design
+- `experiment`: evaluation setup, benchmarks, datasets used for testing, metrics, baselines, ablations, empirical findings, comparisons, and observed limitations, analysis
 
 Each view should contain:
 - `summary`: a short summary of that view
@@ -23,30 +27,28 @@ Each view should contain:
 - If support is weak or disputed, use calibrated wording such as "The paper argues..." or "Evidence remains limited for..."
 - Each OpenReview field is prefixed with a source path like `[Reviews/Review 1/pros]`.
 - For every bullet point, include `source_refs` with the exact source paths that support the claim.
+- For every bullet point, include `multimodal_ref`: a list of concrete non-textual references explicitly tied to that claim, such as `Figure 2`, `Table 1`, `Equation 3`, `Algorithm 1`, or `Appendix Figure A.1`. Use an empty list when the claim is not tied to a specific figure/table/equation/algorithm/diagram.
 
 ## Output Format
 Return valid JSON only:
 
 ```
 {{
-  "contribution": {{
+  "motivation": {{
     "summary": "short summary for this view",
     "bullet_points": [
       {{
         "text": "one atomic literature-review claim",
-        "source_refs": ["Reviews/Review 1/pros"]
+        "source_refs": ["Reviews/Review 1/pros"],
+        "multimodal_ref": ["Figure 2"]
       }}
     ]
   }},
-  "method_dataset": {{
+  "method": {{
     "summary": "short summary for this view",
     "bullet_points": []
   }},
-  "experiment_result": {{
-    "summary": "short summary for this view",
-    "bullet_points": []
-  }},
-  "limitation_scope": {{
+  "experiment": {{
     "summary": "short summary for this view",
     "bullet_points": []
   }}

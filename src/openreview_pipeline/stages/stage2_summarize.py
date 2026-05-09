@@ -14,7 +14,7 @@ from openreview_pipeline.utils import load_json, save_json, load_prompt_template
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_VIEWS = ["contribution", "method/dataset", "experiment/result", "limitation/scope"]
+DEFAULT_VIEWS = ["motivation", "method", "experiment"]
 
 
 class Summarizer:

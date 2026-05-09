@@ -1,6 +1,6 @@
 # Query Generation
 
-Given the literature-review-style summary of a scientific paper organized by views (`contribution`, `method/dataset`, `experiment/result`, `limitation/scope`), where each view contains a short narrative summary and indexed bullet points, generate **1-2 human-written-style general retrieval queries per view**.
+Given the literature-review-style summary of a scientific paper organized by views (`motivation`, `method`, `experiment`), where each view contains a short narrative summary and indexed bullet points, generate **1-2 human-written-style general retrieval queries per view**.
 
 The goal is to sound like a real researcher searching for a paper they partly remember / explore the new literature, not like a benchmark description, annotation guideline, or paper abstract.
 
@@ -46,11 +46,19 @@ Queries should feel like tip-of-the-tongue search requests:
 Each query should focus on the **few details most likely to help retrieval**.
 
 ## Multimodal Bonus Rule
-If a view contains bullet points referencing specific tables, figures, or equations,
+Use the bullet-level `multimodal_ref` field as the source of truth for multimodal query detection.
+
+If a view contains bullet points with non-empty `multimodal_ref`,
 generate **1 additional queries** for that view.
 
 For these bonus queries:
-- do **not** describe the figure/table in exhaustive detail, do not mention the figure/table in the query, but use the figure/table as a clue to identify a distinctive aspect of the paper that can be expressed in a natural query form (in justification, explain the figure/table clue and how it inspired the query)
+- choose a bullet with non-empty `multimodal_ref`
+- do **not** describe the figure/table/equation in exhaustive detail, do not mention the figure/table/equation label in the query, but use `multimodal_ref` as a clue to identify a distinctive aspect of the paper that can be expressed in a natural query form
+- set `is_multimodal` to `true` only when the selected bullet has non-empty `multimodal_ref` and the query is inspired by that non-textual evidence
+- in `related_bullet_justification`, mention the relevant `multimodal_ref` and how it inspired the query
+
+For ordinary non-bonus queries:
+- set `is_multimodal` to `false` unless the query is directly inspired by the selected bullet's non-empty `multimodal_ref`
 
 
 ##Good Query Examples:
@@ -63,17 +71,16 @@ Output a JSON object with views as keys:
 
 ```json
 {{
-  "contribution": [
+  "motivation": [
     {{
       "query_text": "generated query text",
-      "is_multimodal": true/false (whether the query is inspired by a specific figure/table/equation/... non-textual element in the paper. Be RIGOROUS!),
+      "is_multimodal": true/false (true only when the query is inspired by the selected bullet's non-empty `multimodal_ref`; be rigorous),
       "related_bullet_indice": 1,
       "related_bullet_justification": "1-2 sentences justifying whether the query relates to the bullet and why it is a good retrieval hook"
     }},
   ],
-  "method/dataset": [],
-  "experiment/result": [],
-  "limitation/scope": []
+  "method": [],
+  "experiment": []
 }}
 ```
 

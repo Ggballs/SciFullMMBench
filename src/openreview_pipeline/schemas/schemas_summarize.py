@@ -7,6 +7,7 @@ class BulletPoint(BaseModel):
     index: int
     text: str
     source_refs: List[str] = Field(default_factory=list)
+    multimodal_ref: List[str] = Field(default_factory=list)
 
 
 class ViewBulletPoints(BaseModel):
@@ -27,18 +28,25 @@ class ViewBulletPoints(BaseModel):
             if isinstance(item, dict):
                 text = item.get("text") or item.get("bullet_point") or item.get("content") or ""
                 source_refs = item.get("source_refs") or item.get("sources") or item.get("source_paths") or []
+                multimodal_ref = item.get("multimodal_ref") or item.get("multimodal_refs") or []
             else:
                 text = str(item)
                 source_refs = []
+                multimodal_ref = []
             text = text.strip()
             if text:
                 if not isinstance(source_refs, list):
                     source_refs = [source_refs]
+                if not isinstance(multimodal_ref, list):
+                    multimodal_ref = [multimodal_ref]
                 normalized.append(
                     {
                         "index": idx,
                         "text": text,
                         "source_refs": [str(ref).strip() for ref in source_refs if str(ref).strip()],
+                        "multimodal_ref": [
+                            str(ref).strip() for ref in multimodal_ref if str(ref).strip()
+                        ],
                     }
                 )
         return normalized
@@ -46,7 +54,12 @@ class ViewBulletPoints(BaseModel):
     @model_validator(mode="after")
     def assign_indices(self) -> "ViewBulletPoints":
         self.bullet_points = [
-            BulletPoint(index=idx, text=bullet.text.strip(), source_refs=list(bullet.source_refs))
+            BulletPoint(
+                index=idx,
+                text=bullet.text.strip(),
+                source_refs=list(bullet.source_refs),
+                multimodal_ref=list(bullet.multimodal_ref),
+            )
             for idx, bullet in enumerate(self.bullet_points, 1)
             if bullet.text.strip()
         ]
