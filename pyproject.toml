@@ -20,6 +20,8 @@ dependencies = [
     "matplotlib>=3.7",
     "openai>=1.0",
     "openreview-py>=2.0",
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -34,12 +36,16 @@ scholar = [
 ui = [
     "gradio>=4.0",
 ]
-deploy-mysql = [
+deploy-postgres = [
     "gradio>=4.0",
+    "python-dotenv>=1.0",
+]
+vector = [
+    "sentence-transformers>=3.0",
+]
+legacy-mysql-export = [
     "sqlalchemy>=2.0",
     "pymysql>=1.1",
-    "cryptography>=42.0",
-    "python-dotenv>=1.0",
 ]
 
 [project.scripts]

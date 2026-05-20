@@ -8,16 +8,21 @@ Write clean literature-review notes about the paper itself, not a narration of t
 Organize the output into exactly these views:
 - `motivation`
 - `method`
-- `experiment`
+- `experiment/result`
 
 Use the views as follows:
-- `motivation`: the research problem, need, gap, goal, hypothesis, or reason the work matters
-- `method`: the proposed approach, model, algorithm, system, dataset construction process, or implementation design
-- `experiment`: evaluation setup, benchmarks, datasets used for testing, metrics, baselines, ablations, empirical findings, comparisons, and observed limitations, analysis
+- `motivation`: targets WHY this research problem exists and WHY this paper's approach is necessary, such as the research problem, need, gap, goal, hypothesis, or reason the work matters
+- `method`: targets HOW the proposed approach works mechanistically, such as the proposed approach, model, algorithm, system, dataset construction process, or implementation design
+- `experiment/result`:  targets WHAT was empirically tested and what the results showed and analyzed, such as evaluation setup, benchmarks, datasets used for testing, metrics, baselines, ablations, empirical findings, comparisons, analytical observations, and observed limitations
 
 Each view should contain:
 - `summary`: a short summary of that view
 - `bullet_points`: concise atomic claims for that view
+
+Bullet count limits:
+- `motivation`: generate at most 3 bullet points, select those most representative and distinctive of the paper's motivation
+- `method`: generate at most 10 bullet points, select those most representative and distinctive of the paper's method, but do not include every single detail of the method, only the most important ones that are likely to be useful for retrieval
+- `experiment/result`: generate at most 10 bullet points, select those most representative and distinctive of the paper's experiments and results, but do not include every single detail of the experiments, only the most important ones that are likely to be useful for retrieval
 
 ## Principles
 - Merge duplicate reviewer/rebuttal/comment points into one clear claim.
@@ -48,7 +53,7 @@ Return valid JSON only:
     "summary": "short summary for this view",
     "bullet_points": []
   }},
-  "experiment": {{
+  "experiment_result": {{
     "summary": "short summary for this view",
     "bullet_points": []
   }}

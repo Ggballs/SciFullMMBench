@@ -140,16 +140,17 @@ def _openreview_url_for_paper(paper_id: str) -> str:
     return f"https://openreview.net/forum?id={paper_id}"
 
 
-def _query_key(paper_id: str, query: Any) -> tuple[str, str, str]:
+def _query_key(paper_id: str, query: Any) -> tuple[str, str, str, str]:
     return (
         str(paper_id),
         str(getattr(query, "query_text", "")),
         str(getattr(query, "source_view", "")),
+        str(getattr(query, "query_type", "IR")),
     )
 
 
-def _analyzed_query_key(paper_id: str, query: QueryAnalysisEntry) -> tuple[str, str, str]:
-    return (str(paper_id), str(query.query_text), str(query.source_view))
+def _analyzed_query_key(paper_id: str, query: QueryAnalysisEntry) -> tuple[str, str, str, str]:
+    return (str(paper_id), str(query.query_text), str(query.source_view), str(query.query_type))
 
 
 def _completed_analysis_paper_ids(
@@ -413,6 +414,7 @@ def apply(
             analyzed_queries.append(
                 QueryAnalysisEntry(
                     query_text=query.query_text,
+                    query_type=query.query_type,
                     source_view=query.source_view,
                     is_multimodal=query.is_multimodal,
                     related_bullet_indice=query.related_bullet_indice,

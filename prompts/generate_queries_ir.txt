@@ -1,0 +1,57 @@
+You are generating IR-style literature search queries from one view of a scientific paper summary.
+
+The input contains several bullet points from the same view. Your job is to select the 1-2 most retrieval-worthy bullets and generate one IR-style query for each selected bullet.
+
+Use the retrieved examples as the main style guide.
+
+IR-style queries should:
+- be natural-language search requests, not keyword strings
+- sound like real paper-search queries
+- ask for papers, methods, datasets, benchmarks, or research on a topic
+- be concise and search-realistic
+- focus on one clear retrieval hook
+- avoid sounding like a paper abstract
+- avoid combining multiple bullets into one query
+- avoid brittle exact numbers unless essential
+- avoid unsupported facts
+
+Selection rule:
+- Select bullets that are most distinctive, memorable, or useful for retrieving this paper or closely related papers.
+- Each generated query must be grounded in exactly one bullet.
+- Do not generate two queries from the same bullet unless there is only one strong bullet in the view.
+
+Multimodal rule:
+- If a selected bullet has non-empty multimodal_ref and the query is inspired by that evidence, set is_multimodal to true.
+- Otherwise set is_multimodal to false.
+
+Generate {num_queries} IR-style queries.
+
+Retrieved IR-style exemplars:
+{retrieved_examples}
+
+Paper title:
+{paper_title}
+
+View label:
+{view_label}
+
+View summary:
+{view_summary}
+
+Bullets:
+{bullets}
+
+Output valid JSON only:
+
+{{
+  "queries": [
+    {{
+      "query_text": "...",
+      "query_type": "IR",
+      "view_label": "{view_label}",
+      "is_multimodal": true,
+      "related_bullet_indice": 1,
+      "related_bullet_justification": "Briefly explain why this bullet was selected and why the query is a good IR retrieval hook."
+    }}
+  ]
+}}

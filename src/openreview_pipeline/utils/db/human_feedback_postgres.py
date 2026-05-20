@@ -8,21 +8,22 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from openreview_pipeline.app_logging import resolve_log_dir
 from sqlalchemy import (
-    JSON,
     BigInteger,
     Column,
+    Index,
     MetaData,
     String,
     TIMESTAMP,
     Table,
     Text,
+    UniqueConstraint,
     create_engine,
     delete,
     select,
     text,
 )
 from sqlalchemy.engine import Engine
-from sqlalchemy.dialects.mysql import insert as mysql_insert
+from sqlalchemy.dialects.postgresql import JSONB, insert as postgres_insert
 
 
 HUMAN_FEEDBACK_TABLE = "human_feedback"
@@ -40,17 +41,31 @@ human_feedback = Table(
     Column("feedback_item_id", String(64), nullable=False),
     Column("reviewer_username", String(64), nullable=False),
     Column("judgement", String(32), nullable=False),
-    Column("selection_type", JSON, nullable=True),
+    Column("selection_type", JSONB, nullable=True),
     Column("reason_note", Text, nullable=True),
-    Column("feedback_raw_json", JSON, nullable=True),
-    Column("created_at", TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP")),
+    Column("feedback_raw_json", JSONB, nullable=True),
+    Column(
+        "created_at",
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    ),
     Column(
         "updated_at",
-        TIMESTAMP,
+        TIMESTAMP(timezone=True),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
         server_onupdate=text("CURRENT_TIMESTAMP"),
     ),
+    UniqueConstraint(
+        "paper_forum_id",
+        "query_id",
+        "feedback_item_id",
+        "reviewer_username",
+        name="uq_human_feedback",
+    ),
+    Index("idx_human_feedback_query_id", "query_id"),
+    Index("idx_human_feedback_reviewer_username", "reviewer_username"),
 )
 
 
@@ -58,7 +73,7 @@ def configure_sql_access_logging(log_dir: Optional[Path] = None) -> None:
     """Write SQL access logs to the project logs directory."""
     target_dir = Path(log_dir or os.getenv("HUMAN_FEEDBACK_LOG_DIR") or resolve_log_dir())
     target_dir.mkdir(parents=True, exist_ok=True)
-    log_path = target_dir / "human_feedback_mysql.log"
+    log_path = target_dir / "human_feedback_postgres.log"
 
     if any(
         isinstance(handler, RotatingFileHandler)
@@ -85,7 +100,9 @@ def get_engine(db_url: Optional[str] = None) -> Engine:
     """Create a SQLAlchemy engine from an explicit URL or environment."""
     url = db_url or os.getenv("HUMAN_FEEDBACK_DB_URL") or os.getenv("DATABASE_URL")
     if not url:
-        raise ValueError("Set HUMAN_FEEDBACK_DB_URL or DATABASE_URL to use MySQL feedback CRUD.")
+        raise ValueError(
+            "Set HUMAN_FEEDBACK_DB_URL or DATABASE_URL to use PostgreSQL feedback CRUD."
+        )
     return create_engine(url, pool_pre_ping=True)
 
 
@@ -276,13 +293,22 @@ def save_query_feedback(
     reviewer = _require_reviewer(reviewer_username)
     paper_forum_id = derive_paper_forum_id(context)
     query_id = derive_query_id(context)
-    insert_stmt = mysql_insert(human_feedback).values(rows)
+    insert_stmt = postgres_insert(human_feedback).values(rows)
     update_columns = {
-        column.name: insert_stmt.inserted[column.name]
+        column.name: insert_stmt.excluded[column.name]
         for column in human_feedback.columns
         if column.name not in {"id", "created_at", "updated_at"}
     }
-    stmt = insert_stmt.on_duplicate_key_update(**update_columns)
+    update_columns["updated_at"] = text("CURRENT_TIMESTAMP")
+    stmt = insert_stmt.on_conflict_do_update(
+        index_elements=[
+            human_feedback.c.paper_forum_id,
+            human_feedback.c.query_id,
+            human_feedback.c.feedback_item_id,
+            human_feedback.c.reviewer_username,
+        ],
+        set_=update_columns,
+    )
     logger.info(
         "save start reviewer=%s paper=%s query=%s rows=%s",
         reviewer,

@@ -31,6 +31,8 @@ The CLI provides these commands:
 - `download`
 - `filter`
 - `summarize`
+- `init-golden-query-embeddings`
+- `import-golden-query-embeddings`
 - `generate-queries`
 - `hard-negative-mining`
 - `query-analysis`
@@ -44,10 +46,11 @@ The normal stage order is:
 1. `download`
 2. `filter`
 3. `summarize`
-4. `generate-queries`
-5. `query-analysis`
-6. `hard-negative-mining`
-7. `update-final-json` if you need to rebuild the combined final JSON later
+4. `init-golden-query-embeddings` and `import-golden-query-embeddings` once before Stage 3
+5. `generate-queries`
+6. `query-analysis`
+7. `hard-negative-mining`
+8. `update-final-json` if you need to rebuild the combined final JSON later
 
 ## Commands
 
@@ -100,7 +103,23 @@ These override `config.yaml` for the LLM backend. API keys are read from `llm.ap
 
 ### 4. Generate Queries
 
-Run stage-3 query generation from summarized papers.
+Run stage-3 query generation from summarized papers. Stage 3 emits both IR and QA queries
+for each supported view (`motivation`, `method`, `experiment/result`) and retrieves few-shot examples
+from PostgreSQL/pgvector.
+
+Before the first run, prepare the normalized retrieval-ICL JSON, initialize the pgvector table,
+and import golden examples:
+
+```bash
+openreview-pipeline prepare-golden-retrieval-icl-examples
+openreview-pipeline init-golden-query-embeddings
+openreview-pipeline import-golden-query-embeddings
+```
+
+The prepare step reads final human-consensus labels, keeps `accept` and `fix`, maps
+`experiment` to `experiment/result`, stores title-only targets, and builds `indexing_content`
+and `retrieval_content`. The import reads `stages.generate_queries.golden_classifications_path`,
+embeds `indexing_content` with BGE-M3, and upserts rows into `golden_query_embeddings`.
 
 ```bash
 openreview-pipeline generate-queries \

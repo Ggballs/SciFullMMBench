@@ -19,7 +19,7 @@ COPY configs ./configs
 COPY scripts ./scripts
 
 RUN pip install --no-cache-dir -U pip \
-    && pip install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir -e ".[deploy-mysql]"
+    && pip install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir -e ".[deploy-postgres]"
 
 EXPOSE 7860
 

@@ -1,16 +1,85 @@
+from __future__ import annotations
+
+import json
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional, Protocol
 
 from tqdm.auto import tqdm
 
 from openreview_pipeline.llm import LLMBackend
 from openreview_pipeline.schemas.schemas_summarize import SummarizedPapersDataset
-from openreview_pipeline.schemas.schemas_queries import GeneratedQueriesDataset, GeneratedQueriesForPaper, RetrievalQuery
-from openreview_pipeline.utils import load_json, save_json, load_prompt_template
+from openreview_pipeline.schemas.schemas_queries import (
+    GeneratedQueriesDataset,
+    GeneratedQueriesForPaper,
+    RetrievalQuery,
+)
+from openreview_pipeline.utils import load_json, load_prompt_template, save_json
+from openreview_pipeline.utils.db.golden_query_embeddings import (
+    GoldenQueryExample,
+    get_engine,
+    retrieve_golden_query_examples,
+)
+from openreview_pipeline.utils.embeddings import BGEM3Embedder, TextEmbedder
+from openreview_pipeline.utils.golden_retrieval_icl import normalize_view_label
 
 logger = logging.getLogger(__name__)
+
+QUERY_TYPES = ("IR", "QA")
+VIEW_DEFINITIONS = {
+    "motivation": "research problem, need, gap, goal, hypothesis, or why the work matters",
+    "method": "proposed approach, model, algorithm, system, dataset construction process, or implementation design",
+    "experiment/result": "evaluation setup, benchmark, test data, metric, baseline, ablation, empirical finding, comparison, result, or observed limitation",
+}
+
+
+class GoldenExampleRetriever(Protocol):
+    def retrieve(
+        self,
+        *,
+        query_type: str,
+        view_label: str,
+        embedding: list[float],
+        limit: int,
+    ) -> list[GoldenQueryExample]:
+        ...
+
+
+@dataclass(frozen=True)
+class BulletContext:
+    index: int
+    text: str
+    multimodal_ref: list[str]
+
+
+@dataclass(frozen=True)
+class RetrievedPromptContext:
+    bullets: list[BulletContext]
+    examples: list[GoldenQueryExample]
+
+
+class PostgresGoldenExampleRetriever:
+    def __init__(self, db_url: str):
+        self.engine = get_engine(db_url)
+
+    def retrieve(
+        self,
+        *,
+        query_type: str,
+        view_label: str,
+        embedding: list[float],
+        limit: int,
+    ) -> list[GoldenQueryExample]:
+        return retrieve_golden_query_examples(
+            self.engine,
+            query_type=query_type,
+            view_label=view_label,
+            embedding=embedding,
+            limit=limit,
+        )
 
 
 class QueryGenerator:
@@ -19,34 +88,27 @@ class QueryGenerator:
         llm: LLMBackend,
         prompt_template: Optional[str] = None,
         max_concurrent_papers: int = 1,
+        *,
+        example_retriever: Optional[GoldenExampleRetriever] = None,
+        embedder: Optional[TextEmbedder] = None,
+        golden_embedding_db_url: Optional[str] = None,
+        golden_examples_k: int = 5,
+        queries_per_type_view: int = 3,
+        bge_model_path: str = "/data3/yangyinghao/bge-m3",
+        bge_device: str = "cuda:2",
     ):
         self.llm = llm
         self._prompt_template = prompt_template
         self.max_concurrent_papers = max(1, int(max_concurrent_papers))
-
-    def _get_prompt_template(self) -> str:
-        if self._prompt_template:
-            return self._prompt_template
-        prompt_path = Path(__file__).parent.parent.parent.parent / "prompts" / "generate_queries.txt"
-        return load_prompt_template(prompt_path)
-
-    def _build_summary_text(self, summary) -> str:
-        parts = []
-        for view in summary.views:
-            parts.append(f"### {view.view_name}")
-            if getattr(view, "summary", None):
-                parts.append(f"Summary: {view.summary}")
-            for i, bp in enumerate(view.bullet_points, 1):
-                bullet_index = getattr(bp, "index", i)
-                bullet_text = getattr(bp, "text", str(bp))
-                multimodal_ref = getattr(bp, "multimodal_ref", []) or []
-                if multimodal_ref:
-                    refs = ", ".join(str(ref) for ref in multimodal_ref)
-                    parts.append(f"{bullet_index}. {bullet_text} [multimodal_ref: {refs}]")
-                else:
-                    parts.append(f"{bullet_index}. {bullet_text} [multimodal_ref: none]")
-            parts.append("")
-        return "\n".join(parts)
+        self.golden_examples_k = max(1, int(golden_examples_k))
+        self.queries_per_type_view = max(1, int(queries_per_type_view))
+        self.embedder = embedder or BGEM3Embedder(model_path=bge_model_path, device=bge_device)
+        if example_retriever is not None:
+            self.example_retriever = example_retriever
+        elif golden_embedding_db_url:
+            self.example_retriever = PostgresGoldenExampleRetriever(golden_embedding_db_url)
+        else:
+            raise ValueError("QueryGenerator requires golden_embedding_db_url or example_retriever.")
 
     def _extract_related_bullet_indice(self, query_data: dict) -> Optional[int]:
         candidates = [
@@ -82,64 +144,191 @@ class QueryGenerator:
             or query_data.get("relation_justification")
         )
 
-    def generate_queries_for_paper(self, paper_id: str, paper_title: str, summary) -> GeneratedQueriesForPaper:
-        logger.debug(f"Generating queries for paper: {paper_id}")
+    def _view_bullets(self, view) -> list[tuple[int, str, list[str]]]:
+        bullets = []
+        for idx, bullet in enumerate(getattr(view, "bullet_points", []) or [], 1):
+            bullet_index = int(getattr(bullet, "index", idx) or idx)
+            bullet_text = str(getattr(bullet, "text", bullet)).strip()
+            if not bullet_text:
+                continue
+            multimodal_ref = getattr(bullet, "multimodal_ref", []) or []
+            bullets.append((bullet_index, bullet_text, [str(ref) for ref in multimodal_ref]))
+        return bullets
 
-        summary_text = self._build_summary_text(summary)
+    def _retrieve_prompt_context(
+        self,
+        *,
+        query_type: str,
+        paper_title: str,
+        view,
+    ) -> RetrievedPromptContext:
+        view_label = normalize_view_label(str(view.view_name))
+        raw_bullets = self._view_bullets(view)
+        bullets = [
+            BulletContext(index=index, text=text, multimodal_ref=multimodal_ref)
+            for index, text, multimodal_ref in raw_bullets
+        ]
+        if not raw_bullets:
+            return RetrievedPromptContext(bullets=[], examples=[])
 
-        prompt = self._get_prompt_template().format(
+        view_summary = str(getattr(view, "summary", "") or "").strip()
+        retrieval_text = " ".join(
+            part
+            for part in [
+                str(paper_title or "").strip(),
+                view_summary,
+                " ".join(text for _, text, _ in raw_bullets),
+            ]
+            if part
+        )
+        embedding = self.embedder.embed_texts([retrieval_text])[0]
+        examples = self.example_retriever.retrieve(
+            query_type=query_type,
+            view_label=view_label,
+            embedding=embedding,
+            limit=self.golden_examples_k,
+        )
+        if not examples:
+            raise ValueError(
+                "No golden query examples found for "
+                f"query_type={query_type!r}, view_label={view_label!r}. "
+                "Run scripts/import_golden_query_embeddings.py or inspect the golden classifications."
+            )
+        if len(examples) < self.golden_examples_k:
+            logger.warning(
+                "Only %s golden examples found for query_type=%s view=%s.",
+                len(examples),
+                query_type,
+                view_label,
+            )
+        return RetrievedPromptContext(bullets=bullets, examples=examples)
+
+    def _format_bullets(self, bullets: list[BulletContext]) -> str:
+        parts = []
+        for bullet in bullets:
+            refs = ", ".join(bullet.multimodal_ref) if bullet.multimodal_ref else "none"
+            parts.append(f"Bullet {bullet.index}: {bullet.text}")
+            parts.append(f"multimodal_ref: {refs}")
+            parts.append("")
+        return "\n".join(parts).strip()
+
+    def _format_retrieved_examples(self, examples: list[GoldenQueryExample]) -> str:
+        return "\n\n".join(
+            f"Example {idx}:\n{example.retrieval_content or example.query_text}"
+            for idx, example in enumerate(examples, 1)
+        ).strip()
+
+    def _prompt_template_for_query_type(self, query_type: str) -> str:
+        if self._prompt_template:
+            return self._prompt_template
+        prompt_name = "generate_queries_ir.txt" if query_type == "IR" else "generate_queries_qa.txt"
+        prompt_path = Path(__file__).parent.parent.parent.parent / "prompts" / prompt_name
+        return load_prompt_template(prompt_path)
+
+    def _build_prompt(
+        self,
+        *,
+        query_type: str,
+        paper_title: str,
+        view,
+        prompt_context: RetrievedPromptContext,
+    ) -> str:
+        view_name = normalize_view_label(str(view.view_name))
+        view_summary = str(getattr(view, "summary", "") or "N/A").strip()
+        template = self._prompt_template_for_query_type(query_type)
+        return template.format(
+            num_queries=self.queries_per_type_view,
+            retrieved_examples=self._format_retrieved_examples(prompt_context.examples),
             paper_title=paper_title,
-            abstract=getattr(summary, "abstract", None) or "N/A",
-            summary_by_views=summary_text,
+            view_label=view_name,
+            view_summary=view_summary,
+            bullets=self._format_bullets(prompt_context.bullets),
         )
 
-        response = self.llm.generate(prompt)
+    def _parse_response(self, response: str, *, query_type: str, view_name: str) -> list[RetrievalQuery]:
+        queries: list[RetrievalQuery] = []
+        json_match = re.search(r"\{[\s\S]*\}", response)
+        if not json_match:
+            return queries
 
-        queries = []
-        try:
-            import json
-            import re
+        data = json.loads(json_match.group())
+        raw_queries = data.get("queries", [])
+        if not isinstance(raw_queries, list):
+            return queries
 
-            json_match = re.search(r'\{[\s\S]*\}', response)
-            if json_match:
-                json_str = json_match.group()
-                data = json.loads(json_str)
+        for item in raw_queries[: self.queries_per_type_view]:
+            if isinstance(item, dict):
+                query_text = str(item.get("query_text", item.get("Q", ""))).strip()
+                is_multimodal = bool(item.get("is_multimodal", False))
+                related_bullet_indice = self._extract_related_bullet_indice(item)
+                related_bullet_justification = self._extract_related_bullet_justification(item)
+            else:
+                query_text = str(item).strip()
+                is_multimodal = False
+                related_bullet_indice = None
+                related_bullet_justification = None
 
-                for view_name, view_queries in data.items():
-                    if isinstance(view_queries, list):
-                        for q in view_queries:
-                            if isinstance(q, dict):
-                                query_text = q.get("query_text", q.get("Q", ""))
-                                is_multimodal = q.get("is_multimodal", "(multimodal)" in query_text)
-                                related_bullet_indice = self._extract_related_bullet_indice(q)
-                                related_bullet_justification = self._extract_related_bullet_justification(q)
-                            else:
-                                query_text = str(q)
-                                is_multimodal = "(multimodal)" in query_text
-                                related_bullet_indice = None
-                                related_bullet_justification = None
+            query_text = query_text.replace("(multimodal)", "").strip()
+            if query_text:
+                queries.append(
+                    RetrievalQuery(
+                        query_text=query_text,
+                        query_type=query_type,
+                        is_multimodal=is_multimodal,
+                        source_view=view_name,
+                        related_bullet_indice=related_bullet_indice,
+                        related_bullet_justification=related_bullet_justification,
+                    )
+                )
+        return queries
 
-                            query_text = query_text.replace("(multimodal)", "").strip()
-                            if query_text:
-                                queries.append(RetrievalQuery(
-                                    query_text=query_text,
-                                    is_multimodal=is_multimodal,
-                                    source_view=view_name,
-                                    related_bullet_indice=related_bullet_indice,
-                                    related_bullet_justification=related_bullet_justification,
-                                ))
-        except Exception as e:
-            logger.warning(f"Failed to parse LLM response as JSON: {e}")
-            logger.debug(f"Raw response: {response[:500]}")
+    def generate_queries_for_paper(self, paper_id: str, paper_title: str, summary) -> GeneratedQueriesForPaper:
+        logger.debug("Generating queries for paper: %s", paper_id)
 
+        queries: list[RetrievalQuery] = []
+        expected_query_count = 0
+        for view in summary.views:
+            view_name = normalize_view_label(str(view.view_name))
+            if view_name not in VIEW_DEFINITIONS:
+                continue
+            for query_type in QUERY_TYPES:
+                prompt_context = self._retrieve_prompt_context(
+                    query_type=query_type,
+                    paper_title=paper_title,
+                    view=view,
+                )
+                if not prompt_context.bullets:
+                    continue
+                expected_query_count += self.queries_per_type_view
+                prompt = self._build_prompt(
+                    query_type=query_type,
+                    paper_title=paper_title,
+                    view=view,
+                    prompt_context=prompt_context,
+                )
+                response = self.llm.generate(prompt)
+                try:
+                    parsed_queries = self._parse_response(
+                        response,
+                        query_type=query_type,
+                        view_name=view_name,
+                    )
+                    if len(parsed_queries) != self.queries_per_type_view:
+                        raise ValueError(
+                            f"Expected {self.queries_per_type_view} queries, got {len(parsed_queries)}"
+                        )
+                    queries.extend(parsed_queries)
+                except Exception as exc:
+                    logger.warning("Failed to parse %s/%s query response: %s", query_type, view_name, exc)
+                    logger.debug("Raw response: %s", response[:500])
+
+        if len(queries) != expected_query_count:
+            raise ValueError(
+                f"Generated {len(queries)} queries for paper {paper_id}, "
+                f"expected {expected_query_count}."
+            )
         if not queries:
-            queries.append(RetrievalQuery(
-                query_text=response[:200],
-                is_multimodal=False,
-                source_view="general",
-                related_bullet_indice=None,
-                related_bullet_justification=None,
-            ))
+            raise ValueError(f"No queries generated for paper {paper_id}.")
 
         return GeneratedQueriesForPaper(
             paper_id=paper_id,
@@ -152,7 +341,7 @@ class QueryGenerator:
         dataset: SummarizedPapersDataset,
         checkpoint_path: Optional[Path] = None,
     ) -> GeneratedQueriesDataset:
-        logger.info(f"Generating queries for {dataset.total_papers} papers")
+        logger.info("Generating queries for %s papers", dataset.total_papers)
 
         papers_queries = []
         completed_ids = set()
@@ -174,7 +363,6 @@ class QueryGenerator:
                 logger.warning("Could not load query-generation checkpoint %s: %s", checkpoint_path, exc)
 
         work_items = [summary for summary in dataset.summaries if summary.paper_id not in completed_ids]
-
         progress = tqdm(total=len(work_items), desc="Generating queries", unit="paper", dynamic_ncols=True)
 
         def _generate_for_summary(summary) -> GeneratedQueriesForPaper:
@@ -227,7 +415,7 @@ class QueryGenerator:
         return result
 
     def run(self, input_path: Path, output_path: Path) -> None:
-        logger.info(f"Running generate-queries stage: {input_path} -> {output_path}")
+        logger.info("Running generate-queries stage: %s -> %s", input_path, output_path)
         dataset = load_json(input_path, SummarizedPapersDataset)
         result = self.apply(dataset, checkpoint_path=output_path)
         save_json(output_path, result)

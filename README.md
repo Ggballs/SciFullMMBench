@@ -7,7 +7,7 @@ A staged OpenReview processing pipeline for filtering, summarizing, generating r
 - **Stage 0**: Download recent OpenReview papers (configurable venue and year range)
 - **Stage 1**: Rule-based filtering of papers based on quality criteria
 - **Stage 2**: LLM-based bullet-point summarization from multiple views
-- **Stage 3**: LLM-based retrieval query generation
+- **Stage 3**: LLM-based IR/QA query generation with pgvector few-shot retrieval
 - **Stage 4**: LLM-based query analysis and query quality filtering
 - **Stage 5**: Hard-negative and positive candidate mining for surviving queries
 
@@ -89,6 +89,43 @@ When `--forum-id` is used, the value may be a comma-separated list. Re-running w
 Use `--skip-filter` when you want every downloaded paper to continue into summarization.
 Stages are resume-aware: existing output files are loaded first, completed paper/query rows are counted as successful, and the run continues from missing items.
 
+### Stage 3 Golden Query Embeddings
+
+Stage 3 generates both IR and QA queries for the `motivation`, `method`, and `experiment/result`
+views. It retrieves view-conditioned few-shot examples from PostgreSQL/pgvector, so initialize
+and import the golden examples before running `generate-queries`:
+
+```bash
+openreview-pipeline prepare-golden-retrieval-icl-examples
+openreview-pipeline init-golden-query-embeddings
+openreview-pipeline import-golden-query-embeddings
+openreview-pipeline generate-queries --input data/02_summarized.json --output data/03_queries.json
+```
+
+The prepare command reads the final human-consensus IR/QA CSV files, keeps `accept` and `fix`
+rows, maps `experiment` to `experiment/result`, expands final human multi-label rows into one
+row per view label, and writes `outputs/query_analysis/golden_retrieval_icl_examples.json`.
+The import command embeds `indexing_content` with BGE-M3 and upserts rows into
+`golden_query_embeddings`. The table stores query text, title-only target papers, query-level
+answer content/TLDR, human view notes, indexing/retrieval content, vector embedding, and
+timestamps.
+
+Configure the connection and embedding model in `config.yaml`:
+
+```yaml
+stages:
+  generate_queries:
+    golden_embedding_db_url: "postgresql+psycopg://scifull:westlakenlp@127.0.0.1:5432/scifullmmbench"
+    golden_examples_k: 5
+    queries_per_type_view: 3
+    bge_model_path: "/data3/yangyinghao/bge-m3"
+    bge_device: "cuda:2"
+    golden_classifications_path: "outputs/query_analysis/golden_retrieval_icl_examples.json"
+```
+
+If you prefer SQL bootstrap, `scripts/init_golden_query_embeddings.sql` contains the equivalent
+schema for a PostgreSQL database with the `vector` extension available.
+
 ### LLM Configuration
 
 All LLM calls use the same multi-key request manager. Configure keys in `config.yaml`:
@@ -125,7 +162,7 @@ Project logs are written to `logs/` by default:
 
 - `openreview_pipeline.log` contains Python logging output.
 - `openreview_pipeline.stdout.log` captures `print()` output and stderr while still showing it in the console.
-- `human_feedback_mysql.log` keeps MySQL feedback access logs.
+- `human_feedback_postgres.log` keeps PostgreSQL feedback access logs.
 
 Set `OPENREVIEW_PIPELINE_LOG_DIR` to write logs somewhere else:
 
@@ -142,22 +179,36 @@ SCIFULL_LOGS_DIR=/srv/scifullmmbench/logs docker compose up --build
 
 ### Export Human Feedback
 
-Export MySQL `human_feedback` rows to JSON:
+Export PostgreSQL `human_feedback` rows to JSON:
 
 ```bash
-python scripts/export_human_feedback_mysql.py --output outputs/human_feedback_mysql_export.json
+python scripts/export_human_feedback_postgres.py --output outputs/human_feedback_postgres_export.json
 ```
 
 Export and enrich an existing final pipeline artifact:
 
 ```bash
-python scripts/export_human_feedback_mysql.py \
-  --output outputs/human_feedback_mysql_export.json \
+python scripts/export_human_feedback_postgres.py \
+  --output outputs/human_feedback_postgres_export.json \
   --final-output outputs/final_pipeline_output.json \
   --combined-output outputs/final_pipeline_output_with_human_feedback.json
 ```
 
 The enriched final output adds `human_feedback` to each matched query and adds a top-level `human_feedback_summary`. Matching uses `paper_id` plus `query_text`.
+
+To import feedback exported before the PostgreSQL cutover, stop Gradio writes, create the PostgreSQL schema, then run:
+
+```bash
+python scripts/export_human_feedback_mysql.py \
+  --output outputs/human_feedback_pre_cutover_export.json
+
+python scripts/import_human_feedback_postgres.py \
+  --input outputs/human_feedback_pre_cutover_export.json
+```
+
+The legacy MySQL exporter dumps every column from `human_feedback` with `SELECT *`.
+Install its driver with `pip install -e ".[legacy-mysql-export]"` if needed, and pass
+the source database with `--db-url` or `MYSQL_HUMAN_FEEDBACK_DB_URL`.
 
 For Docker/server runs, mount outputs to a host directory too:
 
@@ -197,7 +248,10 @@ summarizer = Summarizer(llm=llm)
 summarizer.run(Path("data/01_filtered.json"), Path("data/02_summarized.json"))
 
 # Generate queries
-generator = QueryGenerator(llm=llm)
+generator = QueryGenerator(
+    llm=llm,
+    golden_embedding_db_url="postgresql+psycopg://scifull:westlakenlp@127.0.0.1:5432/scifullmmbench",
+)
 generator.run(Path("data/02_summarized.json"), Path("data/03_queries.json"))
 
 # Hard-negative mining

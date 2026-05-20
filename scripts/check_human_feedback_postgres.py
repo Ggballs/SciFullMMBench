@@ -7,7 +7,7 @@ from typing import Optional
 from sqlalchemy import create_engine, text
 
 
-DEFAULT_DB_URL = "mysql+pymysql://scifull:westlakenlp@127.0.0.1:3306/scifullmmbench?charset=utf8mb4"
+DEFAULT_DB_URL = "postgresql+psycopg://scifull:westlakenlp@127.0.0.1:5432/scifullmmbench"
 
 
 def resolve_db_url(raw_db_url: Optional[str]) -> str:
@@ -86,12 +86,12 @@ def print_user_counts(engine) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Inspect human_feedback rows in MySQL.")
+    parser = argparse.ArgumentParser(description="Inspect human_feedback rows in PostgreSQL.")
     parser.add_argument(
         "--db-url",
         default=None,
         help=(
-            "SQLAlchemy MySQL URL. Defaults to HUMAN_FEEDBACK_DB_URL, DATABASE_URL, "
+            "SQLAlchemy PostgreSQL URL. Defaults to HUMAN_FEEDBACK_DB_URL, DATABASE_URL, "
             "or the Docker Compose local default."
         ),
     )

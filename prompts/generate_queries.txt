@@ -1,6 +1,6 @@
 # Query Generation
 
-Given the literature-review-style summary of a scientific paper organized by views (`motivation`, `method`, `experiment`), where each view contains a short narrative summary and indexed bullet points, generate **1-2 human-written-style general retrieval queries per view**.
+Given the literature-review-style summary of a scientific paper organized by views (`motivation`, `method`, `experiment/result`), where each view contains a short narrative summary and indexed bullet points, generate **1-2 human-written-style general retrieval queries per view**.
 
 The goal is to sound like a real researcher searching for a paper they partly remember / explore the new literature, not like a benchmark description, annotation guideline, or paper abstract.
 
@@ -10,7 +10,7 @@ Write queries that are:
 2. **Moderate Specific**: precise enough to identify the paper or a very small set of papers, but not so specific that it relies on exact numbers, rare phrases, or brittle details that sounds like LLM-generated query.
 3. **Concise**: usually **12-20 words**, ideally around **14-17 words**
 4. **Search-realistic**: something a person would actually type into a paper search engine
-5. **Discriminative**: centered on the paper's most distinctive idea, setup, result, or limitation
+5. **Discriminative**: centered on the paper's most distinctive idea, setup, experiment, finding, or limitation
 
 ## Human Style Requirements
 ### 1. Use human query templates
@@ -22,7 +22,7 @@ Use the following template families:
 ### 2. Construct Query Focus
 - Choose **ONLY ONE main retrieval hook** from the view: the most memorable and discriminative aspect, such as a distinctive method, unusual task, benchmark characteristic, key finding, limitation, or failure mode.
 - You may add **one supporting qualifier** only if it helps narrow the search naturally.
-- Do **not** stack multiple filters, exclusions, or result details into one query. If the query starts to sound like a paper abstract or a checklist of properties, simplify it.
+- Do **not** stack multiple filters, exclusions, or experiment details into one query. If the query starts to sound like a paper abstract or a checklist of properties, simplify it.
 - Each query should be grounded in **exactly one bullet point**: choose the single most discriminative bullet from the view and base the query on that bullet only.
 - Use natural phrasing with modifiers such as `for`, `with`, `using`, `without`, `on`, and `about`.
 - Prefer the **shortest natural query** that still preserves the core search intent.
@@ -80,7 +80,7 @@ Output a JSON object with views as keys:
     }},
   ],
   "method": [],
-  "experiment": []
+  "experiment/result": []
 }}
 ```
 

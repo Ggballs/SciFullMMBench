@@ -145,6 +145,33 @@ def resolve_stage_settings(
     }
 
 
+def resolve_generate_query_settings(
+    config_path: Optional[Path | str] = None,
+) -> dict[str, object]:
+    config = load_config(config_path)
+    stages_config = config.get("stages", {})
+    if not isinstance(stages_config, dict):
+        stages_config = {}
+    generate_config = stages_config.get("generate_queries", {})
+    if not isinstance(generate_config, dict):
+        generate_config = {}
+
+    return {
+        "golden_embedding_db_url": generate_config.get(
+            "golden_embedding_db_url",
+            "postgresql+psycopg://scifull:westlakenlp@127.0.0.1:5432/scifullmmbench",
+        ),
+        "golden_examples_k": max(1, int(generate_config.get("golden_examples_k", 5))),
+        "queries_per_type_view": max(1, int(generate_config.get("queries_per_type_view", 3))),
+        "bge_model_path": generate_config.get("bge_model_path", "/data3/yangyinghao/bge-m3"),
+        "bge_device": generate_config.get("bge_device", "cuda:2"),
+        "golden_classifications_path": generate_config.get(
+            "golden_classifications_path",
+            "outputs/query_analysis/golden_retrieval_icl_examples.json",
+        ),
+    }
+
+
 def resolve_search_settings(
     config_path: Optional[Path | str] = None,
     *,
@@ -331,6 +358,7 @@ def _filter_queries_for_hard_negative_mining(
             str(paper.get("paper_id", "")),
             str(query.get("query_text", "")),
             str(query.get("source_view", "")),
+            str(query.get("query_type", "IR")),
         )
         for paper in raw_analysis.get("papers", [])
         if isinstance(paper, dict)
@@ -346,7 +374,7 @@ def _filter_queries_for_hard_negative_mining(
         kept_queries = [
             query
             for query in paper.queries_by_view
-            if (paper.paper_id, query.query_text, query.source_view) in keep_keys
+            if (paper.paper_id, query.query_text, query.source_view, query.query_type) in keep_keys
         ]
         if not kept_queries:
             continue
@@ -544,9 +572,15 @@ def run_generate_queries_stage(
         model=model,
     )
     stage_settings = resolve_stage_settings(config_path)
+    generate_settings = resolve_generate_query_settings(config_path)
     generator = QueryGenerator(
         llm=llm_backend,
         max_concurrent_papers=int(stage_settings["max_concurrent_papers"]),
+        golden_embedding_db_url=str(generate_settings["golden_embedding_db_url"]),
+        golden_examples_k=int(generate_settings["golden_examples_k"]),
+        queries_per_type_view=int(generate_settings["queries_per_type_view"]),
+        bge_model_path=str(generate_settings["bge_model_path"]),
+        bge_device=str(generate_settings["bge_device"]),
     )
     generator.run(input_path, output_path)
     return output_path

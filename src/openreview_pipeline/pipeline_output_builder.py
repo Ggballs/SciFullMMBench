@@ -160,7 +160,12 @@ def build_pipeline_output(
         if isinstance(item, dict) and item.get("paper_id")
     }
     hard_negatives_by_query = {
-        (str(item.get("paper_id", "")), str(item.get("query", "")), str(item.get("source_view", ""))): item
+        (
+            str(item.get("paper_id", "")),
+            str(item.get("query", "")),
+            str(item.get("source_view", "")),
+            str(item.get("query_type", "IR")),
+        ): item
         for item in (hard_negatives.get("results", []) if hard_negatives else [])
         if isinstance(item, dict)
     }
@@ -201,7 +206,11 @@ def build_pipeline_output(
             paper_title = str(query_analysis_item.get("paper_title", ""))
 
         query_analysis_queries = {
-            (str(item.get("query_text", "")), str(item.get("source_view", ""))): item
+            (
+                str(item.get("query_text", "")),
+                str(item.get("source_view", "")),
+                str(item.get("query_type", "IR")),
+            ): item
             for item in (query_analysis_item.get("queries", []) if isinstance(query_analysis_item, dict) else [])
             if isinstance(item, dict)
         }
@@ -211,15 +220,20 @@ def build_pipeline_output(
         for query in stage3_queries if isinstance(stage3_queries, list) else []:
             if not isinstance(query, dict):
                 continue
-            key = (str(query.get("query_text", "")), str(query.get("source_view", "")))
+            key = (
+                str(query.get("query_text", "")),
+                str(query.get("source_view", "")),
+                str(query.get("query_type", "IR")),
+            )
             queries.append(
                 PipelineQuery(
                     query_text=key[0],
+                    query_type=key[2],
                     is_multimodal=bool(query.get("is_multimodal", False)),
                     source_view=key[1],
                     related_bullet_indice=query.get("related_bullet_indice"),
                     related_bullet_justification=query.get("related_bullet_justification"),
-                    hard_negative_context=hard_negatives_by_query.get((paper_id, key[0], key[1])),
+                    hard_negative_context=hard_negatives_by_query.get((paper_id, key[0], key[1], key[2])),
                     query_analysis=query_analysis_queries.get(key),
                 )
             )

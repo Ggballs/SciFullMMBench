@@ -1,4 +1,5 @@
 import logging
+import json
 from pathlib import Path
 
 import click
@@ -6,6 +7,8 @@ import click
 from openreview_pipeline.app_logging import configure_project_logging
 from openreview_pipeline.pipeline_output_builder import build_pipeline_output, write_pipeline_output
 from openreview_pipeline.runner import (
+    build_llm_backend,
+    resolve_generate_query_settings,
     run_download_stage,
     run_filter_stage,
     run_generate_queries_stage,
@@ -14,6 +17,20 @@ from openreview_pipeline.runner import (
     run_selected_stages,
     run_summarize_stage,
 )
+from openreview_pipeline.utils.db.golden_query_embeddings import (
+    GoldenQueryEmbeddingRow,
+    ensure_schema,
+    get_engine,
+    upsert_golden_query_embeddings,
+)
+from openreview_pipeline.utils.golden_retrieval_icl import (
+    DEFAULT_OUTPUT_PATH,
+    IR_CONSENSUS_PATH,
+    QA_CONSENSUS_PATH,
+    build_examples_from_csv_paths,
+    write_examples_json,
+)
+from openreview_pipeline.utils.embeddings import BGEM3Embedder
 
 configure_project_logging()
 logger = logging.getLogger(__name__)
@@ -98,6 +115,102 @@ def generate_queries(input_path: str, output: str, base_url: str, model: str):
         base_url=base_url,
         model=model,
     )
+
+
+@cli.command("init-golden-query-embeddings")
+@click.option("--db-url", default=None, help="PostgreSQL SQLAlchemy URL (overrides config)")
+@click.option("--embedding-dimension", default=1024, type=int, help="pgvector dimension")
+def init_golden_query_embeddings(db_url: str, embedding_dimension: int):
+    settings = resolve_generate_query_settings(CONFIG_PATH)
+    engine = get_engine(db_url or str(settings["golden_embedding_db_url"]))
+    ensure_schema(engine, embedding_dimension=embedding_dimension)
+    click.echo("Initialized golden_query_embeddings schema.")
+
+
+@cli.command("prepare-golden-retrieval-icl-examples")
+@click.option("--ir-csv", type=click.Path(exists=True), default=str(IR_CONSENSUS_PATH), help="Final human consensus IR CSV")
+@click.option("--qa-csv", type=click.Path(exists=True), default=str(QA_CONSENSUS_PATH), help="Final human consensus QA CSV")
+@click.option("--output", type=click.Path(), default=str(DEFAULT_OUTPUT_PATH), help="Output normalized examples JSON")
+@click.option("--resolve-web-titles", is_flag=True, help="Resolve missing QA titles from DOI/arXiv URLs")
+@click.option("--generate-answer-tldr", is_flag=True, help="Use configured LLM to generate QA answer_tldr values")
+@click.option("--base-url", default=None, help="LLM API base URL override for answer TLDR generation")
+@click.option("--model", default=None, help="LLM model override for answer TLDR generation")
+def prepare_golden_retrieval_icl_examples(
+    ir_csv: str,
+    qa_csv: str,
+    output: str,
+    resolve_web_titles: bool,
+    generate_answer_tldr: bool,
+    base_url: str,
+    model: str,
+):
+    answer_tldr_generator = None
+    if generate_answer_tldr:
+        llm = build_llm_backend(CONFIG_PATH, base_url=base_url, model=model)
+
+        def answer_tldr_generator(answer_text: str) -> str:
+            return llm.generate(
+                "Summarize this CrossValidated/StackExchange answer for retrieval-ICL.\n\n"
+                "Return one concise paragraph, 2-4 sentences. Preserve the main claim, "
+                "cited-paper use, and important experimental/method detail. Do not add facts.\n\n"
+                f"Answer:\n{answer_text}"
+            ).strip()
+
+    examples, report = build_examples_from_csv_paths(
+        [Path(ir_csv), Path(qa_csv)],
+        resolve_web_titles=resolve_web_titles,
+        answer_tldr_generator=answer_tldr_generator,
+    )
+    output_path = Path(output)
+    write_examples_json(examples, output_path, report=report)
+    click.echo(f"Wrote {len(examples)} retrieval-ICL examples to {output_path}.")
+    click.echo(f"Wrote preparation report to {output_path.with_name(output_path.stem + '_report.json')}.")
+
+
+@cli.command("import-golden-query-embeddings")
+@click.option("--db-url", default=None, help="PostgreSQL SQLAlchemy URL (overrides config)")
+@click.option("--golden-classifications-path", type=click.Path(exists=True), default=None, help="Normalized retrieval-ICL examples JSON")
+@click.option("--bge-model-path", default=None, help="BGE-M3 model path")
+@click.option("--bge-device", default=None, help="BGE device")
+@click.option("--embedding-dimension", default=1024, type=int, help="pgvector dimension")
+def import_golden_query_embeddings(
+    db_url: str,
+    golden_classifications_path: str,
+    bge_model_path: str,
+    bge_device: str,
+    embedding_dimension: int,
+):
+    settings = resolve_generate_query_settings(CONFIG_PATH)
+    path = Path(golden_classifications_path or str(settings["golden_classifications_path"]))
+    raw_rows = json.loads(path.expanduser().resolve().read_text(encoding="utf-8"))
+    eligible = [row for row in raw_rows if str(row.get("indexing_content") or "").strip()]
+
+    embedder = BGEM3Embedder(
+        model_path=str(bge_model_path or settings["bge_model_path"]),
+        device=str(bge_device or settings["bge_device"]),
+    )
+    vectors = embedder.embed_texts([str(row.get("indexing_content") or "") for row in eligible])
+    rows = [
+        GoldenQueryEmbeddingRow(
+            example_id=str(row.get("example_id") or ""),
+            query_id=str(row.get("query_id") or ""),
+            query_type=str(row.get("query_type") or "").strip().upper(),
+            view_label=str(row.get("view_label") or "").strip(),
+            query_text=str(row.get("query") or "").strip(),
+            target_papers=[str(title) for title in row.get("target_papers", [])],
+            answer_original_content=str(row.get("answer_original_content") or ""),
+            answer_tldr=str(row.get("answer_tldr") or ""),
+            human_view_note=str(row.get("human_view_note") or ""),
+            indexing_content=str(row.get("indexing_content") or "").strip(),
+            retrieval_content=str(row.get("retrieval_content") or "").strip(),
+            embedding=embedding,
+        )
+        for row, embedding in zip(eligible, vectors)
+    ]
+    engine = get_engine(db_url or str(settings["golden_embedding_db_url"]))
+    ensure_schema(engine, embedding_dimension=embedding_dimension)
+    count = upsert_golden_query_embeddings(engine, rows)
+    click.echo(f"Imported {count} golden query embedding rows.")
 
 
 @cli.command("hard-negative-mining")

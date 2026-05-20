@@ -76,6 +76,7 @@ class HardNegativeMiningResult(BaseModel):
     paper_id: str
     paper_title: str
     query: str
+    query_type: str = "IR"
     source_view: str
     is_multimodal: bool = False
     related_bullet_indice: Optional[int] = None
@@ -680,6 +681,7 @@ class HardNegativeMiner:
             paper_id=paper_id,
             paper_title=paper_title,
             query=query.query_text,
+            query_type=query.query_type,
             source_view=query.source_view,
             is_multimodal=query.is_multimodal,
             related_bullet_indice=query.related_bullet_indice,
@@ -692,11 +694,11 @@ class HardNegativeMiner:
             mining_method="google_scholar_real_search",
         )
 
-    def _result_key(self, result: HardNegativeMiningResult) -> tuple[str, str, str]:
-        return (result.paper_id, result.query, result.source_view)
+    def _result_key(self, result: HardNegativeMiningResult) -> tuple[str, str, str, str]:
+        return (result.paper_id, result.query, result.source_view, result.query_type)
 
-    def _query_key(self, paper_id: str, query: RetrievalQuery) -> tuple[str, str, str]:
-        return (paper_id, query.query_text, query.source_view)
+    def _query_key(self, paper_id: str, query: RetrievalQuery) -> tuple[str, str, str, str]:
+        return (paper_id, query.query_text, query.source_view, query.query_type)
 
     def apply(
         self,

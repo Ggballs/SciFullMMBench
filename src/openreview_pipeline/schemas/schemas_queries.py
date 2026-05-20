@@ -8,6 +8,7 @@ from .schemas_summarize import ViewBulletPoints
 
 class RetrievalQuery(BaseModel):
     query_text: str
+    query_type: str = "IR"
     is_multimodal: bool = False
     source_view: str
     related_bullet_indice: Optional[int] = None
@@ -115,6 +116,7 @@ class QueryHardNegativeContext(BaseModel):
 
 class QueryAnalysisEntry(BaseModel):
     query_text: str
+    query_type: str = "IR"
     source_view: str
     is_multimodal: bool = False
     related_bullet_indice: Optional[int] = None

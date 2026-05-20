@@ -27,7 +27,7 @@ if SRC_ROOT.exists() and str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from openreview_pipeline.app_logging import configure_project_logging  # noqa: E402
-from openreview_pipeline.utils.db.human_feedback_mysql import (  # noqa: E402
+from openreview_pipeline.utils.db.human_feedback_postgres import (  # noqa: E402
     list_feedback_for_query,
     save_query_feedback,
 )
@@ -1244,12 +1244,12 @@ def human_judgment_updates(
     return tuple(updates)
 
 
-def mysql_status_message(reviewer_username: Optional[str], error: Optional[Exception] = None) -> str:
+def postgres_status_message(reviewer_username: Optional[str], error: Optional[Exception] = None) -> str:
     if error is not None:
-        return f"MySQL feedback load failed for `{esc(reviewer_username or 'unknown')}`: {esc(error)}"
+        return f"PostgreSQL feedback load failed for `{esc(reviewer_username or 'unknown')}`: {esc(error)}"
     if reviewer_username:
-        return f"Saving to MySQL as `{esc(reviewer_username)}`"
-    return "Saving to MySQL"
+        return f"Saving to PostgreSQL as `{esc(reviewer_username)}`"
+    return "Saving to PostgreSQL"
 
 
 def safe_human_judgment_updates(
@@ -1257,9 +1257,9 @@ def safe_human_judgment_updates(
     reviewer_username: Optional[str],
 ) -> Tuple[Tuple[Any, ...], str]:
     try:
-        return human_judgment_updates(context, reviewer_username), mysql_status_message(reviewer_username)
+        return human_judgment_updates(context, reviewer_username), postgres_status_message(reviewer_username)
     except Exception as exc:
-        return human_judgment_updates(context, None, {}), mysql_status_message(reviewer_username, exc)
+        return human_judgment_updates(context, None, {}), postgres_status_message(reviewer_username, exc)
 
 
 def build_human_feedback_payload(
@@ -1364,8 +1364,8 @@ def save_current_human_judgment(
     try:
         save_query_feedback(context, feedback_payload or {}, reviewer_username)
     except Exception as exc:
-        return f"MySQL feedback save failed for `{reviewer_username}`: {exc}"
-    return f"Saved human feedback to MySQL as {reviewer_username}"
+        return f"PostgreSQL feedback save failed for `{reviewer_username}`: {exc}"
+    return f"Saved human feedback to PostgreSQL as {reviewer_username}"
 
 
 def build_candidate_list_html(items: List[Dict[str, Any]], label: str, query: Optional[Dict[str, Any]] = None) -> str:
@@ -1799,7 +1799,7 @@ def launch_app(
                 )
 
             save_judgment_button = gr.Button("Save Human Judgment", variant="primary")
-            judge_status = gr.Markdown("Saving to MySQL")
+            judge_status = gr.Markdown("Saving to PostgreSQL")
 
             def _render_all(
                 paper_id: str,

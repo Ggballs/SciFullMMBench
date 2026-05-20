@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 class PipelineQuery(BaseModel):
     query_text: str
+    query_type: str = "IR"
     is_multimodal: bool = False
     source_view: str = ""
     related_bullet_indice: Optional[int] = None
