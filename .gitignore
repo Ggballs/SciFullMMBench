@@ -90,6 +90,7 @@ outputs/query_analysis_comparison/*
 !outputs/query_analysis_comparison/03_litsearch_human/
 !outputs/query_analysis_comparison/03_litsearch_human/style_analysis.json
 test_data/
+offline-process/
 
 # Logs
 *.log

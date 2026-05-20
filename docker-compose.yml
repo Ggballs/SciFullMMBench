@@ -28,7 +28,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      HUMAN_FEEDBACK_DB_URL: postgresql+psycopg://${POSTGRES_USER:-scifull}:${POSTGRES_PASSWORD:-westlakenlp}@postgres:5432/${POSTGRES_DB:-scifullmmbench}
+      HUMAN_FEEDBACK_DB_URL: postgresql+psycopg://${POSTGRES_USER:-scifull}:${POSTGRES_PASSWORD:-westlakenlp}@postgres:5433/${POSTGRES_DB:-scifullmmbench}
       OPENREVIEW_PIPELINE_LOG_DIR: /app/logs
       HUMAN_FEEDBACK_LOG_DIR: /app/logs
       HUMAN_FEEDBACK_USERS: ${HUMAN_FEEDBACK_USERS:-}
