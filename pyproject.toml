@@ -39,9 +39,23 @@ ui = [
 deploy-postgres = [
     "gradio>=4.0",
     "python-dotenv>=1.0",
+    "sentence-transformers>=3.0",
+    "pillow>=10.0",
+    "pypdf>=4.0",
+    "docling>=2.0",
+    "docling-core>=2.0",
+    "scholarly>=1.7.11",
 ]
 vector = [
     "sentence-transformers>=3.0",
+]
+pdf = [
+    "pillow>=10.0",
+    "pypdf>=4.0",
+]
+docling = [
+    "docling>=2.0",
+    "docling-core>=2.0",
 ]
 legacy-mysql-export = [
     "sqlalchemy>=2.0",
