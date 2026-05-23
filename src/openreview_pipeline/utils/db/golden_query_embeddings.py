@@ -258,9 +258,11 @@ def retrieve_golden_query_examples(
     view_label: str,
     embedding: list[float],
     limit: int,
+    exclude_litsearch: bool = True,
 ) -> list[GoldenQueryExample]:
     from sqlalchemy import text
 
+    litsearch_filter = "AND query_id NOT LIKE '%litsearch%'" if exclude_litsearch else ""
     stmt = text(
         f"""
         SELECT
@@ -279,6 +281,7 @@ def retrieve_golden_query_examples(
         FROM {GOLDEN_QUERY_EMBEDDINGS_TABLE}
         WHERE query_type = :query_type
           AND view_label = :view_label
+          {litsearch_filter}
         ORDER BY embedding <=> CAST(:embedding AS vector)
         LIMIT :limit
         """

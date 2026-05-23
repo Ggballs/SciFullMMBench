@@ -282,8 +282,8 @@ class OpenReviewAPIDownloader:
                 password=self.password,
             )
 
-        logger.warning("No OpenReview credentials provided. Set username/password or token.")
-        return None
+        logger.info("No OpenReview credentials provided. Using public OpenReview client.")
+        return ClientClass(baseurl=OPENREVIEW_BASEURL)
 
     def _call_with_rate_limit_retry(self, func, *args, context: str, **kwargs):
         for attempt in range(1, OPENREVIEW_MAX_RATE_LIMIT_RETRIES + 1):

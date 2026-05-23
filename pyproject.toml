@@ -40,14 +40,23 @@ deploy-postgres = [
     "gradio>=4.0",
     "python-dotenv>=1.0",
     "sentence-transformers>=3.0",
+    "sentencepiece>=0.2.0",
+    "protobuf>=4.25",
     "pillow>=10.0",
     "pypdf>=4.0",
-    "docling>=2.0",
-    "docling-core>=2.0",
     "scholarly>=1.7.11",
 ]
 vector = [
     "sentence-transformers>=3.0",
+    "sentencepiece>=0.2.0",
+    "protobuf>=4.25",
+]
+embedding-service = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "sentence-transformers>=3.0",
+    "sentencepiece>=0.2.0",
+    "protobuf>=4.25",
 ]
 pdf = [
     "pillow>=10.0",

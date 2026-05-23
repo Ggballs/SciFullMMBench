@@ -30,7 +30,7 @@ from openreview_pipeline.utils.golden_retrieval_icl import (
     build_examples_from_csv_paths,
     write_examples_json,
 )
-from openreview_pipeline.utils.embeddings import BGEM3Embedder
+from openreview_pipeline.utils.embeddings import build_text_embedder
 
 configure_project_logging()
 logger = logging.getLogger(__name__)
@@ -172,12 +172,16 @@ def prepare_golden_retrieval_icl_examples(
 @click.option("--golden-classifications-path", type=click.Path(exists=True), default=None, help="Normalized retrieval-ICL examples JSON")
 @click.option("--bge-model-path", default=None, help="BGE-M3 model path")
 @click.option("--bge-device", default=None, help="BGE device")
+@click.option("--embedding-service-url", default=None, help="HTTP embedding endpoint")
+@click.option("--embedding-service-timeout", default=120.0, type=float, help="HTTP embedding timeout")
 @click.option("--embedding-dimension", default=1024, type=int, help="pgvector dimension")
 def import_golden_query_embeddings(
     db_url: str,
     golden_classifications_path: str,
     bge_model_path: str,
     bge_device: str,
+    embedding_service_url: str,
+    embedding_service_timeout: float,
     embedding_dimension: int,
 ):
     settings = resolve_generate_query_settings(CONFIG_PATH)
@@ -185,9 +189,12 @@ def import_golden_query_embeddings(
     raw_rows = json.loads(path.expanduser().resolve().read_text(encoding="utf-8"))
     eligible = [row for row in raw_rows if str(row.get("indexing_content") or "").strip()]
 
-    embedder = BGEM3Embedder(
+    embedder = build_text_embedder(
         model_path=str(bge_model_path or settings["bge_model_path"]),
         device=str(bge_device or settings["bge_device"]),
+        service_url=str(embedding_service_url or settings.get("embedding_service_url") or "").strip()
+        or None,
+        timeout_seconds=float(embedding_service_timeout),
     )
     vectors = embedder.embed_texts([str(row.get("indexing_content") or "") for row in eligible])
     rows = [

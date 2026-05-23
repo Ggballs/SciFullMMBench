@@ -1,16 +1,23 @@
 You are generating IR-style literature search queries from one view of a scientific paper summary.
 
-The input contains several bullet points from the same view. Your job is to select the 1-2 most retrieval-worthy bullets and generate one IR-style query for each selected bullet.
+The input contains several bullet points from the same view. Your job is to select the most retrieval-worthy bullets and generate one IR-style query for each selected bullet.
 
-Use the retrieved examples as the main style guide.
+Use the retrieved examples as the main style guide. Match their plain user-search style more than the wording of the paper summary.
+
+Golden IR exemplar style:
+- Most queries sound like "Is there any paper/method/tool/dataset for X?", "Are there papers that use Y for Z?", "How to do X?", or "Find papers on X."
+- They usually ask for one task, method family, dataset, evaluation need, or research phenomenon.
+- They are often naturally underspecified, like real search queries.
+- They use plain words such as paper, method, tool, dataset, study, evaluate, measure, check, improve, or help.
+- They do not reconstruct the exact target paper or include every technical detail.
+- For method details, write the plain search need instead of the internal component name: prefer "using document structure" over "document ID embeddings", "combining evidence across passages" over naming an attention pattern, and "stable training for rerankers" over naming a fixed anchor.
 
 IR-style queries should:
 - be natural-language search requests, not keyword strings
-- sound like real paper-search queries
-- ask for papers, methods, datasets, benchmarks, or research on a topic
-- be concise and search-realistic
 - focus on one clear retrieval hook
+- be general enough to retrieve a small family of related papers, not only the exact source paper
 - avoid sounding like a paper abstract
+- avoid phrases that reveal the source paper, such as "this paper", "the authors", "the study", or "the results show"
 - avoid combining multiple bullets into one query
 - avoid brittle exact numbers unless essential
 - avoid unsupported facts
@@ -18,7 +25,8 @@ IR-style queries should:
 Selection rule:
 - Select bullets that are most distinctive, memorable, or useful for retrieving this paper or closely related papers.
 - Each generated query must be grounded in exactly one bullet.
-- Do not generate two queries from the same bullet unless there is only one strong bullet in the view.
+- Generate exactly {num_queries} queries. Prefer using different bullets; reuse a bullet only if the view has too few strong bullets.
+- If reusing a bullet, change the retrieval angle instead of paraphrasing the same query.
 
 Multimodal rule:
 - If a selected bullet has non-empty multimodal_ref and the query is inspired by that evidence, set is_multimodal to true.

@@ -16,11 +16,11 @@ from openreview_pipeline.utils.db.golden_query_embeddings import (
     get_engine,
     upsert_golden_query_embeddings,
 )
-from openreview_pipeline.utils.embeddings import BGEM3Embedder
+from openreview_pipeline.utils.embeddings import TextEmbedder, build_text_embedder
 from openreview_pipeline.utils.golden_retrieval_icl import DEFAULT_OUTPUT_PATH
 
 
-def _load_embedding_rows(path: Path, embedder: BGEM3Embedder) -> list[GoldenQueryEmbeddingRow]:
+def _load_embedding_rows(path: Path, embedder: TextEmbedder) -> list[GoldenQueryEmbeddingRow]:
     import json
 
     raw_rows = json.loads(path.read_text(encoding="utf-8"))
@@ -59,6 +59,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--bge-model-path", default=None, help="BGE-M3 model path.")
     parser.add_argument("--bge-device", default=None, help="BGE device, e.g. cuda:2.")
+    parser.add_argument(
+        "--embedding-service-url",
+        default=None,
+        help="HTTP embedding endpoint. If set, this is used instead of loading BGE locally.",
+    )
+    parser.add_argument(
+        "--embedding-service-timeout",
+        type=float,
+        default=120.0,
+        help="HTTP embedding service timeout in seconds.",
+    )
     parser.add_argument("--embedding-dimension", type=int, default=1024, help="pgvector dimension.")
     return parser
 
@@ -70,9 +81,14 @@ def main() -> int:
     golden_path = Path(
         args.golden_classifications_path or settings.get("golden_classifications_path") or DEFAULT_OUTPUT_PATH
     ).expanduser().resolve()
-    embedder = BGEM3Embedder(
+    embedder = build_text_embedder(
         model_path=str(args.bge_model_path or settings["bge_model_path"]),
         device=str(args.bge_device or settings["bge_device"]),
+        service_url=str(
+            args.embedding_service_url or settings.get("embedding_service_url") or ""
+        ).strip()
+        or None,
+        timeout_seconds=float(args.embedding_service_timeout),
     )
     engine = get_engine(str(db_url))
     ensure_schema(engine, embedding_dimension=int(args.embedding_dimension))

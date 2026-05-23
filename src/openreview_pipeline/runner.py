@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -157,14 +158,24 @@ def resolve_generate_query_settings(
         generate_config = {}
 
     return {
-        "golden_embedding_db_url": generate_config.get(
-            "golden_embedding_db_url",
-            "postgresql+psycopg://scifull:westlakenlp@127.0.0.1:5432/scifullmmbench",
+        "golden_embedding_db_url": os.environ.get(
+            "SCIFULL_GOLDEN_EMBEDDING_DB_URL",
+            str(
+                generate_config.get(
+                    "golden_embedding_db_url",
+                    "postgresql+psycopg://scifull:westlakenlp@127.0.0.1:5432/scifullmmbench",
+                )
+            ),
         ),
         "golden_examples_k": max(1, int(generate_config.get("golden_examples_k", 5))),
-        "queries_per_type_view": max(1, int(generate_config.get("queries_per_type_view", 3))),
+        "queries_per_type_view": generate_config.get("queries_per_type_view", 3),
         "bge_model_path": generate_config.get("bge_model_path", "/data3/yangyinghao/bge-m3"),
         "bge_device": generate_config.get("bge_device", "cuda:2"),
+        "embedding_service_url": os.environ.get(
+            "SCIFULL_EMBEDDING_SERVICE_URL",
+            str(generate_config.get("embedding_service_url", "") or ""),
+        ),
+        "embedding_service_timeout": float(generate_config.get("embedding_service_timeout", 120.0)),
         "golden_classifications_path": generate_config.get(
             "golden_classifications_path",
             "outputs/query_analysis/golden_retrieval_icl_examples.json",
@@ -210,9 +221,9 @@ def resolve_openreview_credentials(
     config = load_config(config_path)
     openreview_config = config.get("openreview", {})
     return {
-        "username": username or openreview_config.get("username", ""),
-        "password": password or openreview_config.get("password", ""),
-        "token": token or openreview_config.get("token", ""),
+        "username": username if username is not None else openreview_config.get("username", ""),
+        "password": password if password is not None else openreview_config.get("password", ""),
+        "token": token if token is not None else openreview_config.get("token", ""),
     }
 
 
@@ -428,14 +439,13 @@ def run_download_stage(
         year_threshold=target_year,
         output_dir=str(output_path.parent),
     )
-    if any(credentials.values()):
-        downloader.set_openreview_credentials(
-            username=credentials["username"],
-            password=credentials["password"],
-            token=credentials["token"],
-        )
-    else:
-        logger.warning("No OpenReview credentials configured. Using stub download data.")
+    downloader.set_openreview_credentials(
+        username=credentials["username"],
+        password=credentials["password"],
+        token=credentials["token"],
+    )
+    if not any(credentials.values()):
+        logger.info("No OpenReview credentials configured. Using public OpenReview API client.")
 
     forum_ids = parse_forum_ids(forum_id)
     downloader.run(output_path, limit=limit, forum_ids=forum_ids)
@@ -578,9 +588,12 @@ def run_generate_queries_stage(
         max_concurrent_papers=int(stage_settings["max_concurrent_papers"]),
         golden_embedding_db_url=str(generate_settings["golden_embedding_db_url"]),
         golden_examples_k=int(generate_settings["golden_examples_k"]),
-        queries_per_type_view=int(generate_settings["queries_per_type_view"]),
+        queries_per_type_view=generate_settings["queries_per_type_view"],
         bge_model_path=str(generate_settings["bge_model_path"]),
         bge_device=str(generate_settings["bge_device"]),
+        embedding_service_url=str(generate_settings.get("embedding_service_url") or "").strip()
+        or None,
+        embedding_service_timeout=float(generate_settings["embedding_service_timeout"]),
     )
     generator.run(input_path, output_path)
     return output_path

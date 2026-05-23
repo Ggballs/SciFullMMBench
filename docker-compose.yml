@@ -29,6 +29,8 @@ services:
         condition: service_healthy
     environment:
       HUMAN_FEEDBACK_DB_URL: postgresql+psycopg://${POSTGRES_USER:-scifull}:${POSTGRES_PASSWORD:-westlakenlp}@postgres:5432/${POSTGRES_DB:-scifullmmbench}
+      SCIFULL_GOLDEN_EMBEDDING_DB_URL: postgresql+psycopg://${POSTGRES_USER:-scifull}:${POSTGRES_PASSWORD:-westlakenlp}@postgres:5432/${POSTGRES_DB:-scifullmmbench}
+      SCIFULL_EMBEDDING_SERVICE_URL: ${SCIFULL_EMBEDDING_SERVICE_URL:-}
       OPENREVIEW_PIPELINE_LOG_DIR: /app/logs
       HUMAN_FEEDBACK_LOG_DIR: /app/logs
       HUMAN_FEEDBACK_USERS: ${HUMAN_FEEDBACK_USERS:-}
@@ -38,9 +40,15 @@ services:
     ports:
       - "${GRADIO_PORT:-7860}:7860"
     volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./src:/app/src:ro
+      - ./scripts:/app/scripts:ro
+      - ./prompts:/app/prompts:ro
       - ${SCIFULL_LOGS_DIR:-./logs}:/app/logs
       - ${SCIFULL_OUTPUTS_DIR:-./outputs}:/app/outputs
       - /data3:/data3:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   postgres-data:

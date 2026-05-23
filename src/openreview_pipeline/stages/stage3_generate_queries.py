@@ -23,7 +23,7 @@ from openreview_pipeline.utils.db.golden_query_embeddings import (
     get_engine,
     retrieve_golden_query_examples,
 )
-from openreview_pipeline.utils.embeddings import BGEM3Embedder, TextEmbedder
+from openreview_pipeline.utils.embeddings import TextEmbedder, build_text_embedder
 from openreview_pipeline.utils.golden_retrieval_icl import normalize_view_label
 
 logger = logging.getLogger(__name__)
@@ -44,6 +44,7 @@ class GoldenExampleRetriever(Protocol):
         view_label: str,
         embedding: list[float],
         limit: int,
+        exclude_litsearch: bool = True,
     ) -> list[GoldenQueryExample]:
         ...
 
@@ -72,6 +73,7 @@ class PostgresGoldenExampleRetriever:
         view_label: str,
         embedding: list[float],
         limit: int,
+        exclude_litsearch: bool = True,
     ) -> list[GoldenQueryExample]:
         return retrieve_golden_query_examples(
             self.engine,
@@ -79,6 +81,7 @@ class PostgresGoldenExampleRetriever:
             view_label=view_label,
             embedding=embedding,
             limit=limit,
+            exclude_litsearch=exclude_litsearch,
         )
 
 
@@ -93,22 +96,39 @@ class QueryGenerator:
         embedder: Optional[TextEmbedder] = None,
         golden_embedding_db_url: Optional[str] = None,
         golden_examples_k: int = 5,
-        queries_per_type_view: int = 3,
+        queries_per_type_view: int | dict[str, dict[str, int]] = 3,
         bge_model_path: str = "/data3/yangyinghao/bge-m3",
         bge_device: str = "cuda:2",
+        embedding_service_url: Optional[str] = None,
+        embedding_service_timeout: float = 120.0,
     ):
         self.llm = llm
         self._prompt_template = prompt_template
         self.max_concurrent_papers = max(1, int(max_concurrent_papers))
         self.golden_examples_k = max(1, int(golden_examples_k))
-        self.queries_per_type_view = max(1, int(queries_per_type_view))
-        self.embedder = embedder or BGEM3Embedder(model_path=bge_model_path, device=bge_device)
+        self._raw_queries_per_type_view = queries_per_type_view
+        if isinstance(queries_per_type_view, dict):
+            self._queries_per_type_view_map = queries_per_type_view
+        else:
+            self._queries_per_type_view_map = {}
+            self._default_queries_per_type_view = max(1, int(queries_per_type_view))
+        self.embedder = embedder or build_text_embedder(
+            model_path=bge_model_path,
+            device=bge_device,
+            service_url=embedding_service_url,
+            timeout_seconds=embedding_service_timeout,
+        )
         if example_retriever is not None:
             self.example_retriever = example_retriever
         elif golden_embedding_db_url:
             self.example_retriever = PostgresGoldenExampleRetriever(golden_embedding_db_url)
         else:
             raise ValueError("QueryGenerator requires golden_embedding_db_url or example_retriever.")
+
+    def _get_queries_count(self, query_type: str, view_name: str) -> int:
+        if self._queries_per_type_view_map:
+            return self._queries_per_type_view_map.get(query_type, {}).get(view_name, 3)
+        return self._default_queries_per_type_view
 
     def _extract_related_bullet_indice(self, query_data: dict) -> Optional[int]:
         candidates = [
@@ -237,7 +257,7 @@ class QueryGenerator:
         view_summary = str(getattr(view, "summary", "") or "N/A").strip()
         template = self._prompt_template_for_query_type(query_type)
         return template.format(
-            num_queries=self.queries_per_type_view,
+            num_queries=self._get_queries_count(query_type, view_name),
             retrieved_examples=self._format_retrieved_examples(prompt_context.examples),
             paper_title=paper_title,
             view_label=view_name,
@@ -256,7 +276,7 @@ class QueryGenerator:
         if not isinstance(raw_queries, list):
             return queries
 
-        for item in raw_queries[: self.queries_per_type_view]:
+        for item in raw_queries[: self._get_queries_count(query_type, view_name)]:
             if isinstance(item, dict):
                 query_text = str(item.get("query_text", item.get("Q", ""))).strip()
                 is_multimodal = bool(item.get("is_multimodal", False))
@@ -299,7 +319,7 @@ class QueryGenerator:
                 )
                 if not prompt_context.bullets:
                     continue
-                expected_query_count += self.queries_per_type_view
+                expected_query_count += self._get_queries_count(query_type, view_name)
                 prompt = self._build_prompt(
                     query_type=query_type,
                     paper_title=paper_title,
@@ -313,9 +333,10 @@ class QueryGenerator:
                         query_type=query_type,
                         view_name=view_name,
                     )
-                    if len(parsed_queries) != self.queries_per_type_view:
+                    expected = self._get_queries_count(query_type, view_name)
+                    if len(parsed_queries) != expected:
                         raise ValueError(
-                            f"Expected {self.queries_per_type_view} queries, got {len(parsed_queries)}"
+                            f"Expected {expected} queries, got {len(parsed_queries)}"
                         )
                     queries.extend(parsed_queries)
                 except Exception as exc:

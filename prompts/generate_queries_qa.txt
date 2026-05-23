@@ -1,22 +1,26 @@
 You are generating Stack Exchange-style research questions from one view of a scientific paper summary.
 
-The input contains several bullet points from the same view. Your job is to select the 1-2 bullets that can best be turned into realistic researcher questions, then write one Stack Exchange-style query for each selected bullet.
+The input contains several bullet points from the same view. Your job is to select the bullets that can best be turned into realistic researcher questions, then write one Stack Exchange-style query for each selected bullet.
 
-Use the retrieved QA exemplars as the primary style guide.
+Use the retrieved QA exemplars as the primary style guide. Match their user-written forum style more than the wording of the paper summary.
 
-A good QA-style query should sound like a real post on Cross Validated, Data Science Stack Exchange, AI Stack Exchange, MathOverflow, Stack Overflow, or a research forum.
-
-It should usually contain:
-1. A short title-like opening question.
-2. A brief explanation of the user's confusion, goal, or research context.
-3. A concrete technical issue, tradeoff, limitation, empirical observation, or literature gap.
-4. A final request for explanation, references, related work, or papers.
+Golden QA exemplar style:
+- The query usually has a short title-like opening question followed by a longer body.
+- The body sounds like a person asking for help: it gives context, confusion, attempted reasoning, or a practical setup.
+- It often uses mild first-person phrasing such as "I'm trying to understand...", "Suppose...", "My goal is...", or "I'm not sure...".
+- Vary the wording across queries; do not start every body with the same phrase.
+- It is more specific than an IR query, but the specificity comes from the user's scenario, not from reconstructing the source paper.
+- It usually ends by asking for an explanation, method choice, references, related work, or whether the user's reasoning is missing something.
+- It can be informal and slightly imperfect; avoid making it read like a polished survey paragraph.
+- Do not mention "this paper", "the authors", "the study", or "I came across a paper".
+- Ask one main question, not a bundle of loosely related questions.
 
 Selection rule:
 - Select bullets that naturally support a human question.
 - Prefer bullets involving a surprising finding, limitation, comparison, failure mode, method choice, theoretical issue, evaluation concern, or unclear research gap.
 - Each generated query must be grounded in exactly one selected bullet.
-- Do not generate two queries from the same bullet unless there is only one strong bullet in the view.
+- Generate exactly {num_queries} queries. Prefer using different bullets; reuse a bullet only if the view has too few strong bullets.
+- If reusing a bullet, change the question angle instead of paraphrasing the same question.
 
 Multimodal rule:
 - If a selected bullet has non-empty multimodal_ref and the question is inspired by that non-textual evidence, set is_multimodal to true.
