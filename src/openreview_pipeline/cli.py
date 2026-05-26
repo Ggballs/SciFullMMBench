@@ -340,6 +340,65 @@ def run_all(
     click.echo(str(final_output_path))
 
 
+@cli.command("run-pipeline")
+@click.option("--stages", default="0-4", help="Stage range/spec to run. Default: 0-4")
+@click.option("--output-dir", "-o", type=click.Path(), default="data", help="Output directory")
+@click.option("--venue", default="ICLR", help="Venue to download from (ICLR, NeurIPS, ICML)")
+@click.option("--year", default=None, type=int, help="Year to download (default: current year)")
+@click.option("--forum-id", default=None, help="OpenReview forum id or comma-separated ids")
+@click.option("--max-papers", default=30, type=int, help="Maximum papers to download")
+@click.option("--summarize-limit", default=None, type=int, help="Maximum papers to summarize with the LLM")
+@click.option("--base-url", default=None, help="LLM API base URL (overrides config)")
+@click.option("--model", default=None, help="Model name (overrides config)")
+@click.option("--download-selected-pdfs", is_flag=True, help="Download selected hard-negative/positive PDFs instead of storing URL-only metadata")
+@click.option("--skip-filter", is_flag=True, help="Mark all downloaded papers as passed instead of applying stage-1 filtering")
+@click.option("--final-output", type=click.Path(), default=None, help="Final combined JSON path")
+def run_pipeline(
+    stages: str,
+    output_dir: str,
+    venue: str,
+    year: int,
+    forum_id: str,
+    max_papers: int,
+    summarize_limit: int,
+    base_url: str,
+    model: str,
+    download_selected_pdfs: bool,
+    skip_filter: bool,
+    final_output: str,
+):
+    paths = run_selected_stages(
+        stages,
+        output_dir=Path(output_dir),
+        venue=venue,
+        year=year,
+        forum_id=forum_id,
+        download_limit=max_papers,
+        llm_limit=summarize_limit,
+        config_path=CONFIG_PATH,
+        base_url=base_url,
+        model=model,
+        download_selected_pdfs=download_selected_pdfs,
+        skip_filter=skip_filter,
+    )
+    final_output_path = (
+        Path(final_output).expanduser().resolve()
+        if final_output
+        else paths.output_dir / "final_pipeline_output.json"
+    )
+    final_output_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact = build_pipeline_output(
+        downloaded_path=paths.downloaded_path,
+        filtered_path=paths.filtered_path,
+        summarized_path=paths.summarized_path,
+        queries_path=paths.queries_path,
+        hard_negatives_path=paths.hard_negatives_path,
+        query_analysis_output_dir=paths.query_analysis_output_dir,
+    )
+    write_pipeline_output(final_output_path, artifact)
+    click.echo(str(final_output_path))
+
+
 @cli.command("update-final-json")
 @click.option("--base-dir", type=click.Path(exists=True), required=True, help="Directory containing stage output files")
 @click.option("--output", "-o", type=click.Path(), default=None, help="Output path for final combined JSON")

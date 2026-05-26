@@ -395,3 +395,23 @@ PYTHONPATH=src python3 -m openreview_pipeline.cli run-all \
   --output-dir outputs/forum_batch \
   --forum-id txmqENuRcc,OBMcxeSK5U,yfcpdY4gMP,WMx2DTFltx
 ```
+
+
+
+## server
+```commandline
+ssh weiyiyang@10.0.1.226 'cd ~/code/SciFullMMBench && \
+OUT=outputs/multimodal_pipeline_JEGDp1E4OH_$(date +%Y%m%d_%H%M%S) && \
+docker compose exec -T gradio python -m openreview_pipeline.cli run-pipeline \
+  --stages 0-4 \
+  --output-dir "$OUT" \
+  --forum-id JEGDp1E4OH \
+  --max-papers 1 \
+  --summarize-limit 1 && \
+docker compose exec -T gradio python scripts/render_query_bullet_comments_md.py \
+  "$OUT/final_pipeline_output.json" \
+  -o "$OUT/query_bullet_original_comments.md" \
+  --max-comment-chars 2000 && \
+echo "$OUT"'
+
+```

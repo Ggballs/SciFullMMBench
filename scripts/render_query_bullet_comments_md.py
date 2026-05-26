@@ -116,6 +116,20 @@ def clean_text(text: Any) -> str:
     return str(text).strip()
 
 
+def normalize_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [clean_text(item) for item in value if clean_text(item)]
+    text = clean_text(value)
+    return [text] if text else []
+
+
+def inline_list(value: Any) -> str:
+    items = normalize_list(value)
+    return ", ".join(items) if items else "None"
+
+
 def truncate(text: str, max_chars: int | None) -> str:
     if not max_chars or len(text) <= max_chars:
         return text
@@ -203,6 +217,23 @@ def iter_queries(paper: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def query_multimodal_rationale(query: dict[str, Any]) -> str:
+    value = query.get("multimodal_rationale")
+    if value:
+        return clean_text(value)
+    analysis = query.get("query_analysis")
+    if isinstance(analysis, dict):
+        return clean_text(analysis.get("multimodal_rationale"))
+    return ""
+
+
+def query_decision(query: dict[str, Any]) -> str:
+    analysis = query.get("query_analysis")
+    if isinstance(analysis, dict):
+        return clean_text(analysis.get("decision"))
+    return clean_text(query.get("decision"))
+
+
 def render_report(data: dict[str, Any], max_comment_chars: int | None) -> str:
     lines: list[str] = [
         "# Query, Bullet Point, Original Comment View",
@@ -222,6 +253,7 @@ def render_report(data: dict[str, Any], max_comment_chars: int | None) -> str:
         for query in iter_queries(paper):
             query_text = clean_text(query.get("query_text"))
             source_view = query.get("source_view")
+            query_type = query.get("query_type", "IR")
             bullet_index = query.get("related_bullet_indice")
             is_multimodal = query.get("is_multimodal")
             if is_multimodal is True:
@@ -235,13 +267,18 @@ def render_report(data: dict[str, Any], max_comment_chars: int | None) -> str:
             lines.extend([f"### {query_text}", ""])
             lines.append(
                 f"- **View:** `{source_view}`  \n"
+                f"- **Query type:** `{query_type}`  \n"
                 f"- **Based on multimodal info:** `{multimodal_label}`  \n"
                 f"- **Related bullet index:** `{bullet_index}`"
             )
+            decision = query_decision(query)
+            if decision:
+                lines.append(f"- **Analysis decision:** `{decision}`")
 
             if bullet:
                 lines.extend(["", f"- **Bullet point:** {clean_text(bullet.get('text'))}", ""])
                 if bullet.get("multimodal_ref"):
+                    lines.append(f"- **Bullet multimodal refs:** `{inline_list(bullet.get('multimodal_ref'))}`")
                     dependency = clean_text(bullet.get("multimodal_dependency") or "none")
                     dependency_rationale = clean_text(
                         bullet.get("multimodal_dependency_rationale")
@@ -257,10 +294,10 @@ def render_report(data: dict[str, Any], max_comment_chars: int | None) -> str:
                 lines.extend(["", "- **Bullet point:** _Not found_", ""])
                 source_refs = []
 
-            if query.get("is_multimodal") and query.get("multimodal_rationale"):
+            if query.get("is_multimodal") and query_multimodal_rationale(query):
                 lines.extend(
                     [
-                        f"- **Query multimodal rationale:** {clean_text(query.get('multimodal_rationale'))}",
+                        f"- **Query multimodal rationale:** {query_multimodal_rationale(query)}",
                         "",
                     ]
                 )

@@ -1,0 +1,49 @@
+# Multimodal Evidence Bullet Generation
+
+You are summarizing OpenReview discussion about one concrete multimodal evidence item in a scientific paper.
+
+Only use the provided snippets. Each snippet already mentions the same figure/table/equation/algorithm evidence item.
+
+Generate literature-review-style bullet points only when the snippets contain substantive discussion of what the evidence shows, supports, questions, compares, or fails to establish.
+
+If the snippets are procedural, shallow, or do not support a paper-level claim, return an empty `bullet_points` list.
+
+## View labels
+- `motivation`: why the problem matters, why the approach is needed, gaps, goals, or limitations motivating the work
+- `method`: how the method/model/algorithm/dataset/system works
+- `experiment/result`: evaluation setup, benchmarks, metrics, ablations, empirical findings, comparisons, trends, or limitations in results
+
+## Dependency labels
+- `incidental`: the evidence is mentioned but is not essential to the claim
+- `supportive`: the evidence supports the claim, but the claim can still be understood from text
+- `necessary`: the claim depends on this figure/table/equation/algorithm; removing it would weaken or invalidate the claim
+
+## Output
+Return valid JSON only:
+
+```json
+{{
+  "bullet_points": [
+    {{
+      "target_view": "experiment/result",
+      "text": "one atomic paper-level claim grounded in the evidence discussion",
+      "source_refs": ["Reviews/Review 1/weaknesses"],
+      "multimodal_ref": ["{multimodal_ref}"],
+      "multimodal_dependency": "supportive",
+      "multimodal_dependency_rationale": "Explain what {multimodal_ref} contributes and whether text alone would still support the claim."
+    }}
+  ]
+}}
+```
+
+## Paper
+Title: {paper_title}
+Abstract: {paper_abstract}
+
+## Evidence item
+{multimodal_ref}
+
+## OpenReview snippets
+{evidence_snippets}
+
+## Output (JSON)
