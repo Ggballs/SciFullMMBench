@@ -234,6 +234,21 @@ def query_decision(query: dict[str, Any]) -> str:
     return clean_text(query.get("decision"))
 
 
+def query_decision_rationale(query: dict[str, Any]) -> str:
+    analysis = query.get("query_analysis")
+    if not isinstance(analysis, dict):
+        return ""
+    retrieval = analysis.get("retrieval_evaluation")
+    if isinstance(retrieval, dict) and clean_text(retrieval.get("reasoning")):
+        return clean_text(retrieval.get("reasoning"))
+    return ""
+
+
+def retrieved_golden_queries(query: dict[str, Any]) -> list[dict[str, Any]]:
+    value = query.get("retrieved_golden_queries")
+    return value if isinstance(value, list) else []
+
+
 def render_report(data: dict[str, Any], max_comment_chars: int | None) -> str:
     lines: list[str] = [
         "# Query, Bullet Point, Original Comment View",
@@ -309,6 +324,31 @@ def render_report(data: dict[str, Any], max_comment_chars: int | None) -> str:
                         "",
                     ]
                 )
+
+            decision_rationale = query_decision_rationale(query)
+            if decision_rationale:
+                lines.extend(["#### Keep / Hard Reject rationale", ""])
+                lines.append(f"- {decision_rationale}")
+                lines.append("")
+
+            golden_examples = retrieved_golden_queries(query)
+            if golden_examples:
+                lines.extend(["#### Retrieved golden queries", ""])
+                lines.extend(["| Rank | Source | View | Distance | Golden query |", "|---:|---|---|---:|---|"])
+                for example in golden_examples:
+                    distance = example.get("distance")
+                    distance_text = f"{float(distance):.4f}" if distance is not None else ""
+                    source = example.get("query_id") or example.get("example_id") or ""
+                    golden_text = example.get("query_text") or example.get("retrieval_content") or ""
+                    lines.append(
+                        "| "
+                        f"{md_escape_cell(example.get('rank', ''))} | "
+                        f"{md_escape_cell(source)} | "
+                        f"{md_escape_cell(example.get('view_label', ''))} | "
+                        f"{md_escape_cell(distance_text)} | "
+                        f"{md_escape_cell(golden_text)} |"
+                    )
+                lines.append("")
 
             if source_refs:
                 lines.extend(["| Source ref | Original comment |", "|---|---|"])

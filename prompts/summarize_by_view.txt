@@ -28,19 +28,13 @@ Bullet count limits:
 - Merge duplicate reviewer/rebuttal/comment points into one clear claim.
 - Put each claim in the single best-fit view (motivation, method, or experiment/result).
 - Exclude procedural comments and thanks.
-- Do not force multimodal evidence into the general summary; a separate pass handles concrete figure/table/equation/algorithm discussions. Use `multimodal_ref` here only when a general bullet is explicitly tied to such evidence.
+- Do not label multimodal evidence in this general summary. A separate pass handles comments that explicitly mention concrete Figure/Table/Equation/Algorithm evidence.
 - If a concern is clarified by rebuttal/comments, write the final paper-level interpretation.
 - If support is weak or disputed, use calibrated wording such as "The paper argues..." or "Evidence remains limited for..."
 - Each OpenReview field is prefixed with a source path like `[Reviews/Review 1/pros]`.
 - For every bullet point, include `source_refs` with the exact source paths that support the claim.
-- For every bullet point, include `multimodal_ref`: a list of concrete non-textual references explicitly tied to that claim, such as `Figure 2`, `Table 1`, `Equation 3`, `Algorithm 1`, or `Appendix Figure A.1`. Use an empty list when the claim is not tied to a specific figure/table/equation/algorithm/diagram.
-- For every bullet point, include `multimodal_dependency` to describe how much the claim depends on non-textual evidence:
-  - `none`: no concrete multimodal reference supports the claim
-  - `incidental`: a figure/table/equation/algorithm is mentioned but not essential to the claim
-  - `supportive`: the multimodal element supports the claim, but the claim can still be understood from text
-  - `necessary`: the claim depends on the figure/table/equation/algorithm; removing it would weaken or invalidate the claim
-- Include `multimodal_dependency_rationale` only when `multimodal_ref` is non-empty. It should be one concise sentence explaining why the dependency label is `incidental`, `supportive`, or `necessary`. If the label is `supportive` or `necessary`, explicitly say what the figure/table/equation/algorithm contributes and whether the text alone would still support the claim.
-- If `multimodal_ref` is empty, set `multimodal_dependency` to `none` and omit `multimodal_dependency_rationale`.
+- For every general-summary bullet point, set `multimodal_ref` to an empty list and `multimodal_dependency` to `none`.
+- Do not include `multimodal_dependency_rationale` in this general summary.
 
 ## Output Format
 Return valid JSON only:
@@ -53,9 +47,8 @@ Return valid JSON only:
       {{
         "text": "one atomic literature-review claim",
         "source_refs": ["Reviews/Review 1/pros"],
-        "multimodal_ref": ["Figure 2"],
-        "multimodal_dependency": "supportive",
-        "multimodal_dependency_rationale": "Figure 2 supports the empirical trend in the claim, but the surrounding review prose still describes the main result."
+        "multimodal_ref": [],
+        "multimodal_dependency": "none"
       }}
     ]
   }},

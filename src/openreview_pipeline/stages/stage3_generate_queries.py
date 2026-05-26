@@ -28,7 +28,7 @@ from openreview_pipeline.utils.golden_retrieval_icl import normalize_view_label
 
 logger = logging.getLogger(__name__)
 
-QUERY_TYPES = ("IR", "QA")
+QUERY_TYPES = ("IR",)
 VIEW_DEFINITIONS = {
     "motivation": "research problem, need, gap, goal, hypothesis, or why the work matters",
     "method": "proposed approach, model, algorithm, system, dataset construction process, or implementation design",
@@ -129,7 +129,7 @@ class QueryGenerator:
 
     def _get_queries_count(self, query_type: str, view_name: str) -> int:
         if self._queries_per_type_view_map:
-            return self._queries_per_type_view_map.get(query_type, {}).get(view_name, 3)
+            return max(0, int(self._queries_per_type_view_map.get(query_type, {}).get(view_name, 0)))
         return self._default_queries_per_type_view
 
     def _extract_related_bullet_indice(self, query_data: dict) -> Optional[int]:
@@ -201,16 +201,11 @@ class QueryGenerator:
             )
         return bullets
 
-    def _retrieve_prompt_context(
+    def _bullet_contexts_from_raw(
         self,
-        *,
-        query_type: str,
-        paper_title: str,
-        view,
-    ) -> RetrievedPromptContext:
-        view_label = normalize_view_label(str(view.view_name))
-        raw_bullets = self._view_bullets(view)
-        bullets = [
+        raw_bullets: list[tuple[int, str, list[str], str, str]],
+    ) -> list[BulletContext]:
+        return [
             BulletContext(
                 index=index,
                 text=text,
@@ -220,6 +215,18 @@ class QueryGenerator:
             )
             for index, text, multimodal_ref, multimodal_dependency, multimodal_dependency_rationale in raw_bullets
         ]
+
+    def _retrieve_prompt_context(
+        self,
+        *,
+        query_type: str,
+        paper_title: str,
+        view,
+        raw_bullets: Optional[list[tuple[int, str, list[str], str, str]]] = None,
+    ) -> RetrievedPromptContext:
+        view_label = normalize_view_label(str(view.view_name))
+        raw_bullets = raw_bullets if raw_bullets is not None else self._view_bullets(view)
+        bullets = self._bullet_contexts_from_raw(raw_bullets)
         if not raw_bullets:
             return RetrievedPromptContext(bullets=[], examples=[])
 
@@ -262,10 +269,11 @@ class QueryGenerator:
             parts.append(f"Bullet {bullet.index}: {bullet.text}")
             parts.append(f"multimodal_ref: {refs}")
             parts.append(f"multimodal_dependency: {bullet.multimodal_dependency}")
-            parts.append(
-                "multimodal_dependency_rationale: "
-                f"{bullet.multimodal_dependency_rationale or 'none provided'}"
-            )
+            if bullet.multimodal_ref:
+                parts.append(
+                    "Bullet multimodal rationale: "
+                    f"{bullet.multimodal_dependency_rationale or 'not provided'}"
+                )
             parts.append("")
         return "\n".join(parts).strip()
 
@@ -274,6 +282,21 @@ class QueryGenerator:
             f"Example {idx}:\n{example.retrieval_content or example.query_text}"
             for idx, example in enumerate(examples, 1)
         ).strip()
+
+    def _serialize_retrieved_examples(self, examples: list[GoldenQueryExample]) -> list[dict[str, Any]]:
+        return [
+            {
+                "rank": idx,
+                "example_id": example.example_id,
+                "query_id": example.query_id,
+                "query_type": example.query_type,
+                "view_label": example.view_label,
+                "query_text": example.query_text,
+                "retrieval_content": example.retrieval_content,
+                "distance": example.distance,
+            }
+            for idx, example in enumerate(examples, 1)
+        ]
 
     def _prompt_template_for_query_type(self, query_type: str) -> str:
         if self._prompt_template:
@@ -289,12 +312,15 @@ class QueryGenerator:
         paper_title: str,
         view,
         prompt_context: RetrievedPromptContext,
+        num_queries: int,
+        query_mode_instructions: str,
     ) -> str:
         view_name = normalize_view_label(str(view.view_name))
         view_summary = str(getattr(view, "summary", "") or "N/A").strip()
         template = self._prompt_template_for_query_type(query_type)
         return template.format(
-            num_queries=self._get_queries_count(query_type, view_name),
+            num_queries=num_queries,
+            query_mode_instructions=query_mode_instructions,
             retrieved_examples=self._format_retrieved_examples(prompt_context.examples),
             paper_title=paper_title,
             view_label=view_name,
@@ -302,7 +328,14 @@ class QueryGenerator:
             bullets=self._format_bullets(prompt_context.bullets),
         )
 
-    def _parse_response(self, response: str, *, query_type: str, view_name: str) -> list[RetrievalQuery]:
+    def _parse_response(
+        self,
+        response: str,
+        *,
+        query_type: str,
+        view_name: str,
+        limit: int,
+    ) -> list[RetrievalQuery]:
         queries: list[RetrievalQuery] = []
 
         cleaned = str(response or "").strip()
@@ -329,7 +362,7 @@ class QueryGenerator:
         if not isinstance(raw_queries, list):
             return queries
 
-        for item in raw_queries[: self._get_queries_count(query_type, view_name)]:
+        for item in raw_queries[:limit]:
             if isinstance(item, dict):
                 query_text = str(item.get("query_text", item.get("Q", ""))).strip()
                 is_multimodal = bool(item.get("is_multimodal", False))
@@ -360,6 +393,141 @@ class QueryGenerator:
                 )
         return queries
 
+    def _clean_query_text(self, text: str) -> str:
+        text = text.replace("(multimodal)", "").strip()
+        text = re.sub(
+            r"\b(?:fig(?:ure)?|table|eq(?:uation)?|alg(?:orithm)?)\.?\s*\(?\s*[A-Za-z]?\d+(?:\.\d+)?\s*\)?",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(r"\bappendix\b\s*[A-Za-z0-9. -]*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s+", " ", text)
+        text = re.sub(r"\s+([?.!,])", r"\1", text)
+        return text.strip()
+
+    def _force_plain_queries(
+        self,
+        queries: list[RetrievalQuery],
+        *,
+        multimodal: bool,
+        bullet: Optional[BulletContext] = None,
+    ) -> list[RetrievalQuery]:
+        fixed = []
+        for query in queries:
+            query.query_text = self._clean_query_text(query.query_text)
+            if multimodal:
+                query.is_multimodal = True
+                if bullet is not None:
+                    query.related_bullet_indice = bullet.index
+                    if not query.multimodal_rationale:
+                        rationale = bullet.multimodal_dependency_rationale or (
+                            "The selected bullet depends on concrete multimodal evidence."
+                        )
+                        query.multimodal_rationale = (
+                            f"The selected bullet is multimodal-relevant: {rationale}"
+                        )
+            else:
+                query.is_multimodal = False
+                query.multimodal_rationale = None
+            if query.query_text:
+                fixed.append(query)
+        return fixed
+
+    def _generate_with_context(
+        self,
+        *,
+        paper_id: str,
+        paper_title: str,
+        view,
+        query_type: str,
+        prompt_context: RetrievedPromptContext,
+        expected: int,
+        query_mode_instructions: str,
+        all_bullets: Optional[list[BulletContext]] = None,
+    ) -> list[RetrievalQuery]:
+        if expected <= 0:
+            return []
+        prompt = self._build_prompt(
+            query_type=query_type,
+            paper_title=paper_title,
+            view=view,
+            prompt_context=prompt_context,
+            num_queries=expected,
+            query_mode_instructions=query_mode_instructions,
+        )
+        view_name = normalize_view_label(str(view.view_name))
+        parsed_queries: list[RetrievalQuery] = []
+        best_queries: list[RetrievalQuery] = []
+        response = ""
+        for attempt in range(3):
+            response = self.llm.generate(prompt)
+            try:
+                parsed_queries = self._parse_response(
+                    response,
+                    query_type=query_type,
+                    view_name=view_name,
+                    limit=expected,
+                )
+                if all_bullets is not None:
+                    parsed_queries = self._apply_multimodal_flags(parsed_queries, all_bullets)
+                if len(parsed_queries) > len(best_queries):
+                    best_queries = parsed_queries
+                if len(parsed_queries) < expected:
+                    raise ValueError(f"Expected {expected} queries, got {len(parsed_queries)}")
+                break
+            except Exception as exc:
+                logger.warning(
+                    "Failed to parse %s/%s query response on attempt %s: %s",
+                    query_type,
+                    view_name,
+                    attempt + 1,
+                    exc,
+                )
+                logger.debug("Raw response: %s", response[:500])
+                parsed_queries = []
+        if not parsed_queries and best_queries:
+            logger.warning(
+                "Using %s/%s parsed %s/%s queries for paper %s after retries.",
+                len(best_queries),
+                expected,
+                query_type,
+                view_name,
+                paper_id,
+            )
+            parsed_queries = best_queries
+        retrieved_examples = self._serialize_retrieved_examples(prompt_context.examples)
+        for query in parsed_queries:
+            query.retrieved_golden_queries = retrieved_examples
+        return parsed_queries
+
+    def _apply_multimodal_flags(
+        self,
+        queries: list[RetrievalQuery],
+        all_bullets: list[BulletContext],
+    ) -> list[RetrievalQuery]:
+        """Assign is_multimodal per query based on related_bullet_indice matching a multimodal bullet."""
+        bullets_by_index: dict[int, BulletContext] = {b.index: b for b in all_bullets}
+        fixed: list[RetrievalQuery] = []
+        for query in queries:
+            query.query_text = self._clean_query_text(query.query_text)
+            bullet_idx = query.related_bullet_indice
+            bullet = bullets_by_index.get(bullet_idx) if bullet_idx else None
+            if bullet is not None and bullet.multimodal_ref:
+                query.is_multimodal = True
+                query.related_bullet_indice = bullet.index
+                if not query.multimodal_rationale:
+                    query.multimodal_rationale = (
+                        bullet.multimodal_dependency_rationale
+                        or f"The selected bullet relates to {', '.join(bullet.multimodal_ref)}."
+                    )
+            else:
+                query.is_multimodal = False
+                query.multimodal_rationale = None
+            if query.query_text:
+                fixed.append(query)
+        return fixed
+
     def generate_queries_for_paper(self, paper_id: str, paper_title: str, summary) -> GeneratedQueriesForPaper:
         logger.debug("Generating queries for paper: %s", paper_id)
 
@@ -370,60 +538,54 @@ class QueryGenerator:
             if view_name not in VIEW_DEFINITIONS:
                 continue
             for query_type in QUERY_TYPES:
+                raw_bullets = self._view_bullets(view)
+                if not raw_bullets:
+                    continue
+
+                text_bullets = [b for b in raw_bullets if not b[2]]
+                multimodal_bullets = [b for b in raw_bullets if b[2]]
+
+                text_expected = min(self._get_queries_count(query_type, view_name), len(text_bullets))
+                multimodal_expected = len(multimodal_bullets)
+                total_expected = text_expected + multimodal_expected
+                if total_expected == 0:
+                    continue
+
+                # Single prompt context with ALL bullets — one LLM call per view.
                 prompt_context = self._retrieve_prompt_context(
                     query_type=query_type,
                     paper_title=paper_title,
                     view=view,
+                    raw_bullets=raw_bullets,
                 )
-                if not prompt_context.bullets:
-                    continue
-                expected_query_count += self._get_queries_count(query_type, view_name)
-                prompt = self._build_prompt(
-                    query_type=query_type,
-                    paper_title=paper_title,
-                    view=view,
-                    prompt_context=prompt_context,
-                )
-                expected = self._get_queries_count(query_type, view_name)
-                parsed_queries: list[RetrievalQuery] = []
-                best_queries: list[RetrievalQuery] = []
-                response = ""
-                for attempt in range(3):
-                    response = self.llm.generate(prompt)
-                    try:
-                        parsed_queries = self._parse_response(
-                            response,
-                            query_type=query_type,
-                            view_name=view_name,
-                        )
-                        if len(parsed_queries) > len(best_queries):
-                            best_queries = parsed_queries
-                        if len(parsed_queries) != expected:
-                            raise ValueError(
-                                f"Expected {expected} queries, got {len(parsed_queries)}"
-                            )
-                        break
-                    except Exception as exc:
-                        logger.warning(
-                            "Failed to parse %s/%s query response on attempt %s: %s",
-                            query_type,
-                            view_name,
-                            attempt + 1,
-                            exc,
-                        )
-                        logger.debug("Raw response: %s", response[:500])
-                        parsed_queries = []
-                if not parsed_queries and best_queries:
-                    logger.warning(
-                        "Using %s/%s parsed %s/%s queries for paper %s after retries.",
-                        len(best_queries),
-                        expected,
-                        query_type,
-                        view_name,
-                        paper_id,
+
+                instruction_parts = []
+                if text_expected:
+                    instruction_parts.append(
+                        f"Generate {text_expected} plain IR queries from the text-only bullets "
+                        "(multimodal_ref=none). Set is_multimodal=false for these."
                     )
-                    parsed_queries = best_queries
-                queries.extend(parsed_queries)
+                if multimodal_expected:
+                    instruction_parts.append(
+                        f"Generate {multimodal_expected} plain IR queries, one per multimodal bullet. "
+                        "Do NOT mention exact figure/table/equation/algorithm labels in query_text. "
+                        "Set is_multimodal=true and use the bullet's multimodal rationale."
+                    )
+
+                expected_query_count += total_expected
+                all_bullets = self._bullet_contexts_from_raw(raw_bullets)
+                queries.extend(
+                    self._generate_with_context(
+                        paper_id=paper_id,
+                        paper_title=paper_title,
+                        view=view,
+                        query_type=query_type,
+                        prompt_context=prompt_context,
+                        expected=total_expected,
+                        query_mode_instructions=" ".join(instruction_parts),
+                        all_bullets=all_bullets,
+                    )
+                )
 
         if len(queries) != expected_query_count:
             logger.warning(

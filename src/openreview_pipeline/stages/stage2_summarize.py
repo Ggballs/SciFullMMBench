@@ -162,6 +162,24 @@ class Summarizer:
             )
         return views
 
+    def _clear_general_multimodal_fields(self, views: list[ViewBulletPoints]) -> list[ViewBulletPoints]:
+        """General summaries should not invent multimodal bullets; the evidence pass owns them."""
+        cleaned_views = []
+        for view in views:
+            payload = {
+                "view_name": view.view_name,
+                "summary": view.summary,
+                "bullet_points": [],
+            }
+            for bullet in view.bullet_points:
+                bullet_payload = self._bullet_to_dict(bullet)
+                bullet_payload["multimodal_ref"] = []
+                bullet_payload["multimodal_dependency"] = "none"
+                bullet_payload["multimodal_dependency_rationale"] = None
+                payload["bullet_points"].append(bullet_payload)
+            cleaned_views.append(ViewBulletPoints(**payload))
+        return cleaned_views
+
     def _parse_multimodal_bullet_response(self, response: str) -> list[dict[str, Any]]:
         cleaned = str(response or "").strip()
         cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
@@ -197,6 +215,46 @@ class Summarizer:
             lines.append(f"{idx}. [{snippet.source_ref}] {text}")
         return "\n".join(lines)
 
+    def _fallback_multimodal_bullet(self, group) -> dict[str, Any]:
+        source_refs = [snippet.source_ref for snippet in group.meaningful_snippets]
+        first_text = ""
+        if group.meaningful_snippets:
+            first_text = re.sub(r"\s+", " ", group.meaningful_snippets[0].text).strip()
+        if len(first_text) > 280:
+            first_text = first_text[:280].rstrip() + "..."
+        return {
+            "target_view": "experiment/result",
+            "text": (
+                f"OpenReview discussion uses {group.multimodal_ref} as concrete evidence "
+                f"for a paper-level claim: {first_text}"
+            ).strip(),
+            "source_refs": source_refs,
+            "multimodal_ref": [group.multimodal_ref],
+            "multimodal_dependency": "necessary",
+            "multimodal_dependency_rationale": (
+                f"This bullet is generated from comments that explicitly discuss "
+                f"{group.multimodal_ref}; the claim is intended to preserve that evidence dependency."
+            ),
+        }
+
+    def _normalize_multimodal_bullet(self, item: dict[str, Any], group) -> dict[str, Any]:
+        item = dict(item)
+        target_view = str(item.pop("target_view", "") or "").strip()
+        if target_view == "experiment":
+            target_view = "experiment/result"
+        if target_view not in self.views:
+            target_view = "experiment/result"
+        item["target_view"] = target_view
+        item["multimodal_ref"] = [group.multimodal_ref]
+        if not item.get("source_refs"):
+            item["source_refs"] = [snippet.source_ref for snippet in group.meaningful_snippets]
+        item.setdefault("multimodal_dependency", "supportive")
+        item.setdefault(
+            "multimodal_dependency_rationale",
+            f"{group.multimodal_ref} is explicitly discussed in OpenReview evidence snippets.",
+        )
+        return item
+
     def _generate_multimodal_bullets(
         self,
         *,
@@ -216,35 +274,35 @@ class Summarizer:
                 multimodal_ref=group.multimodal_ref,
                 evidence_snippets=self._format_evidence_snippets(group),
             )
-            try:
-                response = self.llm.generate(prompt)
-            except Exception as exc:
+            for attempt in range(3):
+                try:
+                    response = self.llm.generate(prompt)
+                except Exception as exc:
+                    logger.warning(
+                        "LLM call failed for multimodal bullet %s (attempt %d/3): %s",
+                        group.multimodal_ref,
+                        attempt + 1,
+                        exc,
+                    )
+                    continue
+                parsed_items = [
+                    self._normalize_multimodal_bullet(item, group)
+                    for item in self._parse_multimodal_bullet_response(response)
+                    if str(item.get("text", "")).strip()
+                ]
+                if parsed_items:
+                    bullets.append(parsed_items[0])
+                    break
                 logger.warning(
-                    "Failed to generate multimodal bullets for %s: %s",
+                    "No parseable multimodal bullet for %s (attempt %d/3).",
                     group.multimodal_ref,
-                    exc,
+                    attempt + 1,
                 )
-                continue
-            for item in self._parse_multimodal_bullet_response(response):
-                item = dict(item)
-                target_view = str(item.pop("target_view", "") or "").strip()
-                if target_view == "experiment":
-                    target_view = "experiment/result"
-                if target_view not in self.views:
-                    target_view = "experiment/result"
-                item["target_view"] = target_view
-                item["multimodal_ref"] = [group.multimodal_ref]
-                item.setdefault(
-                    "source_refs",
-                    [snippet.source_ref for snippet in group.meaningful_snippets],
+            else:
+                logger.warning(
+                    "All 3 attempts failed for multimodal bullet %s; skipping.",
+                    group.multimodal_ref,
                 )
-                item.setdefault("multimodal_dependency", "supportive")
-                item.setdefault(
-                    "multimodal_dependency_rationale",
-                    f"{group.multimodal_ref} is explicitly discussed in OpenReview evidence snippets.",
-                )
-                if str(item.get("text", "")).strip():
-                    bullets.append(item)
         return bullets
 
     def _bullet_to_dict(self, bullet) -> dict[str, Any]:
@@ -274,6 +332,8 @@ class Summarizer:
             mm_refs = set(bullet.get("multimodal_ref") or [])
             if candidate_mm_refs and candidate_mm_refs == mm_refs and candidate_refs & source_refs:
                 return True
+            if candidate_mm_refs:
+                continue
             if self._token_jaccard(candidate_text, str(bullet.get("text", ""))) >= 0.82:
                 return True
         return False
@@ -347,6 +407,7 @@ class Summarizer:
                     bullet_points=[{"text": response[:500], "source_refs": []}],
                 )
             )
+        views = self._clear_general_multimodal_fields(views)
         multimodal_bullets = self._generate_multimodal_bullets(
             paper_title=paper_title,
             paper_abstract=paper_abstract,

@@ -14,6 +14,7 @@ class PipelineQuery(BaseModel):
     related_bullet_indice: Optional[int] = None
     related_bullet_justification: Optional[str] = None
     multimodal_rationale: Optional[str] = None
+    retrieved_golden_queries: list[dict[str, Any]] = Field(default_factory=list)
     hard_negative_context: Optional[dict[str, Any]] = None
     query_analysis: Optional[dict[str, Any]] = None
 

@@ -14,6 +14,7 @@ class RetrievalQuery(BaseModel):
     related_bullet_indice: Optional[int] = None
     related_bullet_justification: Optional[str] = None
     multimodal_rationale: Optional[str] = None
+    retrieved_golden_queries: List[Dict[str, Any]] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod

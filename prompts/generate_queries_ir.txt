@@ -20,22 +20,8 @@ Selection:
 - Prefer different bullets; reuse a bullet only if the view has too few strong bullets.
 - If reusing a bullet, change the retrieval angle instead of paraphrasing the same query.
 
-Multimodal label:
-- Decouple bullet evidence from query label.
-- `multimodal_dependency` on a bullet means the bullet's claim was supported by a figure/table/equation/algorithm.
-- `multimodal_dependency_rationale` explains why the bullet's claim is `none`, `incidental`, `supportive`, or `necessary`; use this rationale when deciding whether a query should be multimodal.
-- `is_multimodal` on a query means the query itself requires that non-textual evidence to judge relevance.
-- If the query is broad or topic-level and relevance can be inferred from prose alone, set `is_multimodal=false`.
-- If the query asks for measured results, comparisons, trends, ablations, trade-offs, or other evidence-dependent outcomes, set `is_multimodal=true` only when the referenced non-textual evidence is genuinely needed.
-- Supportive multimodal evidence is not enough by itself. Do not add table/figure wording merely to force `is_multimodal=true`.
-- Aim for at most one controlled evidence-dependent multimodal query when it naturally fits. If no natural evidence-dependent query exists, `is_multimodal=false` for all queries is correct.
-- Include `multimodal_rationale` only when `is_multimodal=true`. Cite the selected bullet's dependency rationale and state why the query would be weakened without the multimodal evidence.
-- If `is_multimodal=false`, omit `multimodal_rationale`.
-
-Multimodal examples:
-- Broad topic query: "Find papers on memory-efficient decentralized training for mixture-of-experts language models." -> `is_multimodal=false`
-- Evidence-dependent but not too specific: "Find papers evaluating memory and communication trade-offs in decentralized mixture-of-experts training." -> `is_multimodal=true`
-- Too specific, reject: "Find papers showing 55GB to 35GB memory reduction and 33% communication savings on 16 standalone GPUs."
+Mode-specific rule:
+{query_mode_instructions}
 
 Generate {num_queries} IR-style queries.
 

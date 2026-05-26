@@ -3,13 +3,13 @@
 You are summarizing OpenReview discussion about one concrete multimodal evidence item in a scientific paper.
 
 Only use the provided snippets. Each snippet already mentions the same figure/table/equation/algorithm evidence item.
+Do not use or infer from any review/comment text that is not included in the snippets.
+Appendix references do not count as multimodal evidence; if the evidence item is appendix-only, return an empty `bullet_points` list.
 
-Generate literature-review-style bullet points only when the snippets contain substantive discussion of what the evidence shows, supports, questions, compares, or fails to establish.
-
-If the snippets are procedural, shallow, or do not support a paper-level claim, return an empty `bullet_points` list.
+Generate exactly one literature-review-style bullet point summarizing what the evidence group shows, supports, questions, compares, or fails to establish.
 
 ## View labels
-- `motivation`: why the problem matters, why the approach is needed, gaps, goals, or limitations motivating the work
+- `motivation`: why the problem matters, why the approach is needed, background, gaps, goals, or limitations motivating the work
 - `method`: how the method/model/algorithm/dataset/system works
 - `experiment/result`: evaluation setup, benchmarks, metrics, ablations, empirical findings, comparisons, trends, or limitations in results
 
