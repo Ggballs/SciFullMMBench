@@ -30,7 +30,7 @@ services:
     environment:
       HUMAN_FEEDBACK_DB_URL: postgresql+psycopg://${POSTGRES_USER:-scifull}:${POSTGRES_PASSWORD:-westlakenlp}@postgres:5432/${POSTGRES_DB:-scifullmmbench}
       SCIFULL_GOLDEN_EMBEDDING_DB_URL: postgresql+psycopg://${POSTGRES_USER:-scifull}:${POSTGRES_PASSWORD:-westlakenlp}@postgres:5432/${POSTGRES_DB:-scifullmmbench}
-      SCIFULL_EMBEDDING_SERVICE_URL: ${SCIFULL_EMBEDDING_SERVICE_URL:-}
+      SCIFULL_EMBEDDING_SERVICE_URL: ${SCIFULL_EMBEDDING_SERVICE_URL:-http://host.docker.internal:18080/embed}
       OPENREVIEW_PIPELINE_LOG_DIR: /app/logs
       HUMAN_FEEDBACK_LOG_DIR: /app/logs
       HUMAN_FEEDBACK_USERS: ${HUMAN_FEEDBACK_USERS:-}
@@ -47,6 +47,43 @@ services:
       - ${SCIFULL_LOGS_DIR:-./logs}:/app/logs
       - ${SCIFULL_OUTPUTS_DIR:-./outputs}:/app/outputs
       - /data3:/data3:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  query-writing:
+    build:
+      context: .
+      network: host
+    container_name: scifull-query-writing
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      HUMAN_FEEDBACK_DB_URL: postgresql+psycopg://${POSTGRES_USER:-scifull}:${POSTGRES_PASSWORD:-westlakenlp}@postgres:5432/${POSTGRES_DB:-scifullmmbench}
+      OPENREVIEW_PIPELINE_LOG_DIR: /app/logs
+      HUMAN_FEEDBACK_LOG_DIR: /app/logs
+      HUMAN_FEEDBACK_USERS: ${HUMAN_FEEDBACK_USERS:-}
+      GRADIO_SERVER_NAME: 0.0.0.0
+      GRADIO_SERVER_PORT: 7862
+      FINAL_JSON: ${FINAL_JSON:-outputs/final_pipeline_output.json}
+      PDF_CACHE_HOST: ${PDF_CACHE_HOST:-10.0.1.226}
+      PDF_CACHE_PORT: ${PDF_CACHE_PORT:-8763}
+    ports:
+      - "${QUERY_WRITING_PORT:-7862}:7862"
+      - "${PDF_CACHE_PORT:-8763}:8763"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./src:/app/src:ro
+      - ./scripts:/app/scripts:ro
+      - ./prompts:/app/prompts:ro
+      - ${SCIFULL_LOGS_DIR:-./logs}:/app/logs
+      - ${SCIFULL_OUTPUTS_DIR:-./outputs}:/app/outputs
+      - ${SCIFULL_PDF_CACHE_DIR:-./pdf_cache}:/app/pdf_cache
+    command:
+      - sh
+      - -c
+      - "python outputs/display_query_writing_gradio.py --port 7862"
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

@@ -69,6 +69,46 @@ human_feedback = Table(
 )
 
 
+QUERY_WRITING_TABLE = "query_writing_submissions"
+
+query_writing_submissions = Table(
+    QUERY_WRITING_TABLE,
+    metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("paper_forum_id", String(128), nullable=False),
+    Column("paper_title", Text, nullable=False, default=""),
+    Column("query_id", String(64), nullable=False),
+    Column("query_text", Text, nullable=False),
+    Column("query_type", String(8), nullable=False),
+    Column("source_view", String(64), nullable=False),
+    Column("multimodal_content", Text, nullable=False, default=""),
+    Column("textual_content", Text, nullable=False, default=""),
+    Column("multimodal_dependency", String(16), nullable=False, default="none"),
+    Column("reviewer_username", String(64), nullable=False),
+    Column(
+        "created_at",
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    ),
+    Column(
+        "updated_at",
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+        server_onupdate=text("CURRENT_TIMESTAMP"),
+    ),
+    UniqueConstraint(
+        "paper_forum_id",
+        "query_id",
+        "reviewer_username",
+        name="uq_query_writing_submission",
+    ),
+    Index("idx_query_writing_reviewer", "reviewer_username"),
+    Index("idx_query_writing_paper", "paper_forum_id"),
+)
+
+
 def configure_sql_access_logging(log_dir: Optional[Path] = None) -> None:
     """Write SQL access logs to the project logs directory."""
     target_dir = Path(log_dir or os.getenv("HUMAN_FEEDBACK_LOG_DIR") or resolve_log_dir())
@@ -396,6 +436,135 @@ def delete_query_feedback(
         )
         raise
 
+
+# ---------------------------------------------------------------------------
+# query_writing_submissions helpers
+# ---------------------------------------------------------------------------
+
+
+def ensure_query_writing_schema(engine: Optional[Engine] = None) -> None:
+    db = engine or get_engine()
+    with db.begin() as conn:
+        conn.execute(
+            text(
+                f"""
+                CREATE TABLE IF NOT EXISTS {QUERY_WRITING_TABLE} (
+                    id BIGSERIAL PRIMARY KEY,
+                    paper_forum_id VARCHAR(128) NOT NULL,
+                    paper_title TEXT NOT NULL DEFAULT '',
+                    query_id VARCHAR(64) NOT NULL,
+                    query_text TEXT NOT NULL,
+                    query_type VARCHAR(8) NOT NULL,
+                    source_view VARCHAR(64) NOT NULL,
+                    multimodal_content TEXT NOT NULL DEFAULT '',
+                    textual_content TEXT NOT NULL DEFAULT '',
+                    multimodal_dependency VARCHAR(16) NOT NULL DEFAULT 'none',
+                    reviewer_username VARCHAR(64) NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT uq_query_writing_submission
+                        UNIQUE (paper_forum_id, query_id, reviewer_username),
+                    CONSTRAINT chk_query_writing_type
+                        CHECK (query_type IN ('IR', 'QA')),
+                    CONSTRAINT chk_query_writing_multimodal_dependency
+                        CHECK (multimodal_dependency IN ('none', 'supportive', 'necessary'))
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                f"""
+                CREATE INDEX IF NOT EXISTS idx_query_writing_reviewer
+                ON {QUERY_WRITING_TABLE} (reviewer_username)
+                """
+            )
+        )
+        conn.execute(
+            text(
+                f"""
+                CREATE INDEX IF NOT EXISTS idx_query_writing_paper
+                ON {QUERY_WRITING_TABLE} (paper_forum_id)
+                """
+            )
+        )
+    logger.info("ensure_query_writing_schema: table %s ready", QUERY_WRITING_TABLE)
+
+
+def save_query_writing_submission(
+    *,
+    paper_forum_id: str,
+    paper_title: str,
+    query_id: str,
+    query_text: str,
+    query_type: str,
+    source_view: str,
+    multimodal_content: str = "",
+    textual_content: str = "",
+    multimodal_dependency: str = "none",
+    reviewer_username: str,
+    engine: Optional[Engine] = None,
+) -> None:
+    db = engine or get_engine()
+    ensure_query_writing_schema(db)
+
+    stmt = postgres_insert(query_writing_submissions).values(
+        paper_forum_id=str(paper_forum_id),
+        paper_title=str(paper_title),
+        query_id=str(query_id),
+        query_text=str(query_text),
+        query_type=str(query_type),
+        source_view=str(source_view),
+        multimodal_content=str(multimodal_content),
+        textual_content=str(textual_content),
+        multimodal_dependency=str(multimodal_dependency),
+        reviewer_username=str(reviewer_username),
+    )
+    update_columns = {
+        column.name: stmt.excluded[column.name]
+        for column in query_writing_submissions.columns
+        if column.name not in {"id", "created_at", "updated_at"}
+    }
+    update_columns["updated_at"] = text("CURRENT_TIMESTAMP")
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["paper_forum_id", "query_id", "reviewer_username"],
+        set_=update_columns,
+    )
+    logger.info(
+        "save_query_writing_submission paper=%s query=%s reviewer=%s",
+        paper_forum_id,
+        query_id,
+        reviewer_username,
+    )
+    with db.begin() as conn:
+        result = conn.execute(stmt)
+    logger.info(
+        "save_query_writing_submission done paper=%s query=%s rows=%s",
+        paper_forum_id,
+        query_id,
+        result.rowcount,
+    )
+
+
+def list_query_writing_submissions(
+    *,
+    paper_forum_id: Optional[str] = None,
+    reviewer_username: Optional[str] = None,
+    engine: Optional[Engine] = None,
+) -> list[dict[str, Any]]:
+    db = engine or get_engine()
+    ensure_query_writing_schema(db)
+
+    stmt = select(query_writing_submissions)
+    if paper_forum_id:
+        stmt = stmt.where(query_writing_submissions.c.paper_forum_id == str(paper_forum_id))
+    if reviewer_username:
+        stmt = stmt.where(query_writing_submissions.c.reviewer_username == str(reviewer_username))
+    stmt = stmt.order_by(query_writing_submissions.c.created_at.desc())
+
+    with db.begin() as conn:
+        rows = conn.execute(stmt).mappings()
+        return [dict(row) for row in rows]
 
 def list_feedback_for_query(
     paper_forum_id: str,

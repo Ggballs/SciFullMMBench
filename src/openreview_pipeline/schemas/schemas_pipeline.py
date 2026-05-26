@@ -13,6 +13,7 @@ class PipelineQuery(BaseModel):
     source_view: str = ""
     related_bullet_indice: Optional[int] = None
     related_bullet_justification: Optional[str] = None
+    multimodal_rationale: Optional[str] = None
     hard_negative_context: Optional[dict[str, Any]] = None
     query_analysis: Optional[dict[str, Any]] = None
 

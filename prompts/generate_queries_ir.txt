@@ -1,36 +1,41 @@
 You are generating IR-style literature search queries from one view of a scientific paper summary.
 
-The input contains several bullet points from the same view. Your job is to select the most retrieval-worthy bullets and generate one IR-style query for each selected bullet.
+The input contains bullet points from the same view. Select the most retrieval-worthy bullets and generate one natural literature-search query for each selected bullet.
 
-Use the retrieved examples as the main style guide. Match their plain user-search style more than the wording of the paper summary.
+Use the retrieved examples as the main style guide. Prefer PASA-style user searches: plain, natural, and often mildly underspecified.
 
-Golden IR exemplar style:
-- Most queries sound like "Is there any paper/method/tool/dataset for X?", "Are there papers that use Y for Z?", "How to do X?", or "Find papers on X."
-- They usually ask for one task, method family, dataset, evaluation need, or research phenomenon.
-- They are often naturally underspecified, like real search queries.
-- They use plain words such as paper, method, tool, dataset, study, evaluate, measure, check, improve, or help.
-- They do not reconstruct the exact target paper or include every technical detail.
-- For method details, write the plain search need instead of the internal component name: prefer "using document structure" over "document ID embeddings", "combining evidence across passages" over naming an attention pattern, and "stable training for rerankers" over naming a fixed anchor.
+Query style:
+- Write natural-language search requests, not keyword strings or mini-abstracts.
+- Use one clear retrieval hook: a task, method family, dataset/evaluation need, comparison, trade-off, or research phenomenon.
+- Be broad enough to retrieve a small family of related papers, but keep one distinguishing axis so the query is not generic.
+- Do not reverse-engineer the exact source paper.
+- Avoid exact numbers, table/figure/appendix names, benchmark names, model-family names, and internal implementation details unless they are the only natural retrieval hook.
+- If a bullet is too narrow, rewrite it one abstraction level broader while preserving the main research need.
+- Avoid combining multiple bullets or stacking several constraints in one query.
 
-IR-style queries should:
-- be natural-language search requests, not keyword strings
-- focus on one clear retrieval hook
-- be general enough to retrieve a small family of related papers, not only the exact source paper
-- avoid sounding like a paper abstract
-- avoid phrases that reveal the source paper, such as "this paper", "the authors", "the study", or "the results show"
-- avoid combining multiple bullets into one query
-- avoid brittle exact numbers unless essential
-- avoid unsupported facts
-
-Selection rule:
-- Select bullets that are most distinctive, memorable, or useful for retrieving this paper or closely related papers.
+Selection:
+- Select the bullets that are most distinctive, memorable, or useful for retrieval.
 - Each generated query must be grounded in exactly one bullet.
-- Generate exactly {num_queries} queries. Prefer using different bullets; reuse a bullet only if the view has too few strong bullets.
+- Generate exactly {num_queries} queries.
+- Prefer different bullets; reuse a bullet only if the view has too few strong bullets.
 - If reusing a bullet, change the retrieval angle instead of paraphrasing the same query.
 
-Multimodal rule:
-- If a selected bullet has non-empty multimodal_ref and the query is inspired by that evidence, set is_multimodal to true.
-- Otherwise set is_multimodal to false.
+Multimodal label:
+- Decouple bullet evidence from query label.
+- `multimodal_dependency` on a bullet means the bullet's claim was supported by a figure/table/equation/algorithm.
+- `multimodal_dependency_rationale` explains why the bullet's claim is `none`, `incidental`, `supportive`, or `necessary`; use this rationale when deciding whether a query should be multimodal.
+- `is_multimodal` on a query means the query itself requires that non-textual evidence to judge relevance.
+- If the query is broad or topic-level and relevance can be inferred from prose alone, set `is_multimodal=false`.
+- If the query asks for measured results, comparisons, trends, ablations, trade-offs, or other evidence-dependent outcomes, set `is_multimodal=true` only when the referenced non-textual evidence is genuinely needed.
+- Supportive multimodal evidence is not enough by itself. Do not add table/figure wording merely to force `is_multimodal=true`.
+- Aim for at most one controlled evidence-dependent multimodal query when it naturally fits. If no natural evidence-dependent query exists, `is_multimodal=false` for all queries is correct.
+- Include `multimodal_rationale` only when `is_multimodal=true`. Cite the selected bullet's dependency rationale and state why the query would be weakened without the multimodal evidence.
+- If `is_multimodal=false`, omit `multimodal_rationale`.
+
+Multimodal examples:
+- Broad topic query: "Find papers on memory-efficient decentralized training for mixture-of-experts language models." -> `is_multimodal=false`
+- Evidence-dependent but not too specific: "Find papers evaluating memory and communication trade-offs in decentralized mixture-of-experts training." -> `is_multimodal=true`
+- Too specific, reject: "Find papers showing 55GB to 35GB memory reduction and 33% communication savings on 16 standalone GPUs."
 
 Generate {num_queries} IR-style queries.
 
@@ -58,6 +63,7 @@ Output valid JSON only:
       "query_type": "IR",
       "view_label": "{view_label}",
       "is_multimodal": true,
+      "multimodal_rationale": "The selected bullet's table-backed comparison is necessary to judge relevance because the query asks for measured trade-offs, not only the general topic.",
       "related_bullet_indice": 1,
       "related_bullet_justification": "Briefly explain why this bullet was selected and why the query is a good IR retrieval hook."
     }}

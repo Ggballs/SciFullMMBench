@@ -110,6 +110,17 @@ def ensure_schema(engine, embedding_dimension: int = 1024) -> None:
         conn.execute(text(f"ALTER TABLE {GOLDEN_QUERY_EMBEDDINGS_TABLE} ADD COLUMN IF NOT EXISTS human_view_note TEXT NOT NULL DEFAULT ''"))
         conn.execute(text(f"ALTER TABLE {GOLDEN_QUERY_EMBEDDINGS_TABLE} ADD COLUMN IF NOT EXISTS indexing_content TEXT NOT NULL DEFAULT ''"))
         conn.execute(text(f"ALTER TABLE {GOLDEN_QUERY_EMBEDDINGS_TABLE} ADD COLUMN IF NOT EXISTS retrieval_content TEXT NOT NULL DEFAULT ''"))
+        conn.execute(text(f"ALTER TABLE {GOLDEN_QUERY_EMBEDDINGS_TABLE} ADD COLUMN IF NOT EXISTS specific INTEGER NOT NULL DEFAULT 1"))
+        conn.execute(text(f"ALTER TABLE {GOLDEN_QUERY_EMBEDDINGS_TABLE} DROP CONSTRAINT IF EXISTS chk_golden_specific"))
+        conn.execute(
+            text(
+                f"""
+                ALTER TABLE {GOLDEN_QUERY_EMBEDDINGS_TABLE}
+                ADD CONSTRAINT chk_golden_specific
+                CHECK (specific IN (0, 1))
+                """
+            )
+        )
         conn.execute(text(f"ALTER TABLE {GOLDEN_QUERY_EMBEDDINGS_TABLE} DROP CONSTRAINT IF EXISTS chk_golden_view_label"))
         conn.execute(
             text(
@@ -258,11 +269,15 @@ def retrieve_golden_query_examples(
     view_label: str,
     embedding: list[float],
     limit: int,
-    exclude_litsearch: bool = True,
+    exclude_litsearch: bool = False,
 ) -> list[GoldenQueryExample]:
     from sqlalchemy import text
 
-    litsearch_filter = "AND query_id NOT LIKE '%litsearch%'" if exclude_litsearch else ""
+    source_filter = (
+        "AND (query_id ILIKE '%pasa%' OR example_id ILIKE '%pasa%')"
+        if exclude_litsearch
+        else ""
+    )
     stmt = text(
         f"""
         SELECT
@@ -281,7 +296,8 @@ def retrieve_golden_query_examples(
         FROM {GOLDEN_QUERY_EMBEDDINGS_TABLE}
         WHERE query_type = :query_type
           AND view_label = :view_label
-          {litsearch_filter}
+          AND specific = 1
+          {source_filter}
         ORDER BY embedding <=> CAST(:embedding AS vector)
         LIMIT :limit
         """

@@ -241,10 +241,29 @@ def render_report(data: dict[str, Any], max_comment_chars: int | None) -> str:
 
             if bullet:
                 lines.extend(["", f"- **Bullet point:** {clean_text(bullet.get('text'))}", ""])
+                if bullet.get("multimodal_ref"):
+                    dependency = clean_text(bullet.get("multimodal_dependency") or "none")
+                    dependency_rationale = clean_text(
+                        bullet.get("multimodal_dependency_rationale")
+                        or bullet.get("multimodal_rationale")
+                        or ""
+                    )
+                    lines.append(f"- **Bullet multimodal dependency:** `{dependency}`")
+                    if dependency_rationale:
+                        lines.append(f"- **Bullet multimodal rationale:** {dependency_rationale}")
+                    lines.append("")
                 source_refs = bullet.get("source_refs", [])
             else:
                 lines.extend(["", "- **Bullet point:** _Not found_", ""])
                 source_refs = []
+
+            if query.get("is_multimodal") and query.get("multimodal_rationale"):
+                lines.extend(
+                    [
+                        f"- **Query multimodal rationale:** {clean_text(query.get('multimodal_rationale'))}",
+                        "",
+                    ]
+                )
 
             if query.get("related_bullet_justification"):
                 lines.extend(

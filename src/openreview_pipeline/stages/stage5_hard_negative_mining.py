@@ -1,6 +1,7 @@
 import json
 import hashlib
 import logging
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from abc import ABC, abstractmethod
@@ -20,6 +21,84 @@ from openreview_pipeline.utils import load_json, load_prompt_template, save_json
 
 logger = logging.getLogger(__name__)
 PROMPT_DIR = Path(__file__).resolve().parents[3] / "prompts"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEEPSEEK_MODEL = "deepseek-v4-pro"
+
+
+def _clean_api_tokens(raw_tokens: Any) -> List[str]:
+    if raw_tokens is None:
+        return []
+    if isinstance(raw_tokens, str):
+        raw_tokens = re.split(r"[,\s]+", raw_tokens)
+    if not isinstance(raw_tokens, list):
+        return []
+    return [str(token).strip() for token in raw_tokens if str(token).strip()]
+
+
+def _deepseek_tokens_from_env() -> List[str]:
+    return (
+        _clean_api_tokens(os.environ.get("SCIFULL_HARD_NEGATIVE_LLM_API_TOKENS"))
+        or _clean_api_tokens(os.environ.get("DEEPSEEK_API_KEYS"))
+        or _clean_api_tokens(os.environ.get("DEEPSEEK_API_KEY"))
+    )
+
+
+def resolve_hard_negative_llm_settings(
+    config: dict[str, Any],
+    *,
+    base_url: Optional[str] = None,
+    model: Optional[str] = None,
+) -> dict[str, object]:
+    stages_config = config.get("stages", {})
+    if not isinstance(stages_config, dict):
+        stages_config = {}
+    stage_config = stages_config.get("hard_negative_mining", {})
+    if not isinstance(stage_config, dict):
+        stage_config = {}
+    stage_llm_config = stage_config.get("llm", {})
+    if not isinstance(stage_llm_config, dict):
+        stage_llm_config = {}
+
+    global_llm_config = config.get("llm", {})
+    if not isinstance(global_llm_config, dict):
+        global_llm_config = {}
+
+    api_tokens = _clean_api_tokens(stage_llm_config.get("api_tokens")) or _deepseek_tokens_from_env()
+    if not api_tokens:
+        raise ValueError(
+            "Missing DeepSeek keys for hard-negative mining. Configure "
+            "stages.hard_negative_mining.llm.api_tokens, DEEPSEEK_API_KEYS, "
+            "DEEPSEEK_API_KEY, or SCIFULL_HARD_NEGATIVE_LLM_API_TOKENS."
+        )
+
+    settings = {
+        "base_url": stage_llm_config.get("base_url") or DEEPSEEK_BASE_URL,
+        "model": stage_llm_config.get("model") or DEEPSEEK_MODEL,
+        "api_tokens": api_tokens,
+        "per_key_request_interval_seconds": stage_llm_config.get(
+            "per_key_request_interval_seconds",
+            global_llm_config.get("per_key_request_interval_seconds", 0.0),
+        ),
+        "per_key_max_concurrent_requests": stage_llm_config.get(
+            "per_key_max_concurrent_requests",
+            global_llm_config.get("per_key_max_concurrent_requests", 1),
+        ),
+        "max_retries": stage_llm_config.get("max_retries", global_llm_config.get("max_retries", 3)),
+        "retry_backoff_seconds": stage_llm_config.get(
+            "retry_backoff_seconds",
+            global_llm_config.get("retry_backoff_seconds", 8.0),
+        ),
+        "max_tokens": stage_llm_config.get("max_tokens", global_llm_config.get("max_tokens", 4096)),
+        "temperature": stage_llm_config.get("temperature", global_llm_config.get("temperature", 0.0)),
+        "seed": stage_llm_config.get("seed", global_llm_config.get("seed")),
+    }
+
+    if base_url:
+        settings["base_url"] = base_url
+    if model:
+        settings["model"] = model
+
+    return settings
 
 
 class ScholarCandidatePaper(BaseModel):
@@ -81,6 +160,7 @@ class HardNegativeMiningResult(BaseModel):
     is_multimodal: bool = False
     related_bullet_indice: Optional[int] = None
     related_bullet_justification: Optional[str] = None
+    multimodal_rationale: Optional[str] = None
     hard_negatives: List[HardNegativePaper]
     positives: List[PositivePaper] = Field(default_factory=list)
     keywords_extracted: List[str]
@@ -686,6 +766,7 @@ class HardNegativeMiner:
             is_multimodal=query.is_multimodal,
             related_bullet_indice=query.related_bullet_indice,
             related_bullet_justification=query.related_bullet_justification,
+            multimodal_rationale=query.multimodal_rationale,
             hard_negatives=hard_negatives,
             positives=positives,
             keywords_extracted=keywords,

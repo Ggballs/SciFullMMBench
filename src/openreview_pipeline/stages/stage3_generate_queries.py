@@ -44,7 +44,7 @@ class GoldenExampleRetriever(Protocol):
         view_label: str,
         embedding: list[float],
         limit: int,
-        exclude_litsearch: bool = True,
+        exclude_litsearch: bool = False,
     ) -> list[GoldenQueryExample]:
         ...
 
@@ -54,6 +54,8 @@ class BulletContext:
     index: int
     text: str
     multimodal_ref: list[str]
+    multimodal_dependency: str = "none"
+    multimodal_dependency_rationale: str = ""
 
 
 @dataclass(frozen=True)
@@ -73,7 +75,7 @@ class PostgresGoldenExampleRetriever:
         view_label: str,
         embedding: list[float],
         limit: int,
-        exclude_litsearch: bool = True,
+        exclude_litsearch: bool = False,
     ) -> list[GoldenQueryExample]:
         return retrieve_golden_query_examples(
             self.engine,
@@ -164,7 +166,15 @@ class QueryGenerator:
             or query_data.get("relation_justification")
         )
 
-    def _view_bullets(self, view) -> list[tuple[int, str, list[str]]]:
+    def _extract_multimodal_rationale(self, query_data: dict) -> Optional[str]:
+        return (
+            query_data.get("multimodal_rationale")
+            or query_data.get("is_multimodal_rationale")
+            or query_data.get("multimodal_label_rationale")
+            or query_data.get("multimodal_justification")
+        )
+
+    def _view_bullets(self, view) -> list[tuple[int, str, list[str], str, str]]:
         bullets = []
         for idx, bullet in enumerate(getattr(view, "bullet_points", []) or [], 1):
             bullet_index = int(getattr(bullet, "index", idx) or idx)
@@ -172,7 +182,23 @@ class QueryGenerator:
             if not bullet_text:
                 continue
             multimodal_ref = getattr(bullet, "multimodal_ref", []) or []
-            bullets.append((bullet_index, bullet_text, [str(ref) for ref in multimodal_ref]))
+            multimodal_dependency = str(
+                getattr(bullet, "multimodal_dependency", "none") or "none"
+            ).strip().lower()
+            if multimodal_dependency not in {"none", "incidental", "supportive", "necessary"}:
+                multimodal_dependency = "none"
+            multimodal_dependency_rationale = str(
+                getattr(bullet, "multimodal_dependency_rationale", "") or ""
+            ).strip()
+            bullets.append(
+                (
+                    bullet_index,
+                    bullet_text,
+                    [str(ref) for ref in multimodal_ref],
+                    multimodal_dependency,
+                    multimodal_dependency_rationale,
+                )
+            )
         return bullets
 
     def _retrieve_prompt_context(
@@ -185,8 +211,14 @@ class QueryGenerator:
         view_label = normalize_view_label(str(view.view_name))
         raw_bullets = self._view_bullets(view)
         bullets = [
-            BulletContext(index=index, text=text, multimodal_ref=multimodal_ref)
-            for index, text, multimodal_ref in raw_bullets
+            BulletContext(
+                index=index,
+                text=text,
+                multimodal_ref=multimodal_ref,
+                multimodal_dependency=multimodal_dependency,
+                multimodal_dependency_rationale=multimodal_dependency_rationale,
+            )
+            for index, text, multimodal_ref, multimodal_dependency, multimodal_dependency_rationale in raw_bullets
         ]
         if not raw_bullets:
             return RetrievedPromptContext(bullets=[], examples=[])
@@ -197,7 +229,7 @@ class QueryGenerator:
             for part in [
                 str(paper_title or "").strip(),
                 view_summary,
-                " ".join(text for _, text, _ in raw_bullets),
+                " ".join(text for _, text, _, _, _ in raw_bullets),
             ]
             if part
         )
@@ -229,6 +261,11 @@ class QueryGenerator:
             refs = ", ".join(bullet.multimodal_ref) if bullet.multimodal_ref else "none"
             parts.append(f"Bullet {bullet.index}: {bullet.text}")
             parts.append(f"multimodal_ref: {refs}")
+            parts.append(f"multimodal_dependency: {bullet.multimodal_dependency}")
+            parts.append(
+                "multimodal_dependency_rationale: "
+                f"{bullet.multimodal_dependency_rationale or 'none provided'}"
+            )
             parts.append("")
         return "\n".join(parts).strip()
 
@@ -267,12 +304,28 @@ class QueryGenerator:
 
     def _parse_response(self, response: str, *, query_type: str, view_name: str) -> list[RetrievalQuery]:
         queries: list[RetrievalQuery] = []
-        json_match = re.search(r"\{[\s\S]*\}", response)
-        if not json_match:
+
+        cleaned = str(response or "").strip()
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+
+        data: Any = None
+        for candidate in [
+            cleaned,
+            (re.search(r"\{[\s\S]*\}", cleaned).group() if re.search(r"\{[\s\S]*\}", cleaned) else ""),
+            (re.search(r"\[[\s\S]*\]", cleaned).group() if re.search(r"\[[\s\S]*\]", cleaned) else ""),
+        ]:
+            if not candidate:
+                continue
+            try:
+                data = json.loads(candidate)
+                break
+            except json.JSONDecodeError:
+                continue
+        if data is None:
             return queries
 
-        data = json.loads(json_match.group())
-        raw_queries = data.get("queries", [])
+        raw_queries = data if isinstance(data, list) else data.get("queries", [])
         if not isinstance(raw_queries, list):
             return queries
 
@@ -282,11 +335,15 @@ class QueryGenerator:
                 is_multimodal = bool(item.get("is_multimodal", False))
                 related_bullet_indice = self._extract_related_bullet_indice(item)
                 related_bullet_justification = self._extract_related_bullet_justification(item)
+                multimodal_rationale = (
+                    self._extract_multimodal_rationale(item) if is_multimodal else None
+                )
             else:
                 query_text = str(item).strip()
                 is_multimodal = False
                 related_bullet_indice = None
                 related_bullet_justification = None
+                multimodal_rationale = None
 
             query_text = query_text.replace("(multimodal)", "").strip()
             if query_text:
@@ -298,6 +355,7 @@ class QueryGenerator:
                         source_view=view_name,
                         related_bullet_indice=related_bullet_indice,
                         related_bullet_justification=related_bullet_justification,
+                        multimodal_rationale=multimodal_rationale,
                     )
                 )
         return queries
@@ -326,27 +384,53 @@ class QueryGenerator:
                     view=view,
                     prompt_context=prompt_context,
                 )
-                response = self.llm.generate(prompt)
-                try:
-                    parsed_queries = self._parse_response(
-                        response,
-                        query_type=query_type,
-                        view_name=view_name,
-                    )
-                    expected = self._get_queries_count(query_type, view_name)
-                    if len(parsed_queries) != expected:
-                        raise ValueError(
-                            f"Expected {expected} queries, got {len(parsed_queries)}"
+                expected = self._get_queries_count(query_type, view_name)
+                parsed_queries: list[RetrievalQuery] = []
+                best_queries: list[RetrievalQuery] = []
+                response = ""
+                for attempt in range(3):
+                    response = self.llm.generate(prompt)
+                    try:
+                        parsed_queries = self._parse_response(
+                            response,
+                            query_type=query_type,
+                            view_name=view_name,
                         )
-                    queries.extend(parsed_queries)
-                except Exception as exc:
-                    logger.warning("Failed to parse %s/%s query response: %s", query_type, view_name, exc)
-                    logger.debug("Raw response: %s", response[:500])
+                        if len(parsed_queries) > len(best_queries):
+                            best_queries = parsed_queries
+                        if len(parsed_queries) != expected:
+                            raise ValueError(
+                                f"Expected {expected} queries, got {len(parsed_queries)}"
+                            )
+                        break
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to parse %s/%s query response on attempt %s: %s",
+                            query_type,
+                            view_name,
+                            attempt + 1,
+                            exc,
+                        )
+                        logger.debug("Raw response: %s", response[:500])
+                        parsed_queries = []
+                if not parsed_queries and best_queries:
+                    logger.warning(
+                        "Using %s/%s parsed %s/%s queries for paper %s after retries.",
+                        len(best_queries),
+                        expected,
+                        query_type,
+                        view_name,
+                        paper_id,
+                    )
+                    parsed_queries = best_queries
+                queries.extend(parsed_queries)
 
         if len(queries) != expected_query_count:
-            raise ValueError(
-                f"Generated {len(queries)} queries for paper {paper_id}, "
-                f"expected {expected_query_count}."
+            logger.warning(
+                "Generated %s queries for paper %s, expected %s; continuing with parsed queries.",
+                len(queries),
+                paper_id,
+                expected_query_count,
             )
         if not queries:
             raise ValueError(f"No queries generated for paper {paper_id}.")

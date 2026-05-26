@@ -9,6 +9,7 @@ from tqdm.auto import tqdm
 from openreview_pipeline.schemas import DownloadedPapersDataset
 from openreview_pipeline.schemas.schemas_filter import FilteredPapersDataset, FilterResult, FilterRuleResult
 from openreview_pipeline.utils import load_json, save_json
+from openreview_pipeline.utils.multimodal_evidence import build_multimodal_filter_diagnostics
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,11 @@ class RuleConfig:
 
     @property
     def min_multimodal_mentions(self) -> int:
-        return self._config.get("multimodal_info", {}).get("min_multimodal_mentions", 2)
+        multimodal_config = self._config.get("multimodal_info", {})
+        return multimodal_config.get(
+            "min_meaningful_discussions",
+            multimodal_config.get("min_multimodal_mentions", 2),
+        )
 
     @property
     def multimodal_keywords(self) -> List[str]:
@@ -123,26 +128,14 @@ class RuleBasedFilter:
         citation_ratio = citation_count / word_count
         return citation_ratio >= self.config.citation_threshold
 
+    def analyze_multimodal_info(self, paper: Dict) -> Dict:
+        return build_multimodal_filter_diagnostics(
+            paper,
+            min_meaningful_snippets=self.config.min_multimodal_mentions,
+        )
+
     def check_multimodal_info(self, paper: Dict) -> bool:
-        content_sources = self.config.content_sources
-        multimodal_keywords = self.config.multimodal_keywords
-
-        content_parts = []
-        for source in content_sources:
-            if source in ["abstract", "title"]:
-                content_parts.append(paper.get("paper", {}).get(source, "").lower())
-            elif source in paper:
-                content_parts.append(str(paper.get(source, "")).lower())
-            elif source in paper.get("paper", {}):
-                content_parts.append(paper.get("paper", {}).get(source, "").lower())
-
-        combined_content = " ".join(content_parts)
-
-        mention_count = 0
-        for keyword in multimodal_keywords:
-            mention_count += len(re.findall(r'\b' + re.escape(keyword) + r'\b', combined_content))
-
-        return mention_count >= self.config.min_multimodal_mentions
+        return bool(self.analyze_multimodal_info(paper).get("passed"))
 
     def apply(
         self,
@@ -192,7 +185,8 @@ class RuleBasedFilter:
 
                 accepted = self.check_accepted(paper_dict)
                 similar_paper = self.check_similar_paper(paper_dict)
-                multimodal_info = self.check_multimodal_info(paper_dict)
+                multimodal_diagnostics = self.analyze_multimodal_info(paper_dict)
+                multimodal_info = bool(multimodal_diagnostics.get("passed"))
 
                 passed = accepted and not similar_paper and multimodal_info
 
@@ -208,6 +202,16 @@ class RuleBasedFilter:
                             accepted=accepted,
                             similar_paper=similar_paper,
                             multimodal_info=multimodal_info,
+                            multimodal_evidence_refs=multimodal_diagnostics.get("matched_evidence_refs", []),
+                            multimodal_source_refs=multimodal_diagnostics.get("source_refs", []),
+                            meaningful_multimodal_snippet_count=int(
+                                multimodal_diagnostics.get("meaningful_snippet_count", 0)
+                            ),
+                            total_multimodal_snippet_count=int(
+                                multimodal_diagnostics.get("total_evidence_snippet_count", 0)
+                            ),
+                            multimodal_evidence_groups=multimodal_diagnostics.get("groups", []),
+                            multimodal_evidence_reason=multimodal_diagnostics.get("reason"),
                         ),
                     )
                 )

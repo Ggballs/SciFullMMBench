@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+import yaml
 
 from openreview_pipeline.llm import LLMBackend
 from openreview_pipeline.schemas.schemas import DownloadedPapersDataset
@@ -22,15 +25,480 @@ from openreview_pipeline.schemas.schemas_queries import (
 )
 from openreview_pipeline.schemas.schemas_summarize import SummarizedPapersDataset
 from openreview_pipeline.utils import load_json, load_prompt_template, save_json
+from openreview_pipeline.utils.db.golden_query_embeddings import (
+    GOLDEN_QUERY_EMBEDDINGS_TABLE,
+    get_engine as get_golden_query_embedding_engine,
+)
+from openreview_pipeline.utils.embeddings import build_text_embedder
 from openreview_pipeline.utils.query_analysis import llm_judge, rule_judge
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_REFERENCE_STYLE_PATHS = {
+    "litsearch": Path("outputs/query_analysis_comparison/03_litsearch_human/style_analysis.json"),
+    "pasa": Path("outputs/query_analysis_comparison/02_pasa_realscholar/style_analysis.json"),
+}
 
 
 def _safe_mean(values: list[float]) -> Optional[float]:
     if not values:
         return None
     return float(sum(values) / len(values))
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _resolve_repo_path(path: Path | str) -> Path:
+    candidate = Path(path).expanduser()
+    if candidate.is_absolute():
+        return candidate
+    return (_repo_root() / candidate).resolve()
+
+
+def _load_stage4_embedding_config(config_path: Optional[Path | str]) -> dict[str, Any]:
+    config: dict[str, Any] = {}
+    if config_path:
+        resolved = Path(config_path).expanduser()
+        if resolved.exists():
+            with resolved.open("r", encoding="utf-8") as handle:
+                loaded = yaml.safe_load(handle) or {}
+                if isinstance(loaded, dict):
+                    config = loaded
+    stages_config = config.get("stages", {}) if isinstance(config.get("stages"), dict) else {}
+    generate_config = stages_config.get("generate_queries", {}) if isinstance(stages_config.get("generate_queries"), dict) else {}
+    analysis_config = stages_config.get("query_analysis", {}) if isinstance(stages_config.get("query_analysis"), dict) else {}
+    embedding_config = analysis_config.get("embedding_analysis", {}) if isinstance(analysis_config.get("embedding_analysis"), dict) else {}
+    reference_paths = embedding_config.get("reference_style_paths", {}) if isinstance(embedding_config.get("reference_style_paths"), dict) else {}
+    return {
+        "enabled": bool(embedding_config.get("enabled", True)),
+        "bge_model_path": str(
+            embedding_config.get("bge_model_path")
+            or generate_config.get("bge_model_path")
+            or "/data3/yangyinghao/bge-m3"
+        ),
+        "bge_device": str(
+            os.environ.get("SCIFULL_QUERY_ANALYSIS_EMBEDDING_DEVICE")
+            or embedding_config.get("bge_device")
+            or generate_config.get("bge_device")
+            or "cuda:2"
+        ),
+        "embedding_service_url": os.environ.get(
+            "SCIFULL_EMBEDDING_SERVICE_URL",
+            str(
+                embedding_config.get("embedding_service_url")
+                or generate_config.get("embedding_service_url")
+                or ""
+            ),
+        ).strip(),
+        "embedding_service_timeout": float(
+            embedding_config.get(
+                "embedding_service_timeout",
+                generate_config.get("embedding_service_timeout", 120.0),
+            )
+        ),
+        "golden_embedding_db_url": os.environ.get(
+            "SCIFULL_GOLDEN_EMBEDDING_DB_URL",
+            str(
+                embedding_config.get("golden_embedding_db_url")
+                or generate_config.get("golden_embedding_db_url")
+                or ""
+            ),
+        ).strip(),
+        "reference_style_paths": {
+            name: _resolve_repo_path(reference_paths.get(name) or default_path)
+            for name, default_path in DEFAULT_REFERENCE_STYLE_PATHS.items()
+        },
+    }
+
+
+def _extract_reference_queries(style_analysis_path: Path) -> list[str]:
+    if not style_analysis_path.is_file():
+        return []
+    try:
+        with style_analysis_path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except Exception as exc:
+        logger.warning("Could not load reference style analysis %s: %s", style_analysis_path, exc)
+        return []
+
+    queries: list[str] = []
+    semantic_items = (
+        data.get("metrics", {})
+        .get("combined", {})
+        .get("semantic_constraint_analysis", {})
+        .get("per_query", [])
+    )
+    if isinstance(semantic_items, list):
+        for item in semantic_items:
+            if isinstance(item, dict):
+                text = str(item.get("query", "")).strip()
+                if text:
+                    queries.append(text)
+    if not queries:
+        for item in data.get("representative_examples", []) or []:
+            if isinstance(item, dict):
+                text = str(item.get("query", "")).strip()
+                if text:
+                    queries.append(text)
+    return queries
+
+
+def _parse_vector_text(value: Any) -> list[float]:
+    if isinstance(value, list):
+        return [float(item) for item in value]
+    text_value = str(value or "").strip()
+    if text_value.startswith("[") and text_value.endswith("]"):
+        text_value = text_value[1:-1]
+    if not text_value:
+        return []
+    return [float(item) for item in text_value.split(",") if item.strip()]
+
+
+def _golden_source_label(query_id: str, example_id: str) -> str:
+    text_value = f"{query_id} {example_id}".lower()
+    if "pasa" in text_value:
+        return "pasa"
+    if "litsearch" in text_value:
+        return "litsearch"
+    return "golden"
+
+
+def _load_reference_records_from_golden_db(db_url: str) -> tuple[list[dict[str, Any]], list[list[float]]]:
+    from sqlalchemy import text
+
+    if not db_url:
+        return [], []
+    engine = get_golden_query_embedding_engine(db_url)
+    stmt = text(
+        f"""
+        SELECT
+          example_id,
+          query_id,
+          query_type,
+          view_label,
+          query_text,
+          embedding::text AS embedding_text
+        FROM {GOLDEN_QUERY_EMBEDDINGS_TABLE}
+        WHERE query_type = 'IR'
+          AND specific = 1
+          AND (
+            query_id ILIKE '%pasa%'
+            OR example_id ILIKE '%pasa%'
+            OR query_id ILIKE '%litsearch%'
+            OR example_id ILIKE '%litsearch%'
+          )
+        ORDER BY query_id, view_label
+        """
+    )
+    records: list[dict[str, Any]] = []
+    embeddings: list[list[float]] = []
+    with engine.begin() as conn:
+        rows = conn.execute(stmt).mappings()
+        for row in rows:
+            embedding = _parse_vector_text(row["embedding_text"])
+            if not embedding:
+                continue
+            query_id = str(row["query_id"])
+            example_id = str(row["example_id"])
+            records.append(
+                {
+                    "dataset": _golden_source_label(query_id, example_id),
+                    "paper_id": "",
+                    "paper_title": "",
+                    "source_view": str(row["view_label"]),
+                    "query_type": str(row["query_type"]),
+                    "query_id": query_id,
+                    "example_id": example_id,
+                    "query_text": str(row["query_text"]),
+                    "reference_source": "golden_query_embeddings",
+                }
+            )
+            embeddings.append(embedding)
+    return records, embeddings
+
+
+def _pca_2d(vectors: list[list[float]]) -> list[list[float]]:
+    import numpy as np
+
+    if not vectors:
+        return []
+    matrix = np.array(vectors, dtype=float)
+    if matrix.ndim != 2 or matrix.shape[0] == 0:
+        return []
+    if matrix.shape[0] == 1:
+        return [[0.0, 0.0]]
+    matrix = matrix - matrix.mean(axis=0, keepdims=True)
+    _, _, vt = np.linalg.svd(matrix, full_matrices=False)
+    components = vt[: min(2, vt.shape[0])].T
+    coords = matrix @ components
+    if coords.shape[1] == 1:
+        coords = np.concatenate([coords, np.zeros((coords.shape[0], 1))], axis=1)
+    return [[float(x), float(y)] for x, y in coords[:, :2]]
+
+
+def _centroid_distance_summary(points: list[dict[str, Any]], label_key: str) -> dict[str, Any]:
+    import math
+    from collections import defaultdict
+
+    groups: dict[str, list[tuple[float, float]]] = defaultdict(list)
+    for point in points:
+        label = str(point.get(label_key, "") or "unknown")
+        if not label or label == "unknown":
+            continue
+        groups[label].append((float(point.get("x", 0.0)), float(point.get("y", 0.0))))
+    centroids = {
+        label: (
+            sum(x for x, _ in coords) / len(coords),
+            sum(y for _, y in coords) / len(coords),
+        )
+        for label, coords in groups.items()
+        if coords
+    }
+    within = {}
+    for label, coords in groups.items():
+        cx, cy = centroids[label]
+        within[label] = (
+            sum(math.dist((x, y), (cx, cy)) for x, y in coords) / len(coords)
+            if coords
+            else None
+        )
+    between = {}
+    labels = sorted(centroids)
+    for idx, left in enumerate(labels):
+        for right in labels[idx + 1 :]:
+            between[f"{left}__{right}"] = math.dist(centroids[left], centroids[right])
+    within_values = [value for value in within.values() if value is not None]
+    between_values = list(between.values())
+    mean_within = sum(within_values) / len(within_values) if within_values else None
+    mean_between = sum(between_values) / len(between_values) if between_values else None
+    separation_ratio = (
+        float(mean_between / mean_within)
+        if mean_between is not None and mean_within not in (None, 0)
+        else None
+    )
+    return {
+        "group_counts": {label: len(coords) for label, coords in groups.items()},
+        "centroids": {label: [float(x), float(y)] for label, (x, y) in centroids.items()},
+        "within_cluster_mean_distance": within,
+        "between_centroid_distance": between,
+        "mean_within_cluster_distance": mean_within,
+        "mean_between_centroid_distance": mean_between,
+        "separation_ratio": separation_ratio,
+    }
+
+
+def _plot_embedding_projection(
+    points: list[dict[str, Any]],
+    *,
+    color_key: str,
+    title: str,
+    output_path: Path,
+) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    colors = [
+        "#2563eb",
+        "#dc2626",
+        "#059669",
+        "#7c3aed",
+        "#d97706",
+        "#0891b2",
+        "#be123c",
+        "#4b5563",
+    ]
+    labels = []
+    for point in points:
+        label = str(point.get(color_key, "") or "unknown")
+        if label not in labels:
+            labels.append(label)
+
+    fig, ax = plt.subplots(figsize=(8.8, 6.2))
+    for idx, label in enumerate(labels):
+        subset = [point for point in points if str(point.get(color_key, "") or "unknown") == label]
+        ax.scatter(
+            [point["x"] for point in subset],
+            [point["y"] for point in subset],
+            s=46 if label == "generated" else 28,
+            alpha=0.82 if label == "generated" else 0.55,
+            color=colors[idx % len(colors)],
+            label=f"{label} (n={len(subset)})",
+            edgecolors="white",
+            linewidths=0.4,
+        )
+    ax.axhline(0, color="#e5e7eb", linewidth=0.8)
+    ax.axvline(0, color="#e5e7eb", linewidth=0.8)
+    ax.set_title(title)
+    ax.set_xlabel("PC1")
+    ax.set_ylabel("PC2")
+    ax.legend(loc="best", frameon=True)
+    ax.grid(alpha=0.18)
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=180)
+    plt.close(fig)
+
+
+def write_query_embedding_analysis(
+    *,
+    artifact: QueryAnalysisDataset,
+    output_dir: Path,
+    config_path: Optional[Path | str],
+) -> Optional[Path]:
+    settings = _load_stage4_embedding_config(config_path)
+    if not settings["enabled"]:
+        return None
+
+    generated_records = []
+    for paper in artifact.papers:
+        for query in paper.queries:
+            generated_records.append(
+                {
+                    "dataset": "generated",
+                    "paper_id": paper.paper_id,
+                    "paper_title": paper.paper_title,
+                    "source_view": query.source_view or "unknown",
+                    "query_text": query.query_text,
+                }
+            )
+
+    reference_records: list[dict[str, Any]] = []
+    reference_embeddings: list[list[float]] = []
+    try:
+        reference_records, reference_embeddings = _load_reference_records_from_golden_db(
+            str(settings["golden_embedding_db_url"] or "")
+        )
+    except Exception as exc:
+        logger.warning(
+            "Could not load golden reference embeddings from PostgreSQL; "
+            "falling back to reference style JSON without view labels: %s",
+            exc,
+        )
+    if not reference_records:
+        for dataset_name, style_path in settings["reference_style_paths"].items():
+            for query_text in _extract_reference_queries(Path(style_path)):
+                reference_records.append(
+                    {
+                        "dataset": dataset_name,
+                        "paper_id": "",
+                        "paper_title": "",
+                        "source_view": "",
+                        "query_text": query_text,
+                        "reference_source": "style_analysis_json",
+                    }
+                )
+
+    records = generated_records + reference_records
+    if len(records) < 2:
+        logger.warning("Skipping query embedding analysis: only %s query records available.", len(records))
+        return None
+
+    texts = [record["query_text"] for record in generated_records]
+    fallback_reference_texts = (
+        [record["query_text"] for record in reference_records]
+        if not reference_embeddings
+        else []
+    )
+    batch_size = 32
+
+    def _embed_with_device(device: str, input_texts: list[str]) -> list[list[float]]:
+        embedder = build_text_embedder(
+            model_path=str(settings["bge_model_path"]),
+            device=device,
+            service_url=str(settings["embedding_service_url"] or "") or None,
+            timeout_seconds=float(settings["embedding_service_timeout"]),
+        )
+        out: list[list[float]] = []
+        for start in range(0, len(input_texts), batch_size):
+            out.extend(embedder.embed_texts(input_texts[start : start + batch_size]))
+        return out
+
+    embedding_device = str(settings["bge_device"])
+    try:
+        generated_embeddings = _embed_with_device(embedding_device, texts)
+        fallback_reference_embeddings = (
+            _embed_with_device(embedding_device, fallback_reference_texts)
+            if fallback_reference_texts
+            else []
+        )
+    except Exception as exc:
+        if settings["embedding_service_url"] or embedding_device.lower() == "cpu":
+            raise
+        logger.warning(
+            "Embedding on device %s failed (%s); retrying query embedding analysis on CPU.",
+            embedding_device,
+            exc,
+        )
+        embedding_device = "cpu"
+        generated_embeddings = _embed_with_device(embedding_device, texts)
+        fallback_reference_embeddings = (
+            _embed_with_device(embedding_device, fallback_reference_texts)
+            if fallback_reference_texts
+            else []
+        )
+
+    embeddings = generated_embeddings + (reference_embeddings or fallback_reference_embeddings)
+
+    if len(embeddings) != len(records):
+        raise ValueError(
+            f"Expected {len(records)} query embeddings, received {len(embeddings)}."
+        )
+
+    coords = _pca_2d(embeddings)
+    for record, coord in zip(records, coords):
+        record["x"], record["y"] = coord
+
+    dataset_plot = output_dir / "query_embedding_dataset_projection.png"
+    view_plot = output_dir / "query_embedding_view_projection.png"
+    _plot_embedding_projection(
+        records,
+        color_key="dataset",
+        title="Query Embedding Space: Generated vs LitSearch vs PASA",
+        output_path=dataset_plot,
+    )
+    _plot_embedding_projection(
+        [record for record in records if record.get("source_view")],
+        color_key="source_view",
+        title="Query Embedding Space by View: Generated + LitSearch + PASA",
+        output_path=view_plot,
+    )
+
+    dataset_summary = _centroid_distance_summary(records, "dataset")
+    view_summary = _centroid_distance_summary(
+        [record for record in records if record.get("source_view")],
+        "source_view",
+    )
+    analysis = {
+        "method": "BGE embeddings + PCA projection",
+        "embedding_model": str(settings["bge_model_path"]),
+        "embedding_device": embedding_device,
+        "embedding_dimension": len(embeddings[0]) if embeddings else 0,
+        "record_counts": dict(Counter(record["dataset"] for record in records)),
+        "view_counts": dict(
+            Counter(record["source_view"] for record in records if record.get("source_view"))
+        ),
+        "reference_source": (
+            "golden_query_embeddings" if reference_embeddings else "style_analysis_json"
+        ),
+        "plots": {
+            "dataset_projection": str(dataset_plot),
+            "view_projection": str(view_plot),
+        },
+        "datasets": dataset_summary,
+        "views": view_summary,
+        "records": [
+            {key: value for key, value in record.items() if key not in {"paper_title"}}
+            for record in records
+        ],
+    }
+    output_path = output_dir / "query_embedding_analysis.json"
+    with output_path.open("w", encoding="utf-8") as handle:
+        json.dump(analysis, handle, indent=2, ensure_ascii=False)
+    return output_path
 
 
 class RetrievalEvaluator:
@@ -419,6 +887,7 @@ def apply(
                     is_multimodal=query.is_multimodal,
                     related_bullet_indice=query.related_bullet_indice,
                     related_bullet_justification=query.related_bullet_justification,
+                    multimodal_rationale=query.multimodal_rationale,
                     hard_negative_context=None,
                     retrieval_evaluation=retrieval_evaluation,
                     style_evaluation=style_evaluation,
@@ -618,4 +1087,18 @@ def run(
         queries_dataset.total_queries,
         (artifact.total_queries / queries_dataset.total_queries * 100) if queries_dataset.total_queries else 100.0,
     )
-    return {"json": json_path, "markdown": md_path}
+    paths: dict[str, Path] = {"json": json_path, "markdown": md_path}
+    try:
+        embedding_path = write_query_embedding_analysis(
+            artifact=artifact,
+            output_dir=output_dir,
+            config_path=config_path,
+        )
+        if embedding_path is not None:
+            paths["embedding_analysis"] = embedding_path
+            paths["embedding_dataset_projection"] = output_dir / "query_embedding_dataset_projection.png"
+            paths["embedding_view_projection"] = output_dir / "query_embedding_view_projection.png"
+            logger.info("Query embedding analysis written to %s", embedding_path)
+    except Exception as exc:
+        logger.warning("Query embedding analysis failed; Stage 4 JSON/MD remain valid: %s", exc)
+    return paths

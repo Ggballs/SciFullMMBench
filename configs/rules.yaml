@@ -23,7 +23,7 @@ similar_paper:
     - "proceedings"
 
 multimodal_info:
-  min_multimodal_mentions: 2
+  min_meaningful_discussions: 2
   multimodal_keywords:
     - "figure"
     - "fig"

@@ -233,6 +233,7 @@ def build_pipeline_output(
                     source_view=key[1],
                     related_bullet_indice=query.get("related_bullet_indice"),
                     related_bullet_justification=query.get("related_bullet_justification"),
+                    multimodal_rationale=query.get("multimodal_rationale"),
                     hard_negative_context=hard_negatives_by_query.get((paper_id, key[0], key[1], key[2])),
                     query_analysis=query_analysis_queries.get(key),
                 )

@@ -23,8 +23,13 @@ Selection rule:
 - If reusing a bullet, change the question angle instead of paraphrasing the same question.
 
 Multimodal rule:
-- If a selected bullet has non-empty multimodal_ref and the question is inspired by that non-textual evidence, set is_multimodal to true.
-- Otherwise set is_multimodal to false.
+- Decouple bullet evidence from query label.
+- `multimodal_dependency` and `multimodal_dependency_rationale` describe how much the bullet claim depends on figure/table/equation/algorithm evidence.
+- `is_multimodal` on a generated question means the question itself needs non-textual evidence for relevance judgment.
+- If the question is broad or topic-level and relevance can be judged from prose alone, set `is_multimodal=false`.
+- If the question asks about measured results, comparisons, trends, ablations, trade-offs, or other evidence-dependent outcomes, set `is_multimodal=true` only when non-textual evidence is genuinely needed.
+- Include `multimodal_rationale` only when `is_multimodal=true`, explaining why the figure/table/equation/algorithm evidence is needed.
+- If `is_multimodal=false`, omit `multimodal_rationale`.
 
 Generate exactly {num_queries} QA-style queries.
 
@@ -51,7 +56,8 @@ Output valid JSON only:
       "query_text": "...",
       "query_type": "QA",
       "view_label": "{view_label}",
-      "is_multimodal": false,
+      "is_multimodal": true,
+      "multimodal_rationale": "Explain why this question requires non-textual evidence for relevance judgment.",
       "related_bullet_indice": 2,
       "related_bullet_justification": "Briefly explain why this bullet was selected and how the generated question reflects a Stack Exchange-style research question."
     }}

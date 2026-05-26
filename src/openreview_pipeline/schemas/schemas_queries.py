@@ -13,6 +13,7 @@ class RetrievalQuery(BaseModel):
     source_view: str
     related_bullet_indice: Optional[int] = None
     related_bullet_justification: Optional[str] = None
+    multimodal_rationale: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -57,6 +58,20 @@ class RetrievalQuery(BaseModel):
     @field_validator("related_bullet_justification", mode="before")
     @classmethod
     def normalize_related_bullet_justification(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @model_validator(mode="after")
+    def clear_non_multimodal_rationale(self) -> "RetrievalQuery":
+        if not self.is_multimodal:
+            self.multimodal_rationale = None
+        return self
+
+    @field_validator("multimodal_rationale", mode="before")
+    @classmethod
+    def normalize_multimodal_rationale(cls, value: Any) -> Optional[str]:
         if value is None:
             return None
         text = str(value).strip()
@@ -121,6 +136,7 @@ class QueryAnalysisEntry(BaseModel):
     is_multimodal: bool = False
     related_bullet_indice: Optional[int] = None
     related_bullet_justification: Optional[str] = None
+    multimodal_rationale: Optional[str] = None
     hard_negative_context: Optional[QueryHardNegativeContext] = None
     retrieval_evaluation: RetrievalEvaluation
     style_evaluation: StyleEvaluation

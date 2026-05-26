@@ -4,10 +4,12 @@ import argparse
 import hmac
 import html
 import json
+import logging
 import os
 from pathlib import Path
 import sys
 from typing import Any, Dict, List, Optional, Tuple
+from urllib import request
 
 os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
 
@@ -33,6 +35,7 @@ from openreview_pipeline.utils.db.human_feedback_postgres import (  # noqa: E402
 )
 
 configure_project_logging()
+logger = logging.getLogger(__name__)
 
 ADMIN_FEEDBACK_PASSWORD = "westlakenlp"
 
@@ -137,6 +140,521 @@ def safe_get(data: Optional[Dict[str, Any]], *keys: str, default=None):
             return default
         current = current.get(key)
     return current if current is not None else default
+
+
+def resolve_artifact_path(raw_path: Any, final_json_path: Path) -> Optional[Path]:
+    if not raw_path:
+        return None
+    candidate = Path(str(raw_path)).expanduser()
+    candidates: List[Path] = []
+
+    def _add(path: Path) -> None:
+        resolved = path if path.is_absolute() else path.resolve()
+        if resolved not in candidates:
+            candidates.append(resolved)
+
+    if candidate.is_absolute():
+        _add(candidate)
+        parts = candidate.parts
+        if "SciFullMMBench" in parts:
+            idx = parts.index("SciFullMMBench")
+            suffix = Path(*parts[idx + 1 :])
+            _add(REPO_ROOT / suffix)
+    else:
+        _add(final_json_path.parent / candidate)
+        _add(REPO_ROOT / candidate)
+        _add(Path.cwd() / candidate)
+
+    for path in candidates:
+        if path.exists():
+            return path
+    return candidates[0] if candidates else None
+
+
+def embed_texts_for_static_report(
+    texts: List[str],
+    service_url: str,
+    batch_size: int = 64,
+) -> List[List[float]]:
+    embeddings: List[List[float]] = []
+    for start in range(0, len(texts), batch_size):
+        payload = json.dumps({"texts": texts[start : start + batch_size]}).encode("utf-8")
+        req = request.Request(
+            service_url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with request.urlopen(req, timeout=180) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        embeddings.extend(data["embeddings"])
+    return embeddings
+
+
+def plot_embedding_tsne_points(
+    points: List[Dict[str, Any]],
+    color_key: str,
+    title: str,
+    output_path: Path,
+) -> None:
+    labels: List[str] = []
+    for point in points:
+        label = str(point.get(color_key) or "unknown")
+        if label not in labels:
+            labels.append(label)
+    colors = ["#2563eb", "#dc2626", "#059669", "#7c3aed", "#d97706", "#0891b2", "#be123c"]
+    fig, ax = plt.subplots(figsize=(8.8, 6.2))
+    for idx, label in enumerate(labels):
+        subset = [point for point in points if str(point.get(color_key) or "unknown") == label]
+        ax.scatter(
+            [point["tsne_x"] for point in subset],
+            [point["tsne_y"] for point in subset],
+            s=42 if label == "generated" else 26,
+            alpha=0.82 if label == "generated" else 0.55,
+            color=colors[idx % len(colors)],
+            label=f"{label} (n={len(subset)})",
+            edgecolors="white",
+            linewidths=0.35,
+        )
+    ax.set_title(title)
+    ax.set_xlabel("t-SNE 1")
+    ax.set_ylabel("t-SNE 2")
+    ax.grid(alpha=0.18)
+    ax.legend(loc="best", frameon=True)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=180)
+    plt.close(fig)
+
+
+def plot_embedding_dataset_view_tsne(
+    points: List[Dict[str, Any]],
+    *,
+    dataset: str,
+    title: str,
+    output_path: Path,
+) -> None:
+    subset = [point for point in points if point.get("dataset") == dataset and point.get("source_view")]
+    if subset:
+        plot_embedding_tsne_points(subset, "source_view", title, output_path)
+
+
+def _embedding_view_cluster_metrics(
+    points: List[Dict[str, Any]],
+    embeddings: Any,
+    *,
+    generated_only: bool,
+) -> Dict[str, Any]:
+    import numpy as np
+    from sklearn.metrics import silhouette_score
+    from sklearn.metrics.pairwise import cosine_distances
+
+    indices = [
+        idx
+        for idx, point in enumerate(points)
+        if point.get("source_view") and (not generated_only or point.get("dataset") == "generated")
+    ]
+    if not indices:
+        return {}
+    labels = [points[idx].get("source_view") or "unknown" for idx in indices]
+    selected_embeddings = embeddings[indices]
+    unique_labels = sorted(set(labels))
+    if len(unique_labels) < 2:
+        return {
+            "view_silhouette_cosine": None,
+            "view_counts": {label: labels.count(label) for label in unique_labels},
+        }
+    silhouette = float(silhouette_score(selected_embeddings, labels, metric="cosine"))
+    centroids = []
+    for label in unique_labels:
+        rows = selected_embeddings[[idx for idx, item in enumerate(labels) if item == label]]
+        centroids.append(rows.mean(axis=0))
+    centroid_distance = cosine_distances(np.vstack(centroids))
+    pairwise = {}
+    for i, left in enumerate(unique_labels):
+        for j, right in enumerate(unique_labels):
+            if i < j:
+                pairwise[f"{left}__{right}"] = float(centroid_distance[i, j])
+    return {
+        "view_silhouette_cosine": silhouette,
+        "view_counts": {label: labels.count(label) for label in unique_labels},
+        "view_centroid_cosine_distances": pairwise,
+    }
+
+
+def build_embedding_tsne_static_report(
+    analysis_path: Path,
+    *,
+    service_url: Optional[str] = None,
+    force: bool = False,
+) -> Optional[Path]:
+    report_json = analysis_path.parent / "query_embedding_tsne_analysis.json"
+    if report_json.exists() and not force:
+        return report_json
+    service_url = (
+        service_url
+        or os.getenv("EMBEDDING_REPORT_SERVICE_URL")
+        or os.getenv("EMBEDDING_SERVICE_URL")
+        or "http://host.docker.internal:18080/embed"
+    )
+    try:
+        import numpy as np
+        from sklearn.manifold import TSNE
+    except Exception as exc:
+        logger.warning("Cannot precompute embedding t-SNE report because dependencies are missing: %s", exc)
+        return None
+
+    analysis = load_json(analysis_path)
+    raw_points = analysis.get("records", [])
+    if not isinstance(raw_points, list) or len(raw_points) < 2:
+        logger.warning("Cannot precompute embedding t-SNE report: not enough query records.")
+        return None
+    points = [dict(point) for point in raw_points if isinstance(point, dict) and point.get("query_text")]
+    if len(points) < 2:
+        logger.warning("Cannot precompute embedding t-SNE report: not enough query texts.")
+        return None
+
+    try:
+        texts = [str(point["query_text"]) for point in points]
+        embeddings = np.asarray(embed_texts_for_static_report(texts, service_url), dtype=np.float32)
+        perplexity = max(5, min(30, (len(points) - 1) // 3))
+        coords = TSNE(
+            n_components=2,
+            perplexity=perplexity,
+            init="pca",
+            learning_rate="auto",
+            metric="cosine",
+            random_state=42,
+        ).fit_transform(embeddings)
+    except Exception as exc:
+        logger.warning("Embedding t-SNE precompute failed; Gradio will use existing PCA plots: %s", exc)
+        return None
+
+    for point, (x, y) in zip(points, coords):
+        point["tsne_x"] = float(x)
+        point["tsne_y"] = float(y)
+
+    output_dir = analysis_path.parent
+    dataset_plot = output_dir / "query_embedding_dataset_tsne.png"
+    view_plot = output_dir / "query_embedding_view_tsne.png"
+    generated_view_plot = output_dir / "query_embedding_generated_view_tsne.png"
+    pasa_view_plot = output_dir / "query_embedding_pasa_view_tsne.png"
+    litsearch_view_plot = output_dir / "query_embedding_litsearch_view_tsne.png"
+
+    plot_embedding_tsne_points(points, "dataset", "Query Embedding t-SNE: Generated vs LitSearch vs PASA", dataset_plot)
+    plot_embedding_tsne_points(
+        [point for point in points if point.get("source_view")],
+        "source_view",
+        "Query Embedding t-SNE by View: Generated + LitSearch + PASA",
+        view_plot,
+    )
+    plot_embedding_dataset_view_tsne(
+        points,
+        dataset="generated",
+        title="Generated Query t-SNE by View",
+        output_path=generated_view_plot,
+    )
+    plot_embedding_dataset_view_tsne(
+        points,
+        dataset="pasa",
+        title="PASA Query t-SNE by View",
+        output_path=pasa_view_plot,
+    )
+    plot_embedding_dataset_view_tsne(
+        points,
+        dataset="litsearch",
+        title="LitSearch Query t-SNE by View",
+        output_path=litsearch_view_plot,
+    )
+
+    metrics = {
+        "all_query_view_clusters": _embedding_view_cluster_metrics(points, embeddings, generated_only=False),
+        "generated_query_view_clusters": _embedding_view_cluster_metrics(points, embeddings, generated_only=True),
+    }
+    report_json.write_text(
+        json.dumps(
+            {
+                "method": "BGE embeddings + t-SNE projection",
+                "perplexity": perplexity,
+                "metrics_original_embedding_space": metrics,
+                "plots": {
+                    "dataset_tsne": str(dataset_plot),
+                    "view_tsne": str(view_plot),
+                    "generated_view_tsne": str(generated_view_plot),
+                    "pasa_view_tsne": str(pasa_view_plot),
+                    "litsearch_view_tsne": str(litsearch_view_plot),
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return report_json
+
+
+def load_embedding_artifacts(final_json_path: Path, final_data: Dict[str, Any]) -> Dict[str, Any]:
+    paths = final_data.get("paths", {}) or {}
+    query_analysis_path = resolve_artifact_path(paths.get("query_analysis_dataset"), final_json_path)
+    query_analysis_dir = (
+        query_analysis_path.parent
+        if query_analysis_path is not None
+        else final_json_path.parent / "04_query_analysis"
+    )
+
+    analysis_path = resolve_artifact_path(paths.get("embedding_analysis"), final_json_path)
+    if analysis_path is None or not analysis_path.exists():
+        analysis_path = query_analysis_dir / "query_embedding_analysis.json"
+
+    if not analysis_path.exists():
+        return {
+            "available": False,
+            "analysis_path": str(analysis_path),
+            "message": "No query embedding analysis artifact found. Re-run Stage 4 to generate it.",
+        }
+
+    analysis = load_json(analysis_path)
+    tsne_analysis_path = analysis_path.parent / "query_embedding_tsne_analysis.json"
+    if not tsne_analysis_path.exists() and os.getenv("EMBEDDING_REPORT_PRECOMPUTE", "1") != "0":
+        build_embedding_tsne_static_report(analysis_path)
+    tsne_analysis = load_json(tsne_analysis_path) if tsne_analysis_path.exists() else {}
+    plots = analysis.get("plots", {}) or {}
+    tsne_plots = tsne_analysis.get("plots", {}) or {}
+    dataset_plot = resolve_artifact_path(
+        tsne_plots.get("dataset_tsne")
+        or plots.get("dataset_projection")
+        or paths.get("embedding_dataset_projection"),
+        final_json_path,
+    ) or (analysis_path.parent / "query_embedding_dataset_tsne.png")
+    view_plot = resolve_artifact_path(
+        tsne_plots.get("view_tsne")
+        or plots.get("view_projection")
+        or paths.get("embedding_view_projection"),
+        final_json_path,
+    ) or (analysis_path.parent / "query_embedding_view_tsne.png")
+    generated_view_plot = resolve_artifact_path(
+        tsne_plots.get("generated_view_tsne"),
+        final_json_path,
+    ) or (analysis_path.parent / "query_embedding_generated_view_tsne.png")
+    pasa_view_plot = resolve_artifact_path(
+        tsne_plots.get("pasa_view_tsne"),
+        final_json_path,
+    ) or (analysis_path.parent / "query_embedding_pasa_view_tsne.png")
+    litsearch_view_plot = resolve_artifact_path(
+        tsne_plots.get("litsearch_view_tsne"),
+        final_json_path,
+    ) or (analysis_path.parent / "query_embedding_litsearch_view_tsne.png")
+    return {
+        "available": True,
+        "analysis": analysis,
+        "tsne_analysis": tsne_analysis,
+        "analysis_path": str(analysis_path),
+        "dataset_plot": str(dataset_plot) if dataset_plot.exists() else None,
+        "view_plot": str(view_plot) if view_plot.exists() else None,
+        "generated_view_plot": str(generated_view_plot) if generated_view_plot.exists() else None,
+        "pasa_view_plot": str(pasa_view_plot) if pasa_view_plot.exists() else None,
+        "litsearch_view_plot": str(litsearch_view_plot) if litsearch_view_plot.exists() else None,
+    }
+
+
+def build_embedding_space_html(embedding_artifacts: Dict[str, Any]) -> str:
+    if not embedding_artifacts.get("available"):
+        return f"""
+        <div style="border:1px solid #e5e7eb;border-radius:14px;padding:14px;background:white">
+            <div style="font-size:16px;font-weight:800;margin-bottom:8px">Embedding Space</div>
+            <div>{esc(embedding_artifacts.get('message', 'Embedding analysis is unavailable.'))}</div>
+            <div style="margin-top:8px"><b>Expected path:</b> <code>{esc(embedding_artifacts.get('analysis_path', ''))}</code></div>
+        </div>
+        """
+
+    analysis = embedding_artifacts.get("analysis", {}) or {}
+    datasets = analysis.get("datasets", {}) or {}
+    views = analysis.get("views", {}) or {}
+    return f"""
+    <div style="border:1px solid #e5e7eb;border-radius:14px;padding:14px;background:white;margin-bottom:14px">
+        <div style="font-size:16px;font-weight:800;margin-bottom:8px">Embedding Space</div>
+        <div style="margin-bottom:8px">{badge('Embedding artifact loaded', '#dcfce7', '#166534')}</div>
+        <div style="margin-bottom:8px"><b>Method:</b> {esc(analysis.get('method', 'N/A'))}</div>
+        <div style="margin-bottom:8px"><b>Model:</b> <code>{esc(analysis.get('embedding_model', 'N/A'))}</code></div>
+        <div style="margin-bottom:8px"><b>Device:</b> {esc(analysis.get('embedding_device', 'N/A'))}</div>
+        <div style="margin-bottom:8px"><b>Dimension:</b> {fmt_int(analysis.get('embedding_dimension', 0))}</div>
+        <div style="margin-bottom:8px"><b>Dataset separation ratio:</b> {fmt_metric(datasets.get('separation_ratio'), 3)}</div>
+        <div style="margin-bottom:8px"><b>View separation ratio:</b> {fmt_metric(views.get('separation_ratio'), 3)}</div>
+        <div style="margin-bottom:8px"><b>Artifact:</b> <code>{esc(embedding_artifacts.get('analysis_path', ''))}</code></div>
+    </div>
+    """
+
+
+def _public_plot_url(path_value: Optional[str]) -> Optional[str]:
+    if not path_value:
+        return None
+    path = Path(path_value)
+    if not path.exists():
+        return None
+    base_url = os.getenv("EMBEDDING_REPORT_BASE_URL", "http://10.0.1.226:7861").rstrip("/")
+    return f"{base_url}/{path.name}"
+
+
+def _overview_plot_img(path_value: Optional[str], label: str) -> str:
+    url = _public_plot_url(path_value)
+    if not url:
+        return f"""
+        <div style="border:1px solid #e5e7eb;border-radius:10px;padding:12px;background:white">
+            <div style="font-weight:800;margin-bottom:6px">{esc(label)}</div>
+            <div style="color:#6b7280">Plot unavailable.</div>
+        </div>
+        """
+    return f"""
+    <div style="border:1px solid #e5e7eb;border-radius:10px;padding:12px;background:white">
+        <div style="font-weight:800;margin-bottom:8px">{esc(label)}</div>
+        <img src="{esc(url)}" loading="lazy" style="display:block;width:100%;height:auto;border-radius:8px" />
+    </div>
+    """
+
+
+def build_embedding_overview_html(embedding_artifacts: Dict[str, Any]) -> str:
+    if not embedding_artifacts.get("available"):
+        return build_embedding_space_html(embedding_artifacts)
+    analysis = embedding_artifacts.get("analysis", {}) or {}
+    tsne_analysis = embedding_artifacts.get("tsne_analysis", {}) or {}
+    metrics = tsne_analysis.get("metrics_original_embedding_space", {}) or {}
+    view_cluster_metrics = metrics.get("all_query_view_clusters", metrics) or {}
+    datasets = analysis.get("datasets", {}) or {}
+    views = analysis.get("views", {}) or {}
+    dataset_img = _overview_plot_img(
+        embedding_artifacts.get("dataset_plot"),
+        "t-SNE: Generated vs LitSearch vs PASA",
+    )
+    view_img = _overview_plot_img(
+        embedding_artifacts.get("view_plot"),
+        "t-SNE: All Queries by View",
+    )
+    generated_view_img = _overview_plot_img(
+        embedding_artifacts.get("generated_view_plot"),
+        "t-SNE: Generated by View",
+    )
+    pasa_view_img = _overview_plot_img(
+        embedding_artifacts.get("pasa_view_plot"),
+        "t-SNE: PASA by View",
+    )
+    litsearch_view_img = _overview_plot_img(
+        embedding_artifacts.get("litsearch_view_plot"),
+        "t-SNE: LitSearch by View",
+    )
+    return f"""
+    <div style="border:1px solid #e5e7eb;border-radius:14px;padding:14px;background:#fafafa;margin:14px 0">
+        <div style="font-size:16px;font-weight:800;margin-bottom:8px">Embedding Space</div>
+        <div style="margin-bottom:8px">
+            {badge('precomputed t-SNE', '#dcfce7', '#166534')}
+            {plain_meta('Records: ' + esc(sum((analysis.get('record_counts') or {}).values()) if analysis.get('record_counts') else 'N/A'))}
+            {plain_meta('View silhouette: ' + fmt_metric(view_cluster_metrics.get('view_silhouette_cosine'), 3))}
+            {plain_meta('Dataset PCA ratio: ' + fmt_metric(datasets.get('separation_ratio'), 3))}
+            {plain_meta('View PCA ratio: ' + fmt_metric(views.get('separation_ratio'), 3))}
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px">
+            {dataset_img}
+            {view_img}
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-top:14px">
+            {generated_view_img}
+            {pasa_view_img}
+            {litsearch_view_img}
+        </div>
+    </div>
+    """
+
+
+def _plot_file_block(path_value: Optional[str], label: str) -> str:
+    if not path_value:
+        return f"""
+        <div style="border:1px solid #e5e7eb;border-radius:14px;padding:14px;background:white">
+            <div style="font-weight:800;margin-bottom:8px">{esc(label)}</div>
+            <div style="color:#6b7280">Plot file is unavailable.</div>
+        </div>
+        """
+    path = Path(path_value)
+    if not path.exists():
+        return f"""
+        <div style="border:1px solid #e5e7eb;border-radius:14px;padding:14px;background:white">
+            <div style="font-weight:800;margin-bottom:8px">{esc(label)}</div>
+            <div style="color:#6b7280">Plot file not found: <code>{esc(path)}</code></div>
+        </div>
+        """
+    size_kb = path.stat().st_size / 1024
+    return f"""
+    <div style="border:1px solid #e5e7eb;border-radius:14px;padding:14px;background:white">
+        <div style="font-weight:800;margin-bottom:8px">{esc(label)}</div>
+        <div style="margin-bottom:8px;color:#374151">PNG saved on server ({size_kb:.1f} KB).</div>
+        <div><code>{esc(path)}</code></div>
+    </div>
+    """
+
+
+def build_embedding_plots_html(embedding_artifacts: Dict[str, Any]) -> str:
+    left = _plot_file_block(
+        embedding_artifacts.get("dataset_plot"),
+        "Generated vs LitSearch vs PASA",
+    )
+    right = _plot_file_block(
+        embedding_artifacts.get("view_plot"),
+        "All Queries by View",
+    )
+    return f"""
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px;margin-bottom:14px">
+        {left}
+        {right}
+    </div>
+    """
+
+
+def build_embedding_cluster_df(embedding_artifacts: Dict[str, Any]) -> pd.DataFrame:
+    if not embedding_artifacts.get("available"):
+        return pd.DataFrame()
+    analysis = embedding_artifacts.get("analysis", {}) or {}
+    rows = []
+    for scope, summary_key in [("dataset", "datasets"), ("source_view", "views")]:
+        summary = analysis.get(summary_key, {}) or {}
+        counts = summary.get("group_counts", {}) or {}
+        within = summary.get("within_cluster_mean_distance", {}) or {}
+        centroids = summary.get("centroids", {}) or {}
+        for label, count in sorted(counts.items()):
+            centroid = centroids.get(label, ["", ""])
+            rows.append(
+                {
+                    "scope": scope,
+                    "cluster": label,
+                    "count": count,
+                    "centroid_x": fmt_metric(centroid[0], 3) if len(centroid) > 0 else "N/A",
+                    "centroid_y": fmt_metric(centroid[1], 3) if len(centroid) > 1 else "N/A",
+                    "within_cluster_mean_distance": fmt_metric(within.get(label), 3),
+                    "scope_separation_ratio": fmt_metric(summary.get("separation_ratio"), 3),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def build_pdf_viewer_html(pdf_url: Optional[str]) -> str:
+    if not pdf_url:
+        return (
+            "<div style='border:1px solid #e5e7eb;border-radius:14px;padding:40px;"
+            "background:#fafafa;text-align:center;color:#6b7280'>"
+            "Select a paper or enter a Forum ID to view its PDF."
+            "</div>"
+        )
+    return f"""
+    <div style="border:1px solid #e5e7eb;border-radius:14px;padding:40px;background:white;text-align:center">
+        <div style="font-size:18px;font-weight:700;margin-bottom:16px">PDF Ready</div>
+        <div style="margin-bottom:12px;color:#6b7280;word-break:break-all">
+            <code style="font-size:11px">{esc(pdf_url)}</code>
+        </div>
+        <a href="{esc(pdf_url)}" target="_blank"
+           style="display:inline-block;padding:12px 28px;background:#2563eb;color:white;
+                  border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">
+            Open PDF in New Tab
+        </a>
+        <div style="margin-top:14px;font-size:12px;color:#9ca3af">
+            The PDF will open via OpenReview in a separate browser tab.
+        </div>
+    </div>
+    """
 
 
 def badge(text: str, bg: str = "#eef2ff", fg: str = "#3730a3") -> str:
@@ -894,7 +1412,10 @@ def build_forum_content_html(paper: Dict[str, Any]) -> str:
     """
 
 
-def lookup_related_bullet(paper: Dict[str, Any], query: Dict[str, Any]) -> Tuple[str, str, List[str]]:
+def lookup_related_bullet(
+    paper: Dict[str, Any],
+    query: Dict[str, Any],
+) -> Tuple[str, str, List[str], List[str], str, str]:
     source_view = query.get("source_view")
     indice = query.get("related_bullet_indice")
     for view in paper.get("summary_views", []):
@@ -906,12 +1427,28 @@ def lookup_related_bullet(paper: Dict[str, Any], query: Dict[str, Any]) -> Tuple
                 source_refs = bullet.get("source_refs", []) if isinstance(bullet, dict) else []
                 if not isinstance(source_refs, list):
                     source_refs = [source_refs]
+                multimodal_refs = (
+                    bullet.get("multimodal_ref", []) if isinstance(bullet, dict) else []
+                )
+                if not isinstance(multimodal_refs, list):
+                    multimodal_refs = [multimodal_refs]
                 return (
                     view.get("view_name", ""),
                     bullet.get("text", "") if isinstance(bullet, dict) else str(bullet),
                     [str(ref).strip() for ref in source_refs if str(ref).strip()],
+                    [str(ref).strip() for ref in multimodal_refs if str(ref).strip()],
+                    str(bullet.get("multimodal_dependency", "none") or "none")
+                    if isinstance(bullet, dict)
+                    else "none",
+                    str(
+                        bullet.get("multimodal_dependency_rationale")
+                        or bullet.get("multimodal_rationale")
+                        or ""
+                    )
+                    if isinstance(bullet, dict)
+                    else "",
                 )
-    return str(source_view or "N/A"), "", []
+    return str(source_view or "N/A"), "", [], [], "none", ""
 
 
 def _unwrap_content_value(value: Any) -> str:
@@ -1464,13 +2001,39 @@ def build_query_header_html(query: Dict[str, Any], paper: Dict[str, Any], human_
 
 
 def build_related_source_html(query: Dict[str, Any], paper: Dict[str, Any]) -> str:
-    bullet_view, bullet_text, bullet_source_refs = lookup_related_bullet(paper, query)
+    (
+        bullet_view,
+        bullet_text,
+        bullet_source_refs,
+        bullet_multimodal_refs,
+        bullet_multimodal_dependency,
+        bullet_multimodal_rationale,
+    ) = lookup_related_bullet(paper, query)
+    analysis = query.get("query_analysis", {}) or {}
+    query_multimodal_rationale = (
+        query.get("multimodal_rationale")
+        or analysis.get("multimodal_rationale")
+        or ""
+    )
+    bullet_multimodal_html = ""
+    if bullet_multimodal_refs:
+        bullet_multimodal_html = f"""
+        <div style="margin-bottom:6px">{plain_meta(f'Bullet multimodal refs: {", ".join(bullet_multimodal_refs)}')}{plain_meta(f'Bullet multimodal dependency: {bullet_multimodal_dependency or "none"}')}</div>
+        <div style="margin-bottom:6px;white-space:pre-wrap;line-height:1.6"><b>Bullet Multimodal Rationale:</b> {esc(bullet_multimodal_rationale or 'N/A')}</div>
+        """
+    query_multimodal_html = ""
+    if query.get("is_multimodal") and query_multimodal_rationale:
+        query_multimodal_html = f"""
+        <div style="margin-bottom:6px;white-space:pre-wrap;line-height:1.6"><b>Query Multimodal Rationale:</b> {esc(query_multimodal_rationale)}</div>
+        """
 
     return framed_group(
         "Related Source",
         f"""
         <div style="margin-bottom:6px">{plain_meta(f'View: {bullet_view}')}{plain_meta(f'Bullet: {query.get("related_bullet_indice", "N/A")}')}</div>
         <div style="margin-bottom:6px;white-space:pre-wrap;line-height:1.6"><b>Summarized Bullet Point:</b> {esc(bullet_text or 'N/A')}</div>
+        {bullet_multimodal_html}
+        {query_multimodal_html}
         {build_source_refs_details(paper, bullet_source_refs)}
         <div style="white-space:pre-wrap;line-height:1.6"><b>Relevance Justification:</b> {esc(query.get('related_bullet_justification', ''))}</div>
         """,
@@ -1621,6 +2184,7 @@ def launch_app(
     human_summary = combine_human_style_summary(human_bundle)
     generated_df = extract_generated_style_scores(final_data)
     generated_summary = compute_generated_style_summary(generated_df)
+    embedding_artifacts = load_embedding_artifacts(final_json_path, final_data)
 
     paper_choices = build_paper_choices(final_data)
     default_paper_id = paper_choices[0][1] if paper_choices else None
@@ -1653,6 +2217,7 @@ def launch_app(
                     value=plot_word_count_distribution(generated_summary, human_summary)
                 )
             gr.Dataframe(value=build_paper_stats_df(final_data), interactive=False, wrap=True)
+            gr.HTML(build_embedding_overview_html(embedding_artifacts))
             gr.HTML(build_overview_footer_html(final_data, human_summary))
 
         with gr.Tab("Paper Browser"):

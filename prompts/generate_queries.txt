@@ -45,8 +45,10 @@ Queries should feel like tip-of-the-tongue search requests:
 
 Each query should focus on the **few details most likely to help retrieval**.
 
-## Multimodal Bonus Rule
-Use the bullet-level `multimodal_ref` field as the source of truth for multimodal query detection.
+## Multimodal Rule
+Use the bullet-level `multimodal_dependency` and `multimodal_dependency_rationale` fields to decide whether a query actually needs non-textual evidence.
+
+`multimodal_ref` shows what figure/table/equation/algorithm was referenced. It is not enough by itself to set `is_multimodal=true`.
 
 If a view contains bullet points with non-empty `multimodal_ref`,
 generate **1 additional queries** for that view.
@@ -54,11 +56,12 @@ generate **1 additional queries** for that view.
 For these bonus queries:
 - choose a bullet with non-empty `multimodal_ref`
 - do **not** describe the figure/table/equation in exhaustive detail, do not mention the figure/table/equation label in the query, but use `multimodal_ref` as a clue to identify a distinctive aspect of the paper that can be expressed in a natural query form
-- set `is_multimodal` to `true` only when the selected bullet has non-empty `multimodal_ref` and the query is inspired by that non-textual evidence
-- in `related_bullet_justification`, mention the relevant `multimodal_ref` and how it inspired the query
+- set `is_multimodal` to `true` only when the query itself needs the non-textual evidence for relevance judgment
+- include `multimodal_rationale` only when `is_multimodal=true`, explaining why the figure/table/equation/algorithm is needed
 
 For ordinary non-bonus queries:
-- set `is_multimodal` to `false` unless the query is directly inspired by the selected bullet's non-empty `multimodal_ref`
+- set `is_multimodal` to `false` unless the query itself depends on the selected bullet's non-textual evidence
+- omit `multimodal_rationale` when `is_multimodal=false`
 
 
 ##Good Query Examples:
@@ -74,7 +77,8 @@ Output a JSON object with views as keys:
   "motivation": [
     {{
       "query_text": "generated query text",
-      "is_multimodal": true/false (true only when the query is inspired by the selected bullet's non-empty `multimodal_ref`; be rigorous),
+      "is_multimodal": true/false (true only when the query itself needs non-textual evidence for relevance judgment),
+      "multimodal_rationale": "Only include this field when is_multimodal is true.",
       "related_bullet_indice": 1,
       "related_bullet_justification": "1-2 sentences justifying whether the query relates to the bullet and why it is a good retrieval hook"
     }},

@@ -22,6 +22,7 @@ from openreview_pipeline.stages import (
     RuleBasedFilter,
     Summarizer,
     build_google_scholar_client,
+    resolve_hard_negative_llm_settings,
     run as run_stage4_query_analysis,
 )
 from openreview_pipeline.stages.stage0_download import parse_forum_ids
@@ -235,6 +236,32 @@ def build_llm_backend(
 ):
     settings = resolve_llm_settings(
         config_path,
+        base_url=base_url,
+        model=model,
+    )
+    seed = settings.get("seed")
+    return OpenAICompatibleBackend(
+        base_url=str(settings["base_url"]),
+        api_tokens=[str(token) for token in settings["api_tokens"]],
+        model=str(settings["model"]),
+        max_tokens=int(settings.get("max_tokens", 4096)),
+        temperature=float(settings.get("temperature", 0.0)),
+        seed=int(seed) if seed is not None else None,
+        per_key_request_interval_seconds=float(settings.get("per_key_request_interval_seconds", 0.0)),
+        per_key_max_concurrent_requests=int(settings.get("per_key_max_concurrent_requests", 1)),
+        max_retries=int(settings.get("max_retries", 3)),
+        retry_backoff_seconds=float(settings.get("retry_backoff_seconds", 8.0)),
+    )
+
+
+def build_hard_negative_llm_backend(
+    config_path: Optional[Path | str] = None,
+    *,
+    base_url: Optional[str] = None,
+    model: Optional[str] = None,
+):
+    settings = resolve_hard_negative_llm_settings(
+        load_config(config_path),
         base_url=base_url,
         model=model,
     )
@@ -618,7 +645,7 @@ def run_hard_negative_mining_stage(
     output_path = Path(output_path).expanduser().resolve()
     _ensure_parent(output_path)
 
-    llm_backend = llm_backend or build_llm_backend(
+    llm_backend = llm_backend or build_hard_negative_llm_backend(
         config_path,
         base_url=base_url,
         model=model,
