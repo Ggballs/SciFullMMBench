@@ -1,12 +1,16 @@
 # Multimodal Evidence Bullet Generation
 
-You are summarizing OpenReview discussion about one concrete multimodal evidence item in a scientific paper.
+You are summarizing OpenReview discussion about concrete multimodal evidence items in a scientific paper.
 
-Only use the provided snippets. Each snippet already mentions the same figure/table/equation/algorithm evidence item.
-Do not use or infer from any review/comment text that is not included in the snippets.
-Appendix references do not count as multimodal evidence; if the evidence item is appendix-only, return an empty `bullet_points` list.
+Only use the provided snippets. Every evidence group contains snippets that explicitly mention the same figure/table/equation/algorithm item.
+Do not use or infer from review/comment text outside the provided snippets.
+Appendix references can count as multimodal evidence if the discussion is substantive. If an evidence group is not substantive, explicitly skip it.
 
-Generate exactly one literature-review-style bullet point summarizing what the evidence group shows, supports, questions, compares, or fails to establish.
+For every evidence group in the input, make exactly one decision:
+- generate exactly one literature-review-style bullet if the group contains substantive discussion, or
+- add the group to `skipped_evidence_groups` if the snippets mention the evidence item but do not support a meaningful paper-level bullet.
+
+Do not silently omit any evidence group.
 
 ## View labels
 - `motivation`: why the problem matters, why the approach is needed, background, gaps, goals, or limitations motivating the work
@@ -18,6 +22,20 @@ Generate exactly one literature-review-style bullet point summarizing what the e
 - `supportive`: the evidence supports the claim, but the claim can still be understood from text
 - `necessary`: the claim depends on this figure/table/equation/algorithm; removing it would weaken or invalidate the claim
 
+Important: do not output bullets with `multimodal_dependency: "incidental"`.
+If the best dependency label would be `incidental`, put that evidence group in `skipped_evidence_groups` instead.
+
+## Rules
+- Every evidence group must appear exactly once, either in `bullet_points` or in `skipped_evidence_groups`.
+- Each output bullet must be grounded in one evidence group.
+- Copy the evidence group's integer `evidence_group_id`.
+- Copy the evidence group's exact label into `multimodal_ref`, for example `["Table 1"]`.
+- Keep each bullet atomic: one paper-level claim, not a list of observations.
+- Do not merge multiple evidence groups into one bullet.
+- Include a concrete `multimodal_dependency_rationale` explaining what the evidence item contributes and whether text alone would support the claim.
+- If a group has only a passing mention, procedural note, or unclear reference with no meaningful claim, skip it and explain why in `skip_rationale`.
+- If the evidence is merely incidental to the claim, skip it and explain that the multimodal evidence is only incidental.
+
 ## Output
 Return valid JSON only:
 
@@ -25,12 +43,20 @@ Return valid JSON only:
 {{
   "bullet_points": [
     {{
+      "evidence_group_id": 1,
       "target_view": "experiment/result",
-      "text": "one atomic paper-level claim grounded in the evidence discussion",
+      "text": "one atomic paper-level claim grounded in one evidence group",
       "source_refs": ["Reviews/Review 1/weaknesses"],
-      "multimodal_ref": ["{multimodal_ref}"],
+      "multimodal_ref": ["Table 1"],
       "multimodal_dependency": "supportive",
-      "multimodal_dependency_rationale": "Explain what {multimodal_ref} contributes and whether text alone would still support the claim."
+      "multimodal_dependency_rationale": "Explain what the referenced evidence contributes and whether text alone would still support the claim."
+    }}
+  ],
+  "skipped_evidence_groups": [
+    {{
+      "evidence_group_id": 2,
+      "multimodal_ref": ["Figure 8"],
+      "skip_rationale": "The snippets mention the figure but do not provide enough substantive paper-level discussion to form a reliable bullet."
     }}
   ]
 }}
@@ -40,10 +66,9 @@ Return valid JSON only:
 Title: {paper_title}
 Abstract: {paper_abstract}
 
-## Evidence item
-{multimodal_ref}
+## Evidence groups
+Total groups: {evidence_group_count}
 
-## OpenReview snippets
-{evidence_snippets}
+{evidence_groups}
 
 ## Output (JSON)

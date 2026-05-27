@@ -98,11 +98,19 @@ def resolve_llm_settings(
     *,
     base_url: Optional[str] = None,
     model: Optional[str] = None,
+    stage_name: Optional[str] = None,
 ) -> dict[str, object]:
     config = load_config(config_path)
     llm_config = config.get("llm", {})
     if not isinstance(llm_config, dict):
         llm_config = {}
+    stage_llm_config = {}
+    if stage_name:
+        stages_config = config.get("stages", {})
+        if isinstance(stages_config, dict):
+            stage_config = stages_config.get(stage_name, {})
+            if isinstance(stage_config, dict) and isinstance(stage_config.get("llm"), dict):
+                stage_llm_config = stage_config["llm"]
 
     settings = {
         "base_url": llm_config.get("base_url", ""),
@@ -116,6 +124,9 @@ def resolve_llm_settings(
         "temperature": llm_config.get("temperature", 0.0),
         "seed": llm_config.get("seed"),
     }
+    for key, value in stage_llm_config.items():
+        if value is not None:
+            settings[key] = value
 
     if base_url:
         settings["base_url"] = base_url
@@ -233,11 +244,13 @@ def build_llm_backend(
     *,
     base_url: Optional[str] = None,
     model: Optional[str] = None,
+    stage_name: Optional[str] = None,
 ):
     settings = resolve_llm_settings(
         config_path,
         base_url=base_url,
         model=model,
+        stage_name=stage_name,
     )
     seed = settings.get("seed")
     return OpenAICompatibleBackend(
@@ -700,6 +713,7 @@ def run_query_analysis_stage(
         config_path,
         base_url=base_url,
         model=model,
+        stage_name="query_analysis",
     )
     stage_settings = resolve_stage_settings(config_path)
     run_stage4_query_analysis(

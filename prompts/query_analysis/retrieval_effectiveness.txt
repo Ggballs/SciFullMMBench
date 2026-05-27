@@ -1,14 +1,13 @@
 # Retrieval Effectiveness Evaluation
-
 You are evaluating generated retrieval queries for one scientific paper.
-
 Given the paper abstract and a list of queries, judge whether each query needs full-paper content for retrieval.
 
 ## Principle
 This is a lexical/semantic overlap judgment, not an inference task.
-
 - `FAIL`: the query has enough lexical or semantic overlap with the abstract that abstract-only retrieval should find the paper.
-- `PASS`: the query's main retrieval hook is not lexically or semantically present in the abstract, so full-paper content is needed.
+- `PASS`:
+    1. the query's main retrieval hook is not lexically or semantically present in the abstract, so full-paper content is needed.
+    2. the query has some lexical or semantic overlap with the abstract, but still has some detail or angle that is not present in the abstract, so full-paper content is needed.
 
 Do not mark `FAIL` just because the answer can be inferred, reasoned out, or guessed from the abstract.
 

@@ -180,12 +180,11 @@ class Summarizer:
             cleaned_views.append(ViewBulletPoints(**payload))
         return cleaned_views
 
-    def _parse_multimodal_bullet_response(self, response: str) -> list[dict[str, Any]]:
+    def _parse_multimodal_response_data(self, response: str) -> Any:
         cleaned = str(response or "").strip()
         cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"\s*```$", "", cleaned)
 
-        data = None
         for candidate in [
             cleaned,
             (re.search(r"\{[\s\S]*\}", cleaned).group() if re.search(r"\{[\s\S]*\}", cleaned) else ""),
@@ -194,10 +193,13 @@ class Summarizer:
             if not candidate:
                 continue
             try:
-                data = json.loads(candidate)
-                break
+                return json.loads(candidate)
             except json.JSONDecodeError:
                 continue
+        return None
+
+    def _parse_multimodal_bullet_response(self, response: str) -> list[dict[str, Any]]:
+        data = self._parse_multimodal_response_data(response)
         if isinstance(data, dict):
             bullets = data.get("bullet_points", [])
         elif isinstance(data, list):
@@ -205,6 +207,13 @@ class Summarizer:
         else:
             return []
         return [item for item in bullets if isinstance(item, dict)]
+
+    def _parse_multimodal_skipped_response(self, response: str) -> list[dict[str, Any]]:
+        data = self._parse_multimodal_response_data(response)
+        if not isinstance(data, dict):
+            return []
+        skipped = data.get("skipped_evidence_groups", [])
+        return [item for item in skipped if isinstance(item, dict)]
 
     def _format_evidence_snippets(self, group) -> str:
         lines = []
@@ -214,6 +223,13 @@ class Summarizer:
                 text = text[:1500].rstrip() + "..."
             lines.append(f"{idx}. [{snippet.source_ref}] {text}")
         return "\n".join(lines)
+
+    def _format_evidence_groups(self, groups) -> str:
+        blocks = []
+        for group_idx, group in enumerate(groups, 1):
+            blocks.append(f"### Evidence group {group_idx}: {group.multimodal_ref}")
+            blocks.append(self._format_evidence_snippets(group))
+        return "\n\n".join(blocks)
 
     def _fallback_multimodal_bullet(self, group) -> dict[str, Any]:
         source_refs = [snippet.source_ref for snippet in group.meaningful_snippets]
@@ -255,6 +271,28 @@ class Summarizer:
         )
         return item
 
+    def _group_for_multimodal_item(
+        self,
+        item: dict[str, Any],
+        groups_by_ref: dict[str, Any],
+        groups_by_id: Optional[dict[int, Any]] = None,
+    ):
+        if groups_by_id:
+            try:
+                group_id = int(item.get("evidence_group_id"))
+            except (TypeError, ValueError):
+                group_id = None
+            if group_id is not None and group_id in groups_by_id:
+                return groups_by_id[group_id]
+        raw_refs = item.get("multimodal_ref") or item.get("evidence_ref") or item.get("multimodal_refs") or []
+        if isinstance(raw_refs, str):
+            raw_refs = [raw_refs]
+        for ref in raw_refs:
+            ref_text = str(ref).strip()
+            if ref_text in groups_by_ref:
+                return groups_by_ref[ref_text]
+        return None
+
     def _generate_multimodal_bullets(
         self,
         *,
@@ -264,46 +302,86 @@ class Summarizer:
     ) -> list[dict[str, Any]]:
         snippets = extract_multimodal_evidence_snippets(paper_meta)
         groups = group_multimodal_evidence(snippets, meaningful_only=True)
-        bullets: list[dict[str, Any]] = []
-        for group in groups:
-            if not group.meaningful_snippets:
-                continue
-            prompt = self._get_multimodal_prompt_template().format(
-                paper_title=paper_title,
-                paper_abstract=paper_abstract,
-                multimodal_ref=group.multimodal_ref,
-                evidence_snippets=self._format_evidence_snippets(group),
-            )
-            for attempt in range(3):
-                try:
-                    response = self.llm.generate(prompt)
-                except Exception as exc:
-                    logger.warning(
-                        "LLM call failed for multimodal bullet %s (attempt %d/3): %s",
-                        group.multimodal_ref,
-                        attempt + 1,
-                        exc,
-                    )
-                    continue
-                parsed_items = [
-                    self._normalize_multimodal_bullet(item, group)
-                    for item in self._parse_multimodal_bullet_response(response)
-                    if str(item.get("text", "")).strip()
-                ]
-                if parsed_items:
-                    bullets.append(parsed_items[0])
-                    break
+        groups = [group for group in groups if group.meaningful_snippets]
+        if not groups:
+            return []
+
+        groups_by_ref = {group.multimodal_ref: group for group in groups}
+        groups_by_id = {idx: group for idx, group in enumerate(groups, 1)}
+        prompt = self._get_multimodal_prompt_template().format(
+            paper_title=paper_title,
+            paper_abstract=paper_abstract,
+            evidence_groups=self._format_evidence_groups(groups),
+            evidence_group_count=len(groups),
+        )
+
+        best_bullets: list[dict[str, Any]] = []
+        best_seen_refs: set[str] = set()
+        best_skipped_refs: set[str] = set()
+        for attempt in range(3):
+            try:
+                response = self.llm.generate(prompt)
+            except Exception as exc:
                 logger.warning(
-                    "No parseable multimodal bullet for %s (attempt %d/3).",
-                    group.multimodal_ref,
+                    "LLM call failed for multimodal bullets (attempt %d/3): %s",
                     attempt + 1,
+                    exc,
                 )
-            else:
-                logger.warning(
-                    "All 3 attempts failed for multimodal bullet %s; skipping.",
-                    group.multimodal_ref,
-                )
-        return bullets
+                continue
+
+            bullets: list[dict[str, Any]] = []
+            seen_refs: set[str] = set()
+            for item in self._parse_multimodal_bullet_response(response):
+                if not str(item.get("text", "")).strip():
+                    continue
+                dependency = str(item.get("multimodal_dependency", "") or "").strip().lower()
+                if dependency == "incidental":
+                    group = self._group_for_multimodal_item(item, groups_by_ref, groups_by_id)
+                    if group is not None:
+                        seen_refs.add(group.multimodal_ref)
+                    continue
+                group = self._group_for_multimodal_item(item, groups_by_ref, groups_by_id)
+                if group is None or group.multimodal_ref in seen_refs:
+                    continue
+                bullets.append(self._normalize_multimodal_bullet(item, group))
+                seen_refs.add(group.multimodal_ref)
+
+            skipped_refs: set[str] = set()
+            for item in self._parse_multimodal_skipped_response(response):
+                group = self._group_for_multimodal_item(item, groups_by_ref, groups_by_id)
+                if group is None or group.multimodal_ref in seen_refs:
+                    continue
+                skipped_refs.add(group.multimodal_ref)
+
+            covered_refs = seen_refs | skipped_refs
+            best_covered_refs = best_seen_refs | best_skipped_refs
+            if len(covered_refs) > len(best_covered_refs) or (
+                len(covered_refs) == len(best_covered_refs) and len(bullets) > len(best_bullets)
+            ):
+                best_bullets = bullets
+                best_seen_refs = seen_refs
+                best_skipped_refs = skipped_refs
+            if len(covered_refs) == len(groups):
+                return bullets
+            logger.warning(
+                "Covered %s/%s multimodal evidence groups from combined response "
+                "(bullets=%s, skipped=%s, attempt %d/3).",
+                len(covered_refs),
+                len(groups),
+                len(seen_refs),
+                len(skipped_refs),
+                attempt + 1,
+            )
+
+        best_covered_refs = best_seen_refs | best_skipped_refs
+        missing_groups = [group for group in groups if group.multimodal_ref not in best_covered_refs]
+        if missing_groups:
+            logger.warning(
+                "Omitting %s uncovered multimodal evidence groups without fallback bullets: %s",
+                len(missing_groups),
+                ", ".join(group.multimodal_ref for group in missing_groups),
+            )
+        return best_bullets
 
     def _bullet_to_dict(self, bullet) -> dict[str, Any]:
         if isinstance(bullet, dict):

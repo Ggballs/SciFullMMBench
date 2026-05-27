@@ -415,3 +415,8 @@ docker compose exec -T gradio python scripts/render_query_bullet_comments_md.py 
 echo "$OUT"'
 
 ```
+```commandline
+ssh weiyiyang@10.0.1.226 'cd ~/code/SciFullMMBench && \
+FINAL_JSON=outputs/multimodal_pipeline_JEGDp1E4OH_20260526_201634/final_pipeline_output.json \
+docker compose up -d --force-recreate gradio'
+```

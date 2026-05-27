@@ -353,6 +353,8 @@ def run_all(
 @click.option("--download-selected-pdfs", is_flag=True, help="Download selected hard-negative/positive PDFs instead of storing URL-only metadata")
 @click.option("--skip-filter", is_flag=True, help="Mark all downloaded papers as passed instead of applying stage-1 filtering")
 @click.option("--final-output", type=click.Path(), default=None, help="Final combined JSON path")
+@click.option("--downloaded-input", type=click.Path(exists=True), default=None, help="Reuse existing 00_downloaded.json (skip stage-0 download)")
+@click.option("--input-path", type=click.Path(exists=True), default=None, help="Input path for the first selected stage (overrides --downloaded-input as input)")
 def run_pipeline(
     stages: str,
     output_dir: str,
@@ -366,9 +368,13 @@ def run_pipeline(
     download_selected_pdfs: bool,
     skip_filter: bool,
     final_output: str,
+    downloaded_input: str,
+    input_path: str,
 ):
+    stage_input = Path(input_path) if input_path else (Path(downloaded_input) if downloaded_input else None)
     paths = run_selected_stages(
         stages,
+        input_path=stage_input,
         output_dir=Path(output_dir),
         venue=venue,
         year=year,
@@ -380,6 +386,7 @@ def run_pipeline(
         model=model,
         download_selected_pdfs=download_selected_pdfs,
         skip_filter=skip_filter,
+        downloaded_path=Path(downloaded_input) if downloaded_input else None,
     )
     final_output_path = (
         Path(final_output).expanduser().resolve()

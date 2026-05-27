@@ -239,7 +239,9 @@ class OpenAICompatibleBackend(LLMBackend):
         content = response.choices[0].message.content
         json_match = re.search(r'\{[\s\S]*\}', content)
         if json_match:
-            return json.loads(json_match.group())
+            raw = json_match.group()
+            raw = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', raw)
+            return json.loads(raw)
         return {"raw": content}
 
     def embed_texts(self, texts: list[str], model: Optional[str] = None) -> list[list[float]]:

@@ -13,8 +13,6 @@ MULTIMODAL_REF_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 
-APPENDIX_REF_PATTERN = re.compile(r"\bappendix\b", flags=re.IGNORECASE)
-
 MEANINGFUL_DISCUSSION_TERMS = {
     "ablation",
     "analysis",
@@ -144,9 +142,6 @@ def _expand_ref_labels(raw_label: str) -> list[str]:
 def extract_multimodal_refs(text: str) -> list[str]:
     refs = []
     for match in MULTIMODAL_REF_PATTERN.finditer(text or ""):
-        prefix = str(text or "")[max(0, match.start() - 24) : match.start()]
-        if APPENDIX_REF_PATTERN.search(prefix):
-            continue
         kind = match.group("kind")
         raw_label = match.group("label")
         if not kind or not raw_label:

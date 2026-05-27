@@ -1,24 +1,58 @@
 You are generating IR-style literature search queries from one view of a scientific paper summary.
 
-The input contains bullet points from the same view. Select the most retrieval-worthy bullets and generate one natural literature-search query for each selected bullet.
+The input contains text-only bullets and may also contain multimodal bullets from the same view. Generate all requested queries for this view in one JSON response.
 
-Use the retrieved examples as the main style guide. Prefer PASA-style user searches: plain, natural, and often mildly underspecified.
+Use the retrieved examples as the main style guide. Prefer natural-language-style user searches: plain, natural, and often mildly underspecified.
 
-Query style:
-- Write natural-language search requests, not keyword strings or mini-abstracts.
-- Use one clear retrieval hook: a task, method family, dataset/evaluation need, comparison, trade-off, or research phenomenon.
-- Be broad enough to retrieve a small family of related papers, but keep one distinguishing axis so the query is not generic.
-- Do not reverse-engineer the exact source paper.
-- Avoid exact numbers, table/figure/appendix names, benchmark names, model-family names, and internal implementation details unless they are the only natural retrieval hook.
-- If a bullet is too narrow, rewrite it one abstraction level broader while preserving the main research need.
-- Avoid combining multiple bullets or stacking several constraints in one query.
+======================================================================
+CRITICAL — what makes a query sound AI-GENERATED / SYNTHETIC (avoid ALL):
+======================================================================
+1. The "mini-paper-title" pattern:
+   - "Token-level uncertainty and critical decision points in chain-of-thought reasoning"
+   - "Controlled decoding studies on whether increasing uncertainty at specific reasoning steps..."
+   These are NOT queries — they are paper titles or review-section headers. Real researchers do NOT type like this.
+2. Stacked academic noun phrases:
+   - "Efficient token-level reinforcement learning for language model reasoning with similar accuracy from far fewer updated tokens"
+   Real queries are looser. Break up dense noun stacks.
+3. Terminology that only exists in the source paper:
+   - "score polarization", "overconfident positive predictions", "selective policy gradient updates"
+   If the term was coined or popularized BY the source paper, do NOT use it. Use plain-language descriptions instead.
+4. Reverse-engineering the paper's finding as a query:
+   - If the paper found "CoT hurts ranking" → query "papers where CoT hurts ranking"
+   These queries would EXACTLY retrieve the source paper. Instead, ask about the underlying phenomenon in a way that the source paper is just one member of a broader class.
+5. Listing the paper's own taxonomy or categorization as a query, even in plain language:
+   - "failures into getting too much evidence, too little evidence, or planning around the wrong modality"
+   This is still the paper's own framework. Abstract one more level: don't enumerate the categories the paper invented.
+6. Exact numbers from the paper's experimental setup:
+   - "k=1,3,5" / "top-3 and top-5" / "temperature 0.7" — these are implementation details
+   - Use qualitative descriptions: "varying the retrieval depth" or "at different cutoff values"
+7. Mentioning figures or tables in the query:
+   - "I want papers with a results table showing..." / "papers with a figure that..."
+   - Real researchers search for the PHENOMENON, not the presentation format. Drop the figure/table wrapper.
 
+======================================================================
+Query style — sound like a real researcher, not a paper title:
+======================================================================
+- Write like you're talking to a colleague
+- Keep it concise — one sentence, roughly 15-25 words. Real search queries are short; save the details for the paper itself
+- Avoid academic jargon but be technically precise: "training only on uncertain tokens, not the whole sequence"
+- Use one clear retrieval hook: a task, phenomenon, comparison, trade-off, or experimental observation
+- Be broad enough to retrieve a small family of related papers (2-3 papers), but specific enough to need full-text knowledge
+- Abstract one level up from the bullet's most specific terminology. If the bullet says "token entropy over CoT traces with top-k selection", ask about "identifying which tokens matter most during reasoning"
+- Prefer plain-language descriptions over named entities. Say "search engines that rerank results using language models" not "BM25 on BRIGHT with LLM reranking"
+
+======================================================================
 Selection:
-- Select the bullets that are most distinctive, memorable, or useful for retrieval.
-- Each generated query must be grounded in exactly one bullet.
-- Generate exactly {num_queries} queries.
-- Prefer different bullets; reuse a bullet only if the view has too few strong bullets.
-- If reusing a bullet, change the retrieval angle instead of paraphrasing the same query.
+======================================================================
+- Select the bullets that are most distinctive, memorable, or useful for retrieval
+- Each generated query must be grounded in exactly one bullet
+- Generate exactly {num_queries} queries
+- Prefer different bullets; reuse a bullet only if the view has too few strong bullets
+- If reusing a bullet, change the retrieval angle instead of paraphrasing the same query
+- Text-only bullets have `multimodal_ref: none`; queries based on them must set `is_multimodal=false` and `multimodal_rationale=null`
+- Multimodal bullets have a non-empty `multimodal_ref`; generate one query for each requested multimodal bullet and set `is_multimodal=true`
+- For multimodal queries, use the bullet's multimodal rationale to decide the retrieval angle, but do not mention exact figure/table/equation/algorithm labels in `query_text`
+- A multimodal query should still be plain text that searches for the underlying phenomenon, measured comparison, trend, ablation, method mechanism, or evidence-backed claim
 
 Mode-specific rule:
 {query_mode_instructions}
@@ -48,10 +82,19 @@ Output valid JSON only:
       "query_text": "...",
       "query_type": "IR",
       "view_label": "{view_label}",
-      "is_multimodal": true,
-      "multimodal_rationale": "The selected bullet's table-backed comparison is necessary to judge relevance because the query asks for measured trade-offs, not only the general topic.",
+      "is_multimodal": false,
+      "multimodal_rationale": null,
       "related_bullet_indice": 1,
       "related_bullet_justification": "Briefly explain why this bullet was selected and why the query is a good IR retrieval hook."
+    }},
+    {{
+      "query_text": "...",
+      "query_type": "IR",
+      "view_label": "{view_label}",
+      "is_multimodal": true,
+      "multimodal_rationale": "Use the selected bullet's multimodal rationale to explain why the query needs evidence from the referenced figure/table/equation/algorithm.",
+      "related_bullet_indice": 2,
+      "related_bullet_justification": "Briefly explain why this multimodal bullet was selected and why the query is a good IR retrieval hook."
     }}
   ]
 }}

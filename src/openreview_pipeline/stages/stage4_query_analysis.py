@@ -219,8 +219,9 @@ def _load_reference_records_from_golden_db(db_url: str) -> tuple[list[dict[str, 
     return records, embeddings
 
 
-def _pca_2d(vectors: list[list[float]]) -> list[list[float]]:
+def _tsne_2d(vectors: list[list[float]]) -> list[list[float]]:
     import numpy as np
+    from sklearn.manifold import TSNE
 
     if not vectors:
         return []
@@ -229,12 +230,12 @@ def _pca_2d(vectors: list[list[float]]) -> list[list[float]]:
         return []
     if matrix.shape[0] == 1:
         return [[0.0, 0.0]]
-    matrix = matrix - matrix.mean(axis=0, keepdims=True)
-    _, _, vt = np.linalg.svd(matrix, full_matrices=False)
-    components = vt[: min(2, vt.shape[0])].T
-    coords = matrix @ components
-    if coords.shape[1] == 1:
-        coords = np.concatenate([coords, np.zeros((coords.shape[0], 1))], axis=1)
+    if matrix.shape[0] == 2:
+        return [[float(matrix[0, 0]), float(matrix[0, 1])] for _ in range(2)]
+    n_components = 2
+    perplexity = min(30, matrix.shape[0] - 1)
+    tsne = TSNE(n_components=n_components, perplexity=perplexity, random_state=42)
+    coords = tsne.fit_transform(matrix)
     return [[float(x), float(y)] for x, y in coords[:, :2]]
 
 
@@ -333,8 +334,8 @@ def _plot_embedding_projection(
     ax.axhline(0, color="#e5e7eb", linewidth=0.8)
     ax.axvline(0, color="#e5e7eb", linewidth=0.8)
     ax.set_title(title)
-    ax.set_xlabel("PC1")
-    ax.set_ylabel("PC2")
+    ax.set_xlabel("t-SNE 1")
+    ax.set_ylabel("t-SNE 2")
     ax.legend(loc="best", frameon=True)
     ax.grid(alpha=0.18)
     fig.tight_layout()
@@ -448,7 +449,7 @@ def write_query_embedding_analysis(
             f"Expected {len(records)} query embeddings, received {len(embeddings)}."
         )
 
-    coords = _pca_2d(embeddings)
+    coords = _tsne_2d(embeddings)
     for record, coord in zip(records, coords):
         record["x"], record["y"] = coord
 
@@ -473,7 +474,7 @@ def write_query_embedding_analysis(
         "source_view",
     )
     analysis = {
-        "method": "BGE embeddings + PCA projection",
+        "method": "BGE embeddings + t-SNE projection",
         "embedding_model": str(settings["bge_model_path"]),
         "embedding_device": embedding_device,
         "embedding_dimension": len(embeddings[0]) if embeddings else 0,

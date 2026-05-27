@@ -21,6 +21,12 @@ import pandas as pd
 DEFAULT_FINAL_JSON = Path("outputs/test_single/final_pipeline_output.json")
 DEFAULT_HUMAN_LITSEARCH_JSON = Path("outputs/query_analysis_comparison/03_litsearch_human/style_analysis.json")
 DEFAULT_HUMAN_PASA_JSON = Path("outputs/query_analysis_comparison/02_pasa_realscholar/style_analysis.json")
+DEFAULT_HUMAN_SPECIFIC_ANNOTATIONS_CSV = Path(
+    "outputs/query_analysis/golden_view_classification_with_targets/final_human_consensus_annotations.csv"
+)
+DEFAULT_HUMAN_SPECIFIC_STYLE_JSON = Path(
+    "outputs/query_analysis_comparison/06_human_specific_current_prompt/style_analysis.json"
+)
 DEFAULT_HUMAN_JUDGMENTS_JSON = Path("outputs/human_judgments.json")
 MAX_CANDIDATE_JUDGE_ROWS = 8
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -326,7 +332,7 @@ def build_embedding_tsne_static_report(
             random_state=42,
         ).fit_transform(embeddings)
     except Exception as exc:
-        logger.warning("Embedding t-SNE precompute failed; Gradio will use existing PCA plots: %s", exc)
+        logger.warning("Embedding t-SNE precompute failed; Gradio will use existing projection plots: %s", exc)
         return None
 
     for point, (x, y) in zip(points, coords):
@@ -546,8 +552,8 @@ def build_embedding_overview_html(embedding_artifacts: Dict[str, Any]) -> str:
             {badge('precomputed t-SNE', '#dcfce7', '#166534')}
             {plain_meta('Records: ' + esc(sum((analysis.get('record_counts') or {}).values()) if analysis.get('record_counts') else 'N/A'))}
             {plain_meta('View silhouette: ' + fmt_metric(view_cluster_metrics.get('view_silhouette_cosine'), 3))}
-            {plain_meta('Dataset PCA ratio: ' + fmt_metric(datasets.get('separation_ratio'), 3))}
-            {plain_meta('View PCA ratio: ' + fmt_metric(views.get('separation_ratio'), 3))}
+            {plain_meta('Dataset separation ratio: ' + fmt_metric(datasets.get('separation_ratio'), 3))}
+            {plain_meta('View separation ratio: ' + fmt_metric(views.get('separation_ratio'), 3))}
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px">
             {dataset_img}
@@ -807,14 +813,57 @@ def _human_score_count_estimate(summary: Dict[str, Any], total: int) -> List[int
     return weights
 
 
-def load_human_bundle(litsearch_path: Optional[Path], pasa_path: Optional[Path]) -> Optional[Dict[str, Any]]:
+def normalize_query_text(value: Any) -> str:
+    return " ".join(str(value or "").strip().split()).lower()
+
+
+def load_specific_human_reference_queries(path: Optional[Path]) -> Dict[str, Any]:
+    if not path or not path.exists():
+        return {"loaded": False, "path": str(path) if path else "", "by_dataset": {}}
+
+    df = pd.read_csv(path)
+    if "query" not in df.columns or "final_decision" not in df.columns:
+        return {"loaded": False, "path": str(path), "by_dataset": {}}
+
+    decisions = df["final_decision"].fillna("").astype(str).str.strip().str.lower()
+    specific_df = df[decisions != "skip"].copy()
+    by_dataset = {"litsearch_human": set(), "pasa_human": set()}
+    for _, row in specific_df.iterrows():
+        query = normalize_query_text(row.get("query"))
+        if not query:
+            continue
+        source_file = str(row.get("source_file", "")).lower()
+        dataset = "pasa_human" if "pasa" in source_file else "litsearch_human"
+        by_dataset.setdefault(dataset, set()).add(query)
+
+    return {
+        "loaded": True,
+        "path": str(path),
+        "total_specific": int(sum(len(values) for values in by_dataset.values())),
+        "by_dataset": by_dataset,
+    }
+
+
+def load_human_bundle(
+    litsearch_path: Optional[Path],
+    pasa_path: Optional[Path],
+    specific_annotations_path: Optional[Path],
+    specific_style_path: Optional[Path],
+) -> Optional[Dict[str, Any]]:
     datasets = []
     for name, path in [("litsearch_human", litsearch_path), ("pasa_human", pasa_path)]:
         if path and path.exists():
             datasets.append({"name": name, "path": str(path), "data": load_json(path)})
     if not datasets:
         return None
-    return {"datasets": datasets}
+    specific_style = None
+    if specific_style_path and specific_style_path.exists():
+        specific_style = {"path": str(specific_style_path), "data": load_json(specific_style_path)}
+    return {
+        "datasets": datasets,
+        "specific_reference": load_specific_human_reference_queries(specific_annotations_path),
+        "specific_style": specific_style,
+    }
 
 
 def _weighted_mean(values: List[Tuple[float, int]]) -> Optional[float]:
@@ -828,14 +877,78 @@ def combine_human_style_summary(human_bundle: Optional[Dict[str, Any]]) -> Dict[
     if not human_bundle:
         return {}
 
+    specific_style = human_bundle.get("specific_style") or {}
+    if specific_style.get("data"):
+        data = specific_style["data"]
+        combined = safe_get(data, "metrics", "combined", default={}) or {}
+        qualitative = combined.get("qualitative_metrics", {}) or {}
+        semantic = combined.get("semantic_constraint_analysis", {}) or {}
+        llm_rows = combined.get("llm_judge", {}).get("per_query", []) or []
+        semantic_rows = semantic.get("per_query", []) or []
+        query_examples = data.get("query_examples", []) or []
+        spec_counts = [0, 0, 0, 0, 0]
+        nat_counts = [0, 0, 0, 0, 0]
+        for row in llm_rows:
+            try:
+                score = int(row.get("specificity_calibration_score"))
+                if 1 <= score <= 5:
+                    spec_counts[score - 1] += 1
+            except Exception:
+                pass
+            try:
+                score = int(row.get("lexical_naturalism_score"))
+                if 1 <= score <= 5:
+                    nat_counts[score - 1] += 1
+            except Exception:
+                pass
+        word_counts = [len(str(query).split()) for query in query_examples if str(query).strip()]
+        constraint_counts = []
+        for row in semantic_rows:
+            try:
+                constraint_counts.append(int(row.get("semantic_constraint_count")))
+            except Exception:
+                pass
+        templates = combined.get("question_templates", {}) or {}
+        return {
+            "total_queries": int(safe_get(data, "dataset_overview", "combined", "total_queries", default=len(query_examples)) or len(query_examples)),
+            "source_names": ["human_reference_specific_current_prompt"],
+            "source_paths": [specific_style.get("path", "")],
+            "specific_reference_loaded": True,
+            "specific_reference_path": specific_style.get("path", ""),
+            "specific_reference_total": int(safe_get(data, "dataset_overview", "combined", "total_queries", default=len(query_examples)) or len(query_examples)),
+            "loaded": True,
+            "specificity_mean": safe_get(qualitative, "specificity_calibration", "mean"),
+            "naturalism_mean": safe_get(qualitative, "lexical_naturalism", "mean"),
+            "specificity_fit_mean": safe_get(qualitative, "specificity_calibration_fit", "mean"),
+            "naturalism_fit_mean": safe_get(qualitative, "lexical_naturalism_fit", "mean"),
+            "specificity_score_counts": spec_counts,
+            "naturalism_score_counts": nat_counts,
+            "word_counts": word_counts,
+            "word_count_mean": float(sum(word_counts) / len(word_counts)) if word_counts else None,
+            "constraint_counts": constraint_counts,
+            "constraint_count_mean": float(sum(constraint_counts) / len(constraint_counts)) if constraint_counts else None,
+            "unmatched_template_count": templates.get("unmatched_count", 0),
+            "unmatched_template_share": templates.get("unmatched_ratio"),
+            "rescore_prompt": "prompts/query_analysis/style_analysis.txt",
+        }
+
     def _dataset_total(data: Dict[str, Any]) -> int:
         return int(safe_get(data, "dataset_overview", "combined", "total_queries", default=0) or 0)
 
     def _qual(data: Dict[str, Any]) -> Dict[str, Any]:
         return safe_get(data, "metrics", "combined", "qualitative_metrics", default={}) or {}
 
+    def _semantic_items(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        return (
+            safe_get(data, "metrics", "combined", "semantic_constraint_analysis", "per_query", default=[])
+            or []
+        )
+
+    specific_reference = human_bundle.get("specific_reference", {}) or {}
+    specific_by_dataset = specific_reference.get("by_dataset", {}) or {}
+    use_specific_reference = bool(specific_reference.get("loaded"))
     sources = human_bundle.get("datasets", [])
-    total_queries = sum(_dataset_total(item["data"]) for item in sources)
+    total_queries = 0
     specificity_means = []
     naturalism_means = []
     specificity_fit_means = []
@@ -847,18 +960,24 @@ def combine_human_style_summary(human_bundle: Optional[Dict[str, Any]]) -> Dict[
     unmatched_template_count = 0
 
     for item in sources:
+        dataset_name = item.get("name", "")
         data = item["data"]
-        total = _dataset_total(data)
+        semantic_items = _semantic_items(data)
+        selected_items = semantic_items
+        if use_specific_reference:
+            specific_queries = specific_by_dataset.get(dataset_name, set())
+            selected_items = [
+                row for row in semantic_items
+                if normalize_query_text(row.get("query")) in specific_queries
+            ]
+        total = len(selected_items) if use_specific_reference else _dataset_total(data)
+        total_queries += total
         qual = _qual(data)
         templates = safe_get(data, "metrics", "combined", "question_templates", default={}) or {}
         spec = qual.get("specificity_calibration", {}) or {}
         nat = qual.get("lexical_naturalism", {}) or {}
         spec_fit = qual.get("specificity_calibration_fit", {}) or qual.get("specificity", {}) or {}
         nat_fit = qual.get("lexical_naturalism_fit", {}) or qual.get("naturalness", {}) or {}
-        semantic_items = (
-            safe_get(data, "metrics", "combined", "semantic_constraint_analysis", "per_query", default=[])
-            or []
-        )
         if spec.get("mean") is not None:
             specificity_means.append((float(spec["mean"]), total))
         if nat.get("mean") is not None:
@@ -871,7 +990,7 @@ def combine_human_style_summary(human_bundle: Optional[Dict[str, Any]]) -> Dict[
         est_nat = _human_score_count_estimate(nat, total)
         specificity_counts = [a + b for a, b in zip(specificity_counts, est_spec)]
         naturalism_counts = [a + b for a, b in zip(naturalism_counts, est_nat)]
-        for row in semantic_items:
+        for row in selected_items:
             query_text = str(row.get("query", "")).strip()
             if query_text:
                 word_counts.append(len(query_text.split()))
@@ -880,7 +999,11 @@ def combine_human_style_summary(human_bundle: Optional[Dict[str, Any]]) -> Dict[
             except Exception:
                 pass
         try:
-            unmatched_template_count += int(templates.get("unmatched_count", 0) or 0)
+            source_total = _dataset_total(data)
+            unmatched_count = int(templates.get("unmatched_count", 0) or 0)
+            if use_specific_reference and source_total > 0:
+                unmatched_count = round(unmatched_count * total / source_total)
+            unmatched_template_count += unmatched_count
         except Exception:
             pass
 
@@ -888,6 +1011,9 @@ def combine_human_style_summary(human_bundle: Optional[Dict[str, Any]]) -> Dict[
         "total_queries": total_queries,
         "source_names": [item["name"] for item in sources],
         "source_paths": [item["path"] for item in sources],
+        "specific_reference_loaded": use_specific_reference,
+        "specific_reference_path": specific_reference.get("path", ""),
+        "specific_reference_total": specific_reference.get("total_specific"),
         "loaded": bool(sources),
         "specificity_mean": _weighted_mean(specificity_means),
         "naturalism_mean": _weighted_mean(naturalism_means),
@@ -999,9 +1125,16 @@ def build_overview_html(
     )
 
     human_status = (
-        badge("Human reference loaded", "#dcfce7", "#166534")
+        badge("Specific human reference loaded", "#dcfce7", "#166534")
+        if human_summary.get("specific_reference_loaded")
+        else badge("Human reference loaded", "#fef3c7", "#92400e")
         if human_summary.get("loaded")
         else badge("Human reference missing", "#fee2e2", "#991b1b")
+    )
+    reference_scope = (
+        "specific=1 LitSearch + PASA human queries (`final_decision != skip`)"
+        if human_summary.get("specific_reference_loaded")
+        else "combined LitSearch human + PASA human; specific annotation CSV missing"
     )
 
     return f"""
@@ -1012,7 +1145,7 @@ def build_overview_html(
         <div style="border:1px solid #e5e7eb;border-radius:14px;padding:14px;background:white;margin-bottom:14px">
             <div style="font-size:16px;font-weight:800;margin-bottom:8px">Comparison Overview</div>
             <div style="margin-bottom:8px">{human_status}</div>
-            <div style="margin-bottom:8px"><b>Human reference in code:</b> combined LitSearch human + PASA human; JSON files unchanged.</div>
+            <div style="margin-bottom:8px"><b>Human reference in code:</b> {esc(reference_scope)}</div>
             <div style="margin-bottom:8px"><b>Human query count:</b> {fmt_int(human_summary.get("total_queries", 0))}</div>
             <div style="margin-bottom:8px"><b>Decision Counts:</b> {esc(query_analysis_summary.get("decision_counts", {}))}</div>
             <div style="margin-bottom:8px"><b>Retrieval Summary:</b> {esc(query_analysis_summary.get("retrieval_summary", {}))}</div>
@@ -1035,6 +1168,7 @@ def build_overview_footer_html(final_data: Dict[str, Any], human_summary: Dict[s
         <div style="border:1px solid #e5e7eb;border-radius:14px;padding:14px;background:white;margin-bottom:14px">
             <div style="font-size:16px;font-weight:800;margin-bottom:8px">Human Reference Sources</div>
             <ul style="margin:0 0 0 18px;line-height:1.6">{human_sources_html or '<li>No human style files loaded.</li>'}</ul>
+            <div style="margin-top:10px;color:#6b7280;font-size:12px">Specific filter: <code>{esc(human_summary.get('specific_reference_path') or 'not loaded')}</code></div>
         </div>
         <div style="border:1px solid #e5e7eb;border-radius:14px;padding:14px;background:white">
             <div style="font-size:16px;font-weight:800;margin-bottom:8px">Artifact Paths</div>
@@ -1045,10 +1179,15 @@ def build_overview_footer_html(final_data: Dict[str, Any], human_summary: Dict[s
 
 
 def build_metric_summary_df(generated_summary: Dict[str, Any], human_summary: Dict[str, Any]) -> pd.DataFrame:
+    human_dataset_name = (
+        "human_reference_specific"
+        if human_summary.get("specific_reference_loaded")
+        else "human_reference_combined"
+    )
     return pd.DataFrame(
         [
             {
-                "dataset": "human_reference_combined",
+                "dataset": human_dataset_name,
                 "queries": human_summary.get("total_queries"),
                 "word_count_mean": fmt_metric(human_summary.get("word_count_mean")),
                 "semantic_constraint_count_mean": fmt_metric(human_summary.get("constraint_count_mean")),
@@ -2175,12 +2314,19 @@ def launch_app(
     final_json_path: Path,
     human_litsearch_path: Optional[Path],
     human_pasa_path: Optional[Path],
+    human_specific_annotations_path: Optional[Path],
+    human_specific_style_path: Optional[Path],
     human_judgments_path: Path,
     port: int = 7860,
     share: bool = False,
 ) -> None:
     final_data = load_json(final_json_path)
-    human_bundle = load_human_bundle(human_litsearch_path, human_pasa_path)
+    human_bundle = load_human_bundle(
+        human_litsearch_path,
+        human_pasa_path,
+        human_specific_annotations_path,
+        human_specific_style_path,
+    )
     human_summary = combine_human_style_summary(human_bundle)
     generated_df = extract_generated_style_scores(final_data)
     generated_summary = compute_generated_style_summary(generated_df)
@@ -2613,6 +2759,16 @@ def main() -> None:
         help="Path to PASA human style_analysis.json",
     )
     parser.add_argument(
+        "--human-specific-annotations-csv",
+        default=str(DEFAULT_HUMAN_SPECIFIC_ANNOTATIONS_CSV),
+        help="Path to human reference annotations CSV; rows with final_decision != skip are treated as specific=1",
+    )
+    parser.add_argument(
+        "--human-specific-style-json",
+        default=str(DEFAULT_HUMAN_SPECIFIC_STYLE_JSON),
+        help="Optional rescored style_analysis.json for specific human reference queries; used before aggregate fallback",
+    )
+    parser.add_argument(
         "--human-judgments-json",
         default=str(DEFAULT_HUMAN_JUDGMENTS_JSON),
         help="Path where interactive human judgments are saved",
@@ -2630,6 +2786,8 @@ def main() -> None:
         final_json_path=resolve_input_path(args.final_json) or Path(args.final_json).resolve(),
         human_litsearch_path=resolve_input_path(args.human_litsearch_json),
         human_pasa_path=resolve_input_path(args.human_pasa_json),
+        human_specific_annotations_path=resolve_input_path(args.human_specific_annotations_csv),
+        human_specific_style_path=resolve_input_path(args.human_specific_style_json),
         human_judgments_path=Path(args.human_judgments_json).expanduser(),
         port=args.port,
         share=args.share,
