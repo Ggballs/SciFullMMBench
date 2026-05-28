@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from openreview_pipeline.schemas import PipelineOutput, PipelinePaper, PipelineQuery
-from openreview_pipeline.schemas.schemas_summarize import ViewBulletPoints
+from openreview_pipeline.schemas.schemas_summarize import ViewBulletPoints, dump_view_bullet_points_compact
 from openreview_pipeline.utils import save_json
 
 
@@ -117,7 +117,7 @@ def _build_summary_views(stage2_item: Optional[dict[str, Any]]) -> list[dict[str
     for view in views:
         if not isinstance(view, dict):
             continue
-        normalized_views.append(ViewBulletPoints.model_validate(view).model_dump(mode="json"))
+        normalized_views.append(dump_view_bullet_points_compact(ViewBulletPoints.model_validate(view)))
     return normalized_views
 
 

@@ -9,13 +9,24 @@ from tqdm.auto import tqdm
 
 from openreview_pipeline.llm import LLMBackend
 from openreview_pipeline.schemas.schemas_filter import FilteredPapersDataset
-from openreview_pipeline.schemas.schemas_summarize import SummarizedPapersDataset, PaperSummary, ViewBulletPoints
-from openreview_pipeline.utils import load_json, save_json, load_prompt_template
+from openreview_pipeline.schemas.schemas_summarize import (
+    SummarizedPapersDataset,
+    PaperSummary,
+    ViewBulletPoints,
+    dump_summarized_dataset_compact,
+)
+from openreview_pipeline.utils import load_json, load_prompt_template
 from openreview_pipeline.utils.multimodal_evidence import group_multimodal_evidence, extract_multimodal_evidence_snippets
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_VIEWS = ["motivation", "method", "experiment/result"]
+
+
+def save_summarized_json(path: Path, data: SummarizedPapersDataset) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(dump_summarized_dataset_compact(data), handle, indent=2, ensure_ascii=False)
 
 
 class Summarizer:
@@ -546,7 +557,7 @@ class Summarizer:
                 summaries.append(summary)
                 completed_ids.add(summary.paper_id)
                 if checkpoint_path:
-                    save_json(
+                    save_summarized_json(
                         checkpoint_path,
                         SummarizedPapersDataset(summaries=summaries, total_papers=len(summaries)),
                     )
@@ -572,4 +583,4 @@ class Summarizer:
         logger.info(f"Running summarize stage: {input_path} -> {output_path}")
         dataset = load_json(input_path, FilteredPapersDataset)
         result = self.apply(dataset, checkpoint_path=output_path)
-        save_json(output_path, result)
+        save_summarized_json(output_path, result)

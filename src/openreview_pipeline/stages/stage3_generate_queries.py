@@ -30,9 +30,21 @@ logger = logging.getLogger(__name__)
 
 QUERY_TYPES = ("IR",)
 VIEW_DEFINITIONS = {
-    "motivation": "research problem, need, gap, goal, hypothesis, or why the work matters",
-    "method": "proposed approach, model, algorithm, system, dataset construction process, or implementation design",
-    "experiment/result": "evaluation setup, benchmark, test data, metric, baseline, ablation, empirical finding, comparison, result, or observed limitation",
+    "motivation": (
+        "WHY this research problem exists and WHY this paper's approach is necessary, "
+        "such as the research problem, need, gap, goal, hypothesis, or reason the work matters"
+    ),
+    "method": (
+        "HOW the proposed approach works mechanistically, such as the proposed approach, "
+        "model, algorithm, system, procedures, pipelines, dataset construction process, "
+        "or implementation design, training/inference steps"
+    ),
+    "experiment/result": (
+        "WHAT was empirically tested and what the results showed and analyzed, such as "
+        "evaluation setup, benchmarks, datasets used for testing, metrics, baselines, "
+        "ablations, empirical findings, measured performance, comparisons, analytical "
+        "observations, and observed behavior, limitations"
+    ),
 }
 
 
@@ -324,6 +336,7 @@ class QueryGenerator:
             retrieved_examples=self._format_retrieved_examples(prompt_context.examples),
             paper_title=paper_title,
             view_label=view_name,
+            view_definition=VIEW_DEFINITIONS.get(view_name, "N/A"),
             view_summary=view_summary,
             bullets=self._format_bullets(prompt_context.bullets),
         )

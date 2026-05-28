@@ -42,7 +42,7 @@ Query style — sound like a real researcher, not a paper title:
 - Prefer plain-language descriptions over named entities. Say "search engines that rerank results using language models" not "BM25 on BRIGHT with LLM reranking"
 
 ======================================================================
-Selection:
+Selection & Generation Principles:
 ======================================================================
 - Select the bullets that are most distinctive, memorable, or useful for retrieval
 - Each generated query must be grounded in exactly one bullet
@@ -67,6 +67,9 @@ Paper title:
 
 View label:
 {view_label}
+
+View definition:
+{view_definition}
 
 View summary:
 {view_summary}

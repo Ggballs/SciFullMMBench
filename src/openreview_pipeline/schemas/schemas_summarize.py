@@ -97,6 +97,47 @@ class ViewBulletPoints(BaseModel):
         return self
 
 
+def dump_view_bullet_points_compact(view: ViewBulletPoints) -> dict:
+    """Serialize a view without empty multimodal fields on text-only bullets."""
+    payload = {
+        "view_name": view.view_name,
+        "summary": view.summary,
+        "bullet_points": [],
+    }
+    for bullet in view.bullet_points:
+        bullet_payload = {
+            "index": bullet.index,
+            "text": bullet.text,
+            "source_refs": list(bullet.source_refs),
+        }
+        multimodal_ref = list(bullet.multimodal_ref or [])
+        if multimodal_ref:
+            bullet_payload["multimodal_ref"] = multimodal_ref
+            bullet_payload["multimodal_dependency"] = bullet.multimodal_dependency or "supportive"
+            if bullet.multimodal_dependency_rationale:
+                bullet_payload["multimodal_dependency_rationale"] = bullet.multimodal_dependency_rationale
+        payload["bullet_points"].append(bullet_payload)
+    return payload
+
+
+def dump_summarized_dataset_compact(dataset: "SummarizedPapersDataset") -> dict:
+    """Serialize summarized outputs while omitting text-only multimodal defaults."""
+    return {
+        "summaries": [
+            {
+                "paper_id": summary.paper_id,
+                "paper_title": summary.paper_title,
+                "abstract": summary.abstract,
+                "views": [dump_view_bullet_points_compact(view) for view in summary.views],
+                "generated_at": summary.generated_at.isoformat(),
+            }
+            for summary in dataset.summaries
+        ],
+        "total_papers": dataset.total_papers,
+        "generated_at": dataset.generated_at.isoformat(),
+    }
+
+
 class PaperSummary(BaseModel):
     paper_id: str
     paper_title: str
