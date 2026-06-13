@@ -409,18 +409,21 @@ class PyseriniBM25Retriever(BaseRetriever):
         super().__init__(config)
         self._searcher = None
         self._index_dir = str(config.index_dir or "")
+        # pyserini needs these env vars at import time
+        _os.environ.setdefault("JAVA_HOME", "/data3/weiyiyang/jdk21")
+        _os.environ.setdefault("OPENAI_API_KEY", "dummy-for-bm25")
 
-    def validate(self) -> None:
+    def _load_searcher(self):
         from pyserini.search.lucene import LuceneSearcher
         self._searcher = LuceneSearcher(self._index_dir)
-        # Verify index is accessible
+
+    def validate(self) -> None:
+        self._load_searcher()
         _ = self._searcher.num_docs
 
     def build_index(self, corpus: list[CorpusRecord]) -> None:
-        # Index is pre-built on disk; just ensure searcher is loaded
         if self._searcher is None:
-            from pyserini.search.lucene import LuceneSearcher
-            self._searcher = LuceneSearcher(self._index_dir)
+            self._load_searcher()
 
     def search(self, queries: list[QueryRecord], top_k: int) -> list[SearchResult]:
         if self._searcher is None:
