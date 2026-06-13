@@ -1,0 +1,53 @@
+dataset:
+  queries_path: /data3/weiyiyang/dataset_cache/MAPLE/queries/text_grounded.jsonl
+  corpus_path: /data3/weiyiyang/dataset_cache/MAPLE/corpus/corpus.jsonl
+  query_id_field: query_id
+  query_text_field: query_text
+  target_paper_id_field: target_paper_id
+  source_view_field: source_view
+  corpus_paper_id_field: paper_id
+  title_field: title
+  abstract_field: abstract
+  long_text_field: null
+
+output_dir: /data3/weiyiyang/code/SciFullMMBench/outputs/per_view_retrieval_maple_final
+top_k:
+  - 10
+  - 20
+bootstrap_samples: 1000
+random_seed: 13
+
+model_lineup:
+  - name: BM25
+    type: pyserini_bm25
+    index_dir: /data3/weiyiyang/dataset_cache/MAPLE_docling_dual_outputs_fixed2/bm25_index
+
+  - name: Qwen3-Embed-8B
+    type: postgres_embedding
+    pg_model_name: qwen3-embed-8b
+    query_service_url: http://127.0.0.1:18081/embed/qwen3-embed-8b
+
+  - name: BGE-M3
+    type: postgres_embedding
+    pg_model_name: bge-m3
+    query_service_url: http://127.0.0.1:18080/embed
+
+  - name: Instructor-XL
+    type: postgres_embedding
+    pg_model_name: instructor-xl_full
+    query_service_url: http://127.0.0.1:18081/embed/instructor-xl
+
+  - name: GritLM-7B
+    type: postgres_embedding
+    pg_model_name: gritlm-7b
+    query_service_url: http://127.0.0.1:18082/embed
+
+  - name: SPECTER2
+    type: postgres_embedding
+    pg_model_name: specter2_full
+    query_service_url: http://127.0.0.1:18081/embed/specter2
+
+  - name: SCiNCL
+    type: postgres_embedding
+    pg_model_name: scincl_full
+    query_service_url: http://127.0.0.1:18081/embed/scincl
