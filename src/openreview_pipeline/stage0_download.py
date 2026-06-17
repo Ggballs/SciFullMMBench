@@ -1,0 +1,917 @@
+import logging
+import re
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+from tqdm.auto import tqdm
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_YEAR_THRESHOLD = 2021
+OPENREVIEW_BASEURL = "https://api2.openreview.net"
+OPENREVIEW_RATE_LIMIT_BUFFER_SECONDS = 2.0
+OPENREVIEW_MAX_RATE_LIMIT_RETRIES = 3
+OPENREVIEW_MIN_REQUEST_INTERVAL_SECONDS = 1.0
+OPENREVIEW_VENUE_ALIASES = {
+    "ICLR": "ICLR.cc",
+    "NEURIPS": "NeurIPS.cc",
+    "NIPS": "NeurIPS.cc",
+    "ICML": "ICML.cc",
+}
+
+REVIEW_FIELD_MAPPING = {
+    "summary": "review",
+    "strengths": "pros",
+    "weaknesses": "cons",
+    "soundness": "quality",
+    "presentation": "clarity",
+    "contribution": "originality",
+}
+
+
+def parse_forum_ids(forum_id: Any) -> List[str]:
+    """Parse the public comma-separated --forum-id value into clean ids."""
+    if not forum_id:
+        return []
+    if isinstance(forum_id, str):
+        raw_parts = forum_id.split(",")
+    else:
+        raw_parts = forum_id
+    return [str(part).strip() for part in raw_parts if str(part).strip()]
+
+
+def _extract_exception_payload(exc: Exception) -> Any:
+    if getattr(exc, "args", None):
+        return exc.args[0]
+    return None
+
+
+def _rate_limit_wait_seconds(exc: Exception) -> Optional[float]:
+    payload = _extract_exception_payload(exc)
+    if isinstance(payload, dict):
+        name = str(payload.get("name", ""))
+        status = payload.get("status")
+        details = payload.get("details", {})
+        if name != "RateLimitError" and status != 429:
+            return None
+        reset_time = details.get("resetTime") if isinstance(details, dict) else None
+        if reset_time:
+            try:
+                reset_at = datetime.fromisoformat(str(reset_time).replace("Z", "+00:00"))
+                now = datetime.now(timezone.utc)
+                return max(0.0, (reset_at - now).total_seconds()) + OPENREVIEW_RATE_LIMIT_BUFFER_SECONDS
+            except ValueError:
+                pass
+        return 60.0
+
+    message = str(exc)
+    if "RateLimitError" in message or "Too many requests" in message or "status': 429" in message:
+        return 60.0
+    return None
+
+
+def _sleep_for_rate_limit_if_needed(exc: Exception, *, context: str, attempt: int) -> bool:
+    wait_seconds = _rate_limit_wait_seconds(exc)
+    if wait_seconds is None:
+        return False
+    logger.warning(
+        "OpenReview rate limit while %s; retry %s/%s after %.1f seconds.",
+        context,
+        attempt,
+        OPENREVIEW_MAX_RATE_LIMIT_RETRIES,
+        wait_seconds,
+    )
+    time.sleep(wait_seconds)
+    return True
+
+
+def try_import_openreview():
+    try:
+        import openreview
+
+        return openreview
+    except ImportError:
+        logger.warning("openreview package not installed. Install with: pip install openreview")
+        return None
+
+
+def unwrap_value(value: Any) -> Any:
+    """Return OpenReview's wrapped `{"value": ...}` payload as a plain value."""
+    if isinstance(value, dict) and "value" in value:
+        return value["value"]
+    return value
+
+
+def normalize_content(content: Any) -> Dict[str, Any]:
+    """Normalize a note content payload into a plain dictionary."""
+    if not isinstance(content, dict):
+        return {}
+    return {key: unwrap_value(value) for key, value in content.items()}
+
+
+def normalize_openreview_venue_id(venue: str) -> str:
+    normalized = str(venue or "").strip().replace(" ", "_")
+    return OPENREVIEW_VENUE_ALIASES.get(normalized.upper(), normalized)
+
+
+def _first_nonempty(*values: Any) -> Optional[str]:
+    for value in values:
+        unwrapped = unwrap_value(value)
+        if unwrapped is None:
+            continue
+        text = str(unwrapped).strip()
+        if text:
+            return text
+    return None
+
+
+def _venue_from_venueid(venueid: Optional[str]) -> Optional[str]:
+    if not venueid:
+        return None
+    parts = [part for part in str(venueid).split("/") if part]
+    if len(parts) >= 3 and parts[0].lower() == "aclweb.org":
+        return "/".join(parts[:3])
+    if len(parts) >= 3 and re.fullmatch(r"(19|20)\d{2}", parts[2]):
+        return "/".join(parts[:3])
+    if len(parts) >= 4 and re.fullmatch(r"(19|20)\d{2}", parts[3]):
+        return "/".join(parts[:4])
+    if len(parts) >= 2 and parts[1].lower() in {"acl", "emnlp", "naacl", "eacl", "arr"}:
+        return "/".join(parts[:2])
+    if len(parts) >= 2:
+        return parts[0]
+    if parts:
+        return parts[0]
+    return None
+
+
+def _year_from_text(value: Optional[str]) -> Optional[int]:
+    if not value:
+        return None
+    match = re.search(r"\b(19|20)\d{2}\b", str(value))
+    return int(match.group(0)) if match else None
+
+
+def _looks_like_openreview_fallback_venue(value: Optional[str]) -> bool:
+    text = str(value or "").strip()
+    canonical = set(OPENREVIEW_VENUE_ALIASES.values())
+    return text in canonical or normalize_openreview_venue_id(text) in canonical
+
+
+def note_to_dict(note: Any) -> Dict[str, Any]:
+    """Convert an OpenReview note object or raw dict into a normalized dict."""
+    if isinstance(note, dict):
+        invitation = note.get("invitation")
+        invitations = note.get("invitations")
+        content = note.get("content", {}) or {}
+        return {
+            "id": note.get("id"),
+            "invitation": invitation,
+            "invitations": invitations,
+            "number": note.get("number"),
+            "forum": note.get("forum"),
+            "replyto": note.get("replyto"),
+            "signatures": note.get("signatures"),
+            "readers": note.get("readers"),
+            "writers": note.get("writers"),
+            "cdate": note.get("cdate"),
+            "tcdate": note.get("tcdate"),
+            "content": normalize_content(content),
+        }
+
+    invitation = getattr(note, "invitation", None)
+    invitations = getattr(note, "invitations", None)
+    content = getattr(note, "content", {}) or {}
+    return {
+        "id": getattr(note, "id", None),
+        "invitation": invitation,
+        "invitations": invitations,
+        "number": getattr(note, "number", None),
+        "forum": getattr(note, "forum", None),
+        "replyto": getattr(note, "replyto", None),
+        "signatures": getattr(note, "signatures", None),
+        "readers": getattr(note, "readers", None),
+        "writers": getattr(note, "writers", None),
+        "cdate": getattr(note, "cdate", None),
+        "tcdate": getattr(note, "tcdate", None),
+        "content": normalize_content(content),
+    }
+
+
+def classify_note(note_dict: Dict[str, Any]) -> str:
+    """Classify a forum note based on invitation names and content keys.
+
+    The ordering matters. For example, an invitation like
+    "Response_to_Review" contains the word "review" but should still be
+    treated as a rebuttal/response.
+    """
+    invitation = str(note_dict.get("invitation") or "").lower()
+    invitations = " ".join(str(item).lower() for item in (note_dict.get("invitations") or []))
+    content_keys = {str(key).lower() for key in (note_dict.get("content") or {}).keys()}
+    combined_text = f"{invitation} {invitations}"
+
+    if "decision" in combined_text or "decision" in content_keys:
+        return "decision"
+    if "meta_review" in combined_text or "metareview" in combined_text:
+        return "meta_review"
+    if {"reviewer_concerns", "reviewer_scores"} & content_keys:
+        return "meta_review"
+    if (
+        "rebuttal" in combined_text
+        or "author_response" in combined_text
+        or "response" in combined_text
+    ):
+        return "rebuttal"
+    if "official_review" in combined_text:
+        return "review"
+    if "review" in combined_text and "meta" not in combined_text:
+        return "review"
+    if {
+        "summary",
+        "strengths",
+        "weaknesses",
+        "soundness",
+        "presentation",
+        "contribution",
+        "questions",
+    } & content_keys:
+        return "review"
+    if "comment" in combined_text:
+        return "comment"
+    if "comment" in content_keys:
+        return "comment"
+    return "other"
+
+
+class OpenReviewAPIDownloader:
+    def __init__(
+        self,
+        venue: str = "ICLR.cc",
+        year: Optional[int] = None,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        token: Optional[str] = None,
+        output_dir: Optional[str] = None,
+    ):
+        self.venue = venue
+        self.year = year or datetime.now().year
+        self.username = username
+        self.password = password
+        self.token = token
+        self.output_dir = Path(output_dir) if output_dir else None
+        self.client = None
+        self._last_request_at: Optional[float] = None
+
+    def _wait_for_request_slot(self, context: str) -> None:
+        if self._last_request_at is None:
+            return
+        elapsed = time.monotonic() - self._last_request_at
+        wait_seconds = OPENREVIEW_MIN_REQUEST_INTERVAL_SECONDS - elapsed
+        if wait_seconds <= 0:
+            return
+        logger.info(
+            "Throttling OpenReview request while %s; sleeping %.1f seconds.",
+            context,
+            wait_seconds,
+        )
+        time.sleep(wait_seconds)
+
+    def _get_client(self):
+        openreview = try_import_openreview()
+        if openreview is None:
+            return None
+
+        try:
+            from openreview.api import OpenReviewClient as ClientClass
+        except ImportError:
+            ClientClass = openreview.Client
+
+        if self.token:
+            return ClientClass(baseurl=OPENREVIEW_BASEURL, token=self.token)
+        if self.username and self.password:
+            return ClientClass(
+                baseurl=OPENREVIEW_BASEURL,
+                username=self.username,
+                password=self.password,
+            )
+
+        logger.info("No OpenReview credentials provided. Using public OpenReview client.")
+        return ClientClass(baseurl=OPENREVIEW_BASEURL)
+
+    def _call_with_rate_limit_retry(self, func, *args, context: str, **kwargs):
+        for attempt in range(1, OPENREVIEW_MAX_RATE_LIMIT_RETRIES + 1):
+            try:
+                self._wait_for_request_slot(context)
+                self._last_request_at = time.monotonic()
+                return func(*args, **kwargs)
+            except Exception as exc:
+                if attempt < OPENREVIEW_MAX_RATE_LIMIT_RETRIES and _sleep_for_rate_limit_if_needed(
+                    exc,
+                    context=context,
+                    attempt=attempt,
+                ):
+                    continue
+                raise
+
+    def _get_venue_id(self) -> str:
+        return f"{self.venue}/{self.year}/Conference"
+
+    def _get_submission_invitation_candidates(self) -> List[str]:
+        venue_id = self._get_venue_id()
+        return [
+            f"{venue_id}/-/Submission",
+            f"{venue_id}/-/Blind_Submission",
+        ]
+
+    def _iter_note_pages_paginated(
+        self,
+        client: Any,
+        *,
+        page_size: int = 500,
+        **kwargs,
+    ) -> Iterable[List[Any]]:
+        """Yield paginated get_notes pages using the v2 limit/offset API."""
+        offset = 0
+        total = 0
+        while True:
+            page = self._call_with_rate_limit_retry(
+                client.get_notes,
+                limit=page_size,
+                offset=offset,
+                context=f"fetching notes with {kwargs}",
+                **kwargs,
+            )
+            if not page:
+                break
+            total += len(page)
+            offset += page_size
+            logger.info("Fetched %d notes (offset=%d)...", total, offset)
+            yield page
+
+    def _fetch_notes_paginated(self, client: Any, **kwargs) -> List[Any]:
+        """Fetch all paginated notes into memory."""
+        notes: List[Any] = []
+        for page in self._iter_note_pages_paginated(client, **kwargs):
+            notes.extend(page)
+        return notes
+
+    def _iter_submission_pages(self, client: Any) -> Iterable[Tuple[List[Any], str]]:
+        for invitation in self._get_submission_invitation_candidates():
+            logger.info("Fetching submissions from %s", invitation)
+            try:
+                yielded = False
+                for page in self._iter_note_pages_paginated(
+                    client,
+                    invitation=invitation,
+                    details="directReplies",
+                ):
+                    yielded = True
+                    yield page, invitation
+            except Exception as exc:
+                logger.warning("Failed to fetch submissions from %s: %s", invitation, exc)
+                continue
+            if yielded:
+                return
+
+        venue_id = self._get_venue_id()
+        logger.info("Fetching submissions by venueid=%s", venue_id)
+        try:
+            for page in self._iter_note_pages_paginated(
+                client,
+                content={"venueid": venue_id},
+                details="directReplies",
+            ):
+                yield page, f"venueid={venue_id}"
+        except Exception as exc:
+            logger.error("Failed to fetch submissions by venueid=%s: %s", venue_id, exc)
+
+    def _fetch_submissions(self, client: Any) -> Tuple[List[Any], str]:
+        submissions: List[Any] = []
+        source = ""
+        for page, page_source in self._iter_submission_pages(client):
+            submissions.extend(page)
+            source = page_source
+        logger.info("Total submissions found via %s: %s", source or "unknown", len(submissions))
+        return submissions, source
+
+    def _extract_authors(self, note: Any) -> List[str]:
+        content = getattr(note, "content", None)
+        authors = content.get("authors", []) if content is not None else note.get("authors", [])
+        return authors if isinstance(authors, list) else []
+
+    def _extract_keywords(self, note: Any) -> List[str]:
+        content = getattr(note, "content", None)
+        keywords = content.get("keywords", []) if content is not None else note.get("keywords", [])
+
+        if isinstance(keywords, list):
+            return keywords
+        if isinstance(keywords, str):
+            return [item.strip() for item in keywords.split(",") if item.strip()]
+        return []
+
+    def _normalize_review_content(self, content: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize content and apply lightweight field aliases."""
+        raw_content = normalize_content(content)
+        normalized = {
+            REVIEW_FIELD_MAPPING.get(key, key): value
+            for key, value in raw_content.items()
+            if value is not None
+        }
+        return normalized
+
+    def _is_accepted(self, decision_content: Dict[str, Any]) -> bool:
+        decision_value = decision_content.get("decision", "")
+        if isinstance(decision_value, dict):
+            decision_value = decision_value.get("value", "")
+        return "accept" in str(decision_value).lower()
+
+    def _fetch_forum_note_candidates(self, client: Any, submission: Any) -> List[Any]:
+        """Return all known raw notes in the submission forum.
+
+        We combine direct replies from submission details with a full forum
+        query because different OpenReview configurations may expose one or the
+        other more reliably.
+        """
+        details = getattr(submission, "details", {}) or {}
+        direct_replies = details.get("directReplies", []) if isinstance(details, dict) else []
+
+        if direct_replies:
+            return list(direct_replies)
+
+        try:
+            forum_notes = self._fetch_notes_paginated(client, forum=submission.id)
+        except Exception as exc:
+            logger.warning("forum fetch failed for %s: %s", submission.id, exc)
+            forum_notes = []
+
+        return list(direct_replies) + forum_notes
+
+    def _collect_forum_notes(self, client: Any, submission: Any) -> List[Dict[str, Any]]:
+        """Collect every note in the submission forum, including nested replies.
+
+        This intentionally keeps replies to reviews, comments, and rebuttals.
+        Filtering to only `replyto == submission.id` would drop author responses
+        nested under a review thread.
+        """
+        merged_notes: List[Dict[str, Any]] = []
+        seen_note_ids = set()
+
+        for raw_note in self._fetch_forum_note_candidates(client, submission):
+            note_dict = note_to_dict(raw_note)
+            note_id = note_dict.get("id")
+
+            if not note_id or note_id == submission.id or note_id in seen_note_ids:
+                continue
+
+            seen_note_ids.add(note_id)
+            merged_notes.append(note_dict)
+
+        merged_notes.sort(
+            key=lambda note: (
+                note.get("cdate") is None,
+                note.get("cdate") if note.get("cdate") is not None else float("inf"),
+                note.get("tcdate") if note.get("tcdate") is not None else float("inf"),
+                str(note.get("number") or ""),
+                str(note.get("id") or ""),
+            )
+        )
+        return merged_notes
+
+    def _build_paper(self, submission: Any):
+        from openreview_pipeline.schemas import OpenReviewPaper
+
+        content = normalize_content(getattr(submission, "content", {}) or {})
+        title = content.get("title", "")
+        abstract = content.get("abstract", "")
+        venueid = _first_nonempty(content.get("venueid"))
+        invitation = getattr(submission, "invitation", None)
+        invitations = getattr(submission, "invitations", None) or []
+        invitation_text = " ".join(
+            [str(invitation or "")] + [str(item) for item in invitations]
+        ).strip()
+        venue = _first_nonempty(
+            content.get("venue"),
+            content.get("venue_name"),
+            _venue_from_venueid(venueid),
+            _venue_from_venueid(invitation_text),
+            venueid,
+            self.venue,
+        )
+        year = (
+            _year_from_text(_first_nonempty(content.get("year")))
+            or _year_from_text(venueid)
+            or _year_from_text(invitation_text)
+            or self.year
+        )
+        paper_id = submission.id
+
+        paper_data = {
+            "id": paper_id,
+            "title": str(title),
+            "abstract": str(abstract),
+            "authors": self._extract_authors(submission),
+            "venue": venue,
+            "year": year,
+            "pdf_url": f"https://openreview.net/pdf?id={paper_id}",
+            "keywords": self._extract_keywords(submission),
+            "venueid": venueid,
+            "submission_number": getattr(submission, "number", None),
+        }
+        return OpenReviewPaper(**paper_data)
+
+    def _split_forum_notes(self, submission_id: str, forum_notes: Iterable[Dict[str, Any]]) -> Dict[str, List[Any]]:
+        from openreview_pipeline.schemas import Comment, Decision, Rebuttal, Review
+
+        buckets: Dict[str, List[Any]] = {
+            "reviews": [],
+            "rebuttals": [],
+            "comments": [],
+            "meta_reviews": [],
+            "decisions": [],
+            "others": [],
+        }
+
+        def _safe_invitation(note: Dict[str, Any]) -> str:
+            invitation = note.get("invitation")
+            if isinstance(invitation, str) and invitation:
+                return invitation
+
+            invitations = note.get("invitations")
+            if isinstance(invitations, list):
+                for item in invitations:
+                    if isinstance(item, str) and item:
+                        return item
+
+            return "unknown_invitation"
+
+        def _safe_number(value: Any) -> int:
+            if isinstance(value, int):
+                return value
+            try:
+                return int(value)
+            except Exception:
+                return 0
+
+        for note_idx, note_dict in enumerate(forum_notes):
+            note_kind = classify_note(note_dict)
+            content = self._normalize_review_content(note_dict.get("content", {}))
+            note_id = note_dict.get("id") or f"{submission_id}_{note_kind}_{note_idx}"
+            common_kwargs = {
+                "id": str(note_id),
+                "paper_id": submission_id,
+                "invitation": _safe_invitation(note_dict),
+                "content": content,
+                "number": _safe_number(note_dict.get("number", 0)),
+            }
+
+            if note_kind == "review":
+                buckets["reviews"].append(
+                    Review(
+                        **common_kwargs,
+                        cdate=note_dict.get("cdate"),
+                        tcdate=note_dict.get("tcdate"),
+                    )
+                )
+            elif note_kind == "rebuttal":
+                buckets["rebuttals"].append(
+                    Rebuttal(
+                        **common_kwargs,
+                        cdate=note_dict.get("cdate"),
+                        tcdate=note_dict.get("tcdate"),
+                    )
+                )
+            elif note_kind == "comment":
+                buckets["comments"].append(
+                    Comment(
+                        **common_kwargs,
+                        cdate=note_dict.get("cdate"),
+                        tcdate=note_dict.get("tcdate"),
+                    )
+                )
+            elif note_kind == "decision":
+                buckets["decisions"].append(Decision(**common_kwargs))
+            elif note_kind == "meta_review":
+                buckets["meta_reviews"].append(note_dict)
+            else:
+                buckets["others"].append(note_dict)
+
+        return buckets
+
+    def _should_keep_paper(
+        self,
+        note_buckets: Dict[str, List[Any]],
+        accepted_only: bool,
+    ) -> Tuple[bool, str]:
+        if not note_buckets["reviews"]:
+            return False, "no_reviews"
+
+        if not note_buckets["decisions"]:
+            return False, "no_decision"
+
+        decision = note_buckets["decisions"][0]
+        if accepted_only and not self._is_accepted(decision.content):
+            return False, "not_accepted"
+
+        return True, "ok"
+
+    def fetch_papers(self, limit: Optional[int] = None, accepted_only: bool = True) -> List[dict]:
+        from openreview_pipeline.schemas import OpenReviewPaperWithMetadata
+
+        client = self._get_client()
+        if client is None:
+            logger.error("Cannot connect to OpenReview API. Check credentials.")
+            return []
+
+        papers = []
+        skip_counts = {"no_reviews": 0, "no_decision": 0, "not_accepted": 0}
+        processed_submissions = 0
+
+        progress = tqdm(
+            total=limit,
+            desc="Downloading papers",
+            unit="paper",
+            dynamic_ncols=True,
+        )
+        for submissions, source in self._iter_submission_pages(client):
+            if not submissions:
+                continue
+            for submission in submissions:
+                processed_submissions += 1
+                try:
+                    paper = self._build_paper(submission)
+                    forum_notes = self._collect_forum_notes(client, submission)
+                    note_buckets = self._split_forum_notes(submission.id, forum_notes)
+
+                    keep_paper, reason = self._should_keep_paper(note_buckets, accepted_only=accepted_only)
+                    if not keep_paper:
+                        skip_counts[reason] += 1
+                        continue
+
+                    paper_with_metadata = OpenReviewPaperWithMetadata(
+                        paper=paper,
+                        reviews=note_buckets["reviews"],
+                        rebuttals=note_buckets["rebuttals"],
+                        comments=note_buckets["comments"],
+                        decision=note_buckets["decisions"][0],
+                    )
+                    papers.append(paper_with_metadata)
+                    progress.update(1)
+                    progress.set_postfix_str(
+                        f"kept={len(papers)} processed={processed_submissions} source={source}"
+                    )
+
+                    if limit is not None and len(papers) >= limit:
+                        logger.info(
+                            "Reached limit of %s papers after processing %s submissions",
+                            limit,
+                            processed_submissions,
+                        )
+                        progress.close()
+                        logger.info(
+                            "Fetched %s papers (skipped: %s no reviews, %s no decision, %s not accepted)",
+                            len(papers),
+                            skip_counts["no_reviews"],
+                            skip_counts["no_decision"],
+                            skip_counts["not_accepted"],
+                        )
+                        return papers
+
+                except Exception as exc:
+                    logger.warning("Failed to process submission %s: %s", submission.id, exc)
+        progress.close()
+
+        logger.info(
+            "Fetched %s papers after processing %s submissions (skipped: %s no reviews, %s no decision, %s not accepted)",
+            len(papers),
+            processed_submissions,
+            skip_counts["no_reviews"],
+            skip_counts["no_decision"],
+            skip_counts["not_accepted"],
+        )
+        if not papers:
+            logger.error("No submissions found for %s", self._get_venue_id())
+        return papers
+
+    def fetch_paper_by_forum_id(self, forum_id: str) -> List[dict]:
+        from openreview_pipeline.schemas import OpenReviewPaperWithMetadata
+
+        client = self._get_client()
+        if client is None:
+            logger.error("Cannot connect to OpenReview API. Check credentials.")
+            return []
+
+        try:
+            submission = self._call_with_rate_limit_retry(
+                client.get_note,
+                forum_id,
+                context=f"fetching forum {forum_id}",
+            )
+        except TypeError:
+            submission = self._call_with_rate_limit_retry(
+                client.get_note,
+                id=forum_id,
+                context=f"fetching forum {forum_id}",
+            )
+        except Exception as exc:
+            logger.error("Failed to fetch forum %s: %s", forum_id, exc)
+            return []
+
+        try:
+            paper = self._build_paper(submission)
+            forum_notes = self._collect_forum_notes(client, submission)
+            note_buckets = self._split_forum_notes(submission.id, forum_notes)
+            paper_with_metadata = OpenReviewPaperWithMetadata(
+                paper=paper,
+                reviews=note_buckets["reviews"],
+                rebuttals=note_buckets["rebuttals"],
+                comments=note_buckets["comments"],
+                decision=note_buckets["decisions"][0] if note_buckets["decisions"] else None,
+            )
+            return [paper_with_metadata]
+        except Exception as exc:
+            logger.error("Failed to process forum %s: %s", forum_id, exc)
+            return []
+
+
+class DatasetDownloader:
+    def __init__(
+        self,
+        venue: str = "ICLR",
+        year_threshold: int = DEFAULT_YEAR_THRESHOLD,
+        output_dir: Optional[str] = None,
+    ):
+        self.venue = venue.replace(".", ".")
+        self.year_threshold = year_threshold
+        self.output_dir = Path(output_dir) if output_dir else None
+        self._openreview_downloader = None
+
+    def set_openreview_credentials(
+        self,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        token: Optional[str] = None,
+    ):
+        venue_id = normalize_openreview_venue_id(self.venue)
+        self._openreview_downloader = OpenReviewAPIDownloader(
+            venue=venue_id,
+            year=self.year_threshold,
+            username=username,
+            password=password,
+            token=token,
+            output_dir=self.output_dir,
+        )
+
+    def fetch_recent_papers(
+        self,
+        limit: Optional[int] = None,
+        forum_ids: Optional[List[str]] = None,
+        forum_id: Optional[str] = None,
+    ) -> List:
+        from openreview_pipeline.schemas import OpenReviewPaper, OpenReviewPaperWithMetadata
+
+        forum_ids = parse_forum_ids(forum_ids) + parse_forum_ids(forum_id)
+        if self._openreview_downloader:
+            if forum_ids:
+                papers = []
+                for forum_id in forum_ids:
+                    try:
+                        papers.extend(self._openreview_downloader.fetch_paper_by_forum_id(forum_id))
+                    except Exception as exc:
+                        logger.error("Failed to fetch forum %s: %s", forum_id, exc)
+                return deduplicate_papers_by_id(papers)
+            return self._openreview_downloader.fetch_papers(limit=limit, accepted_only=True)
+
+        logger.warning("OpenReview credentials not set. Using stub data.")
+        logger.info("Would fetch papers from %s from year %s", self.venue, self.year_threshold)
+
+        if forum_ids:
+            return deduplicate_papers_by_id(
+                [
+                    OpenReviewPaperWithMetadata(
+                        paper=OpenReviewPaper(
+                            id=forum_id,
+                            title=f"Sample Paper {forum_id}",
+                            abstract=f"This is a sample abstract for paper {forum_id}. " * 5,
+                            authors=[f"Author {author_idx}" for author_idx in range(3)],
+                            venue=self.venue,
+                            year=self.year_threshold,
+                            pdf_url=f"https://openreview.net/pdf?id={forum_id}",
+                            keywords=["AI", "ML"],
+                            venueid=f"{self.venue}/{self.year_threshold}",
+                            submission_number=1,
+                        )
+                    )
+                    for forum_id in forum_ids
+                ]
+            )
+
+        papers = []
+        count = 0
+        for year in range(datetime.now().year, self.year_threshold - 1, -1):
+            for index in range(10):
+                if limit is not None and count >= limit:
+                    return papers
+
+                papers.append(
+                    OpenReviewPaperWithMetadata(
+                        paper=OpenReviewPaper(
+                            id=f"paper_{year}_{index}",
+                            title=f"Sample Paper {year}-{index}",
+                            abstract=f"This is a sample abstract for paper {year}-{index}. " * 5,
+                            authors=[f"Author {author_idx}" for author_idx in range(3)],
+                            venue=self.venue,
+                            year=year,
+                            keywords=["AI", "ML"],
+                            venueid=f"{self.venue}/{year}",
+                            submission_number=index,
+                        )
+                    )
+                )
+                count += 1
+
+        return papers
+
+    def run(
+        self,
+        output_path: Path,
+        limit: Optional[int] = None,
+        forum_ids: Optional[List[str]] = None,
+        forum_id: Optional[str] = None,
+    ) -> None:
+        from openreview_pipeline.schemas import DownloadedPapersDataset
+        from utils import load_json, save_json
+
+        forum_ids = parse_forum_ids(forum_ids) + parse_forum_ids(forum_id)
+        if forum_ids:
+            papers = []
+            if output_path.exists():
+                existing_dataset = load_json(output_path, DownloadedPapersDataset)
+                papers = list(existing_dataset.papers)
+
+            downloaded_ids = {paper.paper.id for paper in papers}
+            papers_by_id = {paper.paper.id: paper for paper in papers}
+            for forum_id in forum_ids:
+                if forum_id in downloaded_ids:
+                    existing_paper = papers_by_id.get(forum_id)
+                    existing_venue = existing_paper.paper.venue if existing_paper else None
+                    if not _looks_like_openreview_fallback_venue(existing_venue):
+                        logger.info("Download stage resume: forum %s already exists; skipping.", forum_id)
+                        continue
+                    logger.info(
+                        "Download stage refresh: forum %s has fallback venue %r; refetching metadata.",
+                        forum_id,
+                        existing_venue,
+                    )
+                fetched_papers = self.fetch_recent_papers(limit=limit, forum_ids=[forum_id])
+                if fetched_papers:
+                    papers = merge_papers_by_id(papers, fetched_papers)
+                    downloaded_ids = {paper.paper.id for paper in papers}
+                    papers_by_id = {paper.paper.id: paper for paper in papers}
+                    dataset = DownloadedPapersDataset(papers=papers, total_count=len(papers))
+                    save_json(output_path, dataset)
+
+            dataset = DownloadedPapersDataset(papers=papers, total_count=len(papers))
+            save_json(output_path, dataset)
+            downloaded_ids = {paper.paper.id for paper in papers}
+            success_count = sum(1 for forum_id in forum_ids if forum_id in downloaded_ids)
+            requested_count = len(forum_ids)
+        else:
+            papers = self.fetch_recent_papers(limit=limit, forum_ids=forum_ids)
+            dataset = DownloadedPapersDataset(papers=papers, total_count=len(papers))
+            save_json(output_path, dataset)
+            success_count = len(papers)
+            requested_count = limit or len(papers)
+        logger.info(
+            "Download stage success: %s/%s papers (%.1f%%).",
+            success_count,
+            requested_count,
+            (success_count / requested_count * 100) if requested_count else 100.0,
+        )
+
+
+def deduplicate_papers_by_id(papers: Iterable) -> List:
+    merged = {}
+    order = []
+    for paper_metadata in papers:
+        paper_id = paper_metadata.paper.id
+        if paper_id not in merged:
+            order.append(paper_id)
+        merged[paper_id] = paper_metadata
+    return [merged[paper_id] for paper_id in order]
+
+
+def merge_papers_by_id(existing_papers: Iterable, fetched_papers: Iterable) -> List:
+    merged = {}
+    order = []
+    for paper_metadata in existing_papers:
+        paper_id = paper_metadata.paper.id
+        if paper_id not in merged:
+            order.append(paper_id)
+        merged[paper_id] = paper_metadata
+    for paper_metadata in fetched_papers:
+        paper_id = paper_metadata.paper.id
+        if paper_id not in merged:
+            order.append(paper_id)
+        merged[paper_id] = paper_metadata
+    return [merged[paper_id] for paper_id in order]

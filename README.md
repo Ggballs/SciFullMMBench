@@ -8,6 +8,7 @@ A staged OpenReview processing pipeline for filtering, summarizing, generating r
 - **Stage 1**: Rule-based filtering of papers based on quality criteria
 - **Stage 2**: LLM-based bullet-point summarization from multiple views
 - **Stage 3**: LLM-based IR/QA query generation with pgvector few-shot retrieval
+- **Stage 3.5**: Query de-contextualization using target-paper title + abstract to paraphrase queries more naturally with less overlap
 - **Stage 4**: LLM-based query analysis and query quality filtering
 - **Stage 5**: Hard-negative and positive candidate mining for surviving queries
 
@@ -22,34 +23,22 @@ pip install -e .
 ```
 .
 ├── pyproject.toml
-├── prompts/
-│   ├── summarize_by_view.txt
-│   ├── generate_queries.txt
-│   └── query_analysis/
-│       ├── retrieval_effectiveness.txt
-│       └── style_analysis.txt
-├── src/openreview_pipeline/
-│   ├── __init__.py
-│   ├── cli.py
-│   ├── schemas.py
-│   ├── schemas_filter.py
-│   ├── schemas_summarize.py
-│   ├── schemas_queries.py
-│   ├── stages/
-│   │   ├── __init__.py
-│   │   ├── stage0_download.py
-│   │   ├── stage1_filter.py
-│   │   ├── stage2_summarize.py
-│   │   ├── stage3_generate_queries.py
-│   │   ├── stage4_query_analysis.py
-│   │   └── stage5_hard_negative_mining.py
-│   ├── llm/
-│   │   ├── __init__.py
-│   │   └── base.py
-│   └── utils/
-│       └── __init__.py
+├── configs/
+├── outputs/
+│   └── logs/
+├── src/
+│   ├── evaluations/
+│   ├── utils/
+│   └── openreview_pipeline/
+│       ├── prompts/
+│       ├── offline_process/
+│       ├── llm/
+│       ├── schemas/
+│       ├── stages/
+│       └── utils/
 └── tests/
-    └── test_pipeline.py
+    ├── scripts/
+    └── test_data/
 ```
 
 ## Usage
@@ -69,11 +58,14 @@ openreview-pipeline summarize --input data/01_filtered.json --output data/02_sum
 # Generate queries
 openreview-pipeline generate-queries --input data/02_summarized.json --output data/03_queries.json
 
+# De-contextualize Stage-3 queries with title + abstract context
+openreview-pipeline decontextualize-queries --summarized-input data/02_summarized.json --queries-input data/03_queries.json --output data/03_queries_decontextualized.json
+
 # Analyze generated query quality
-openreview-pipeline query-analysis --summarized-input data/02_summarized.json --queries-input data/03_queries.json --output-dir data/04_query_analysis
+openreview-pipeline query-analysis --summarized-input data/02_summarized.json --queries-input data/03_queries_decontextualized.json --output-dir data/04_query_analysis
 
 # Mine hard negatives for surviving queries
-openreview-pipeline hard-negative-mining --input data/03_queries.json --query-analysis-input data/04_query_analysis --output data/05_hard_negatives.json
+openreview-pipeline hard-negative-mining --input data/03_queries_decontextualized.json --query-analysis-input data/04_query_analysis --output data/05_hard_negatives.json
 
 # Run all stages
 openreview-pipeline run-all --output-dir data --venue ICLR --year 2025 --max-papers 10 --summarize-limit 5
@@ -93,24 +85,30 @@ Stages are resume-aware: existing output files are loaded first, completed paper
 
 Stage 3 generates both IR and QA queries for the `motivation`, `method`, and `experiment/result`
 views. It retrieves view-conditioned few-shot examples from PostgreSQL/pgvector, so initialize
-and import the golden examples before running `generate-queries`:
+the table before running `generate-queries`. If the table is empty, Stage 3 will automatically
+embed and import the prepared golden examples one time:
 
 ```bash
 openreview-pipeline prepare-golden-retrieval-icl-examples
 openreview-pipeline init-golden-query-embeddings
-openreview-pipeline import-golden-query-embeddings
 openreview-pipeline generate-queries --input data/02_summarized.json --output data/03_queries.json
+openreview-pipeline decontextualize-queries --summarized-input data/02_summarized.json --queries-input data/03_queries.json --output data/03_queries_decontextualized.json
 ```
+
+`generate-queries` keeps the raw Stage-3 queries in `03_queries.json`. The follow-up
+`decontextualize-queries` stage rewrites each query using the target paper's title and abstract
+as hidden context so the final query sounds more like a natural scholar search and less like a
+paper-conditioned paraphrase. Downstream stages can use `03_queries_decontextualized.json`.
 
 The prepare command reads the final human-consensus IR/QA CSV files, keeps `accept` and `fix`
 rows, maps `experiment` to `experiment/result`, expands final human multi-label rows into one
 row per view label, and writes `outputs/query_analysis/golden_retrieval_icl_examples.json`.
-The import command embeds `indexing_content` with BGE-M3 and upserts rows into
-`golden_query_embeddings`. The table stores query text, title-only target papers, query-level
-answer content/TLDR, human view notes, indexing/retrieval content, vector embedding, and
-timestamps.
+If the table has no rows, Stage 3 embeds `indexing_content` with BGE-M3 and upserts rows into
+`golden_query_embeddings` automatically. The table stores query text, title-only target papers,
+query-level answer content/TLDR, human view notes, indexing/retrieval content, vector embedding,
+and timestamps.
 
-Configure the connection and embedding model in `config.yaml`:
+Configure the connection and embedding model in `configs/config.yaml`:
 
 ```yaml
 stages:
@@ -123,12 +121,12 @@ stages:
     golden_classifications_path: "outputs/query_analysis/golden_retrieval_icl_examples.json"
 ```
 
-If you prefer SQL bootstrap, `scripts/init_golden_query_embeddings.sql` contains the equivalent
+If you prefer SQL bootstrap, `tests/scripts/init_golden_query_embeddings.sql` contains the equivalent
 schema for a PostgreSQL database with the `vector` extension available.
 
 ### LLM Configuration
 
-All LLM calls use the same multi-key request manager. Configure keys in `config.yaml`:
+All LLM calls use the same multi-key request manager. Configure keys in `configs/config.yaml`:
 
 ```yaml
 llm:
@@ -158,7 +156,7 @@ are the least stable part of the pipeline.
 
 ### Logs
 
-Project logs are written to `logs/` by default:
+Project logs are written to `outputs/logs/` by default:
 
 - `openreview_pipeline.log` contains Python logging output.
 - `openreview_pipeline.stdout.log` captures `print()` output and stderr while still showing it in the console.
@@ -170,7 +168,7 @@ Set `OPENREVIEW_PIPELINE_LOG_DIR` to write logs somewhere else:
 OPENREVIEW_PIPELINE_LOG_DIR=/path/to/logs openreview-pipeline run-all --output-dir data
 ```
 
-When running with Docker Compose, the container writes to `/app/logs`, and Compose bind-mounts that path to `${SCIFULL_LOGS_DIR:-./logs}` on the host. On a server, point `SCIFULL_LOGS_DIR` at a real host directory so logs survive rebuilds:
+When running with Docker Compose, the container writes to `/app/outputs/logs`, and Compose bind-mounts that path to `${SCIFULL_LOGS_DIR:-./outputs/logs}` on the host. On a server, point `SCIFULL_LOGS_DIR` at a real host directory so logs survive rebuilds:
 
 ```bash
 mkdir -p /srv/scifullmmbench/logs
@@ -182,13 +180,13 @@ SCIFULL_LOGS_DIR=/srv/scifullmmbench/logs docker compose up --build
 Export PostgreSQL `human_feedback` rows to JSON:
 
 ```bash
-python scripts/export_human_feedback_postgres.py --output outputs/human_feedback_postgres_export.json
+python tests/scripts/export_human_feedback_postgres.py --output outputs/human_feedback_postgres_export.json
 ```
 
 Export and enrich an existing final pipeline artifact:
 
 ```bash
-python scripts/export_human_feedback_postgres.py \
+python tests/scripts/export_human_feedback_postgres.py \
   --output outputs/human_feedback_postgres_export.json \
   --final-output outputs/final_pipeline_output.json \
   --combined-output outputs/final_pipeline_output_with_human_feedback.json
@@ -199,10 +197,10 @@ The enriched final output adds `human_feedback` to each matched query and adds a
 To import feedback exported before the PostgreSQL cutover, stop Gradio writes, create the PostgreSQL schema, then run:
 
 ```bash
-python scripts/export_human_feedback_mysql.py \
+python tests/scripts/export_human_feedback_mysql.py \
   --output outputs/human_feedback_pre_cutover_export.json
 
-python scripts/import_human_feedback_postgres.py \
+python tests/scripts/import_human_feedback_postgres.py \
   --input outputs/human_feedback_pre_cutover_export.json
 ```
 
@@ -222,14 +220,12 @@ docker compose up --build
 ### Python API
 
 ```python
-from openreview_pipeline.stages import (
-    DatasetDownloader,
-    RuleBasedFilter,
-    Summarizer,
-    QueryGenerator,
-    HardNegativeMiner,
-)
-from openreview_pipeline.llm import MockLLMBackend
+from openreview_pipeline.stage0_download import DatasetDownloader
+from openreview_pipeline.stage1_filter import RuleBasedFilter
+from openreview_pipeline.stage2_summarize import Summarizer
+from openreview_pipeline.stage3_generate_queries import QueryGenerator
+from openreview_pipeline.stage5_hard_negative_mining import HardNegativeMiner
+from utils.llm import MockLLMBackend
 from pathlib import Path
 
 # Initialize LLM backend
@@ -270,7 +266,7 @@ The pipeline uses an abstract `LLMBackend` interface. Currently available backen
 To add a new backend, implement the `LLMBackend` abstract class:
 
 ```python
-from openreview_pipeline.llm import LLMBackend
+from utils.llm import LLMBackend
 
 class MyLLMBackend(LLMBackend):
     def generate(self, prompt: str, **kwargs) -> str:

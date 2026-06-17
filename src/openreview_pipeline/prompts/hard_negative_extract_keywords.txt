@@ -1,0 +1,22 @@
+Given the following retrieval query for a scientific paper, rewrite it into exactly 2 concise search phrases for paper retrieval.
+
+Query: {{query}}
+
+Requirements:
+- Output exactly 2 phrases.
+- Each phrase should be 2-4 words only.
+- Prefer noun phrases that are easy for Semantic Scholar, Google Scholar, or arXiv to match.
+- Keep complete technical terms intact when they are standard phrases.
+- Keep only the 2 most representative paper family, task, method, or benchmark concepts.
+- Drop extra explanations, conversational wording, and long natural-language constraints.
+- Avoid quotes, punctuation, and full-sentence wording.
+- The phrases should help find related but DISTINCT papers, not the exact same paper only.
+
+Good style examples:
+- "reasoning intensive retrieval"
+- "multimodal retrieval benchmark"
+- "parameter-efficient fine-tuning"
+- "vision language action model"
+
+Output a JSON array of strings only:
+["phrase 1", "phrase 2"]

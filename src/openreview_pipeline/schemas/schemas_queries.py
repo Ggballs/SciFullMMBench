@@ -11,8 +11,11 @@ class RetrievalQuery(BaseModel):
     query_type: str = "IR"
     is_multimodal: bool = False
     source_view: str
+    original_query_text: Optional[str] = None
+    decontextualization_note: Optional[str] = None
     related_bullet_indice: Optional[int] = None
     related_bullet_justification: Optional[str] = None
+    related_seed: Optional[str] = None
     multimodal_rationale: Optional[str] = None
     retrieved_golden_queries: List[Dict[str, Any]] = Field(default_factory=list)
 
@@ -64,6 +67,14 @@ class RetrievalQuery(BaseModel):
         text = str(value).strip()
         return text or None
 
+    @field_validator("original_query_text", "decontextualization_note", mode="before")
+    @classmethod
+    def normalize_optional_text_fields(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
     @model_validator(mode="after")
     def clear_non_multimodal_rationale(self) -> "RetrievalQuery":
         if not self.is_multimodal:
@@ -94,7 +105,7 @@ class GeneratedQueriesDataset(BaseModel):
 
 
 class RetrievalEvaluation(BaseModel):
-    full_paper_reliance: str = Field(description="PASS | FAIL")
+    abstract_relevance: str = Field(description="HIGH-LEXICAL-OVERLAP | LOW-LEXICAL-OVERLAP | LOW-SEMANTIC-OVERLAP")
     false_negative_risk: Optional[str] = Field(default=None, description="LOW | HIGH")
     reasoning: str = ""
 

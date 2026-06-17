@@ -31,8 +31,8 @@ services:
       HUMAN_FEEDBACK_DB_URL: postgresql+psycopg://${POSTGRES_USER:-scifull}:${POSTGRES_PASSWORD:-westlakenlp}@postgres:5432/${POSTGRES_DB:-scifullmmbench}
       SCIFULL_GOLDEN_EMBEDDING_DB_URL: postgresql+psycopg://${POSTGRES_USER:-scifull}:${POSTGRES_PASSWORD:-westlakenlp}@postgres:5432/${POSTGRES_DB:-scifullmmbench}
       SCIFULL_EMBEDDING_SERVICE_URL: ${SCIFULL_EMBEDDING_SERVICE_URL:-http://host.docker.internal:18080/embed}
-      OPENREVIEW_PIPELINE_LOG_DIR: /app/logs
-      HUMAN_FEEDBACK_LOG_DIR: /app/logs
+      OPENREVIEW_PIPELINE_LOG_DIR: /app/outputs/logs
+      HUMAN_FEEDBACK_LOG_DIR: /app/outputs/logs
       HUMAN_FEEDBACK_USERS: ${HUMAN_FEEDBACK_USERS:-}
       GRADIO_SERVER_NAME: 0.0.0.0
       GRADIO_SERVER_PORT: 7860
@@ -40,11 +40,10 @@ services:
     ports:
       - "${GRADIO_PORT:-7860}:7860"
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
+      - ./configs/config.yaml:/app/configs/config.yaml:ro
       - ./src:/app/src:ro
-      - ./scripts:/app/scripts:ro
-      - ./prompts:/app/prompts:ro
-      - ${SCIFULL_LOGS_DIR:-./logs}:/app/logs
+      - ./tests/scripts:/app/tests/scripts:ro
+      - ${SCIFULL_LOGS_DIR:-./outputs/logs}:/app/outputs/logs
       - ${SCIFULL_OUTPUTS_DIR:-./outputs}:/app/outputs
       - /data3:/data3:ro
     extra_hosts:
@@ -61,8 +60,8 @@ services:
         condition: service_healthy
     environment:
       HUMAN_FEEDBACK_DB_URL: postgresql+psycopg://${POSTGRES_USER:-scifull}:${POSTGRES_PASSWORD:-westlakenlp}@postgres:5432/${POSTGRES_DB:-scifullmmbench}
-      OPENREVIEW_PIPELINE_LOG_DIR: /app/logs
-      HUMAN_FEEDBACK_LOG_DIR: /app/logs
+      OPENREVIEW_PIPELINE_LOG_DIR: /app/outputs/logs
+      HUMAN_FEEDBACK_LOG_DIR: /app/outputs/logs
       HUMAN_FEEDBACK_USERS: ${HUMAN_FEEDBACK_USERS:-}
       GRADIO_SERVER_NAME: 0.0.0.0
       GRADIO_SERVER_PORT: 7862
@@ -73,11 +72,10 @@ services:
       - "${QUERY_WRITING_PORT:-7862}:7862"
       - "${PDF_CACHE_PORT:-8763}:8763"
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
+      - ./configs/config.yaml:/app/configs/config.yaml:ro
       - ./src:/app/src:ro
-      - ./scripts:/app/scripts:ro
-      - ./prompts:/app/prompts:ro
-      - ${SCIFULL_LOGS_DIR:-./logs}:/app/logs
+      - ./tests/scripts:/app/tests/scripts:ro
+      - ${SCIFULL_LOGS_DIR:-./outputs/logs}:/app/outputs/logs
       - ${SCIFULL_OUTPUTS_DIR:-./outputs}:/app/outputs
       - ${SCIFULL_PDF_CACHE_DIR:-./pdf_cache}:/app/pdf_cache
     command:
@@ -86,6 +84,34 @@ services:
       - "python outputs/display_query_writing_gradio.py --port 7862"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  query-pair-eval:
+    build:
+      context: .
+      network: host
+    container_name: scifull-query-pair-eval
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      HUMAN_FEEDBACK_DB_URL: postgresql+psycopg://${POSTGRES_USER:-scifull}:${POSTGRES_PASSWORD:-westlakenlp}@postgres:5432/${POSTGRES_DB:-scifullmmbench}
+      OPENREVIEW_PIPELINE_LOG_DIR: /app/outputs/logs
+      HUMAN_FEEDBACK_LOG_DIR: /app/outputs/logs
+      HUMAN_FEEDBACK_USERS: ${HUMAN_FEEDBACK_USERS:-}
+      GRADIO_SERVER_NAME: 0.0.0.0
+      GRADIO_SERVER_PORT: 7864
+      QUERY_PAIRS_JSON: ${QUERY_PAIRS_JSON:-outputs/query_pairs.json}
+    ports:
+      - "${QUERY_PAIR_EVAL_PORT:-7864}:7864"
+    volumes:
+      - ./src:/app/src:ro
+      - ${SCIFULL_LOGS_DIR:-./outputs/logs}:/app/outputs/logs
+      - ${SCIFULL_OUTPUTS_DIR:-./outputs}:/app/outputs
+    command:
+      - sh
+      - -c
+      - "python outputs/display_query_pair_evaluation_gradio.py --query-pairs \"$$QUERY_PAIRS_JSON\" --port 7864"
 
 volumes:
   postgres-data:

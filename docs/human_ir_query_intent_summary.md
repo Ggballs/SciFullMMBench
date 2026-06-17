@@ -2,8 +2,8 @@
 
 Source files:
 
-- `test_data/query_analysis/litsearch-human-queries_quality2.jsonl`
-- `test_data/query_analysis/pasa-realscholarquery.jsonl`
+- `tests/test_data/query_analysis/litsearch-human-queries_quality2.jsonl`
+- `tests/test_data/query_analysis/pasa-realscholarquery.jsonl`
 
 This summary focuses on intent: the retrieval job behind the query, independent
 from surface wording such as "Which paper..." or "Give me papers...".

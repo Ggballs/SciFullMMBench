@@ -1,0 +1,929 @@
+{
+  "papers_queries": [
+    {
+      "paper_id": "6tOKqqiyWE",
+      "paper_title": "Causal Sufficiency and Necessity Improves Chain-of-Thought Reasoning",
+      "queries_by_view": [
+        {
+          "query_text": "Is there a paper on making chain-of-thought reasoning more reliable by keeping only the steps that truly support the final answer and removing unnecessary ones?",
+          "query_type": "IR",
+          "is_multimodal": false,
+          "source_view": "motivation",
+          "related_bullet_indice": 1,
+          "related_bullet_justification": "This bullet highlights the core problem in current chain-of-thought reasoning: some steps do not adequately justify the answer, while others are redundant. The query abstracts this into a broader search for work on improving reasoning trace quality through support and pruning, which is the main motivation-level retrieval hook.",
+          "multimodal_rationale": null,
+          "retrieved_golden_queries": [
+            {
+              "rank": 1,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0063__motivation",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0063",
+              "query_type": "IR",
+              "view_label": "motivation",
+              "query_text": "Which paper studies the concept of enhancing the coverage of a selective prediction system by re-attempting the questions on which it was not sufficiently confident.",
+              "retrieval_content": "Query: Which paper studies the concept of enhancing the coverage of a selective prediction system by re-attempting the questions on which it was not sufficiently confident.",
+              "distance": 0.4431860778816882
+            },
+            {
+              "rank": 2,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0009__motivation",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0009",
+              "query_type": "IR",
+              "view_label": "motivation",
+              "query_text": "Is there a paper that links exposure bias to distillation?",
+              "retrieval_content": "Query: Is there a paper that links exposure bias to distillation?",
+              "distance": 0.537391887229439
+            },
+            {
+              "rank": 3,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0008__motivation",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0008",
+              "query_type": "IR",
+              "view_label": "motivation",
+              "query_text": "Is there a paper that connects the basic elements of storytelling with biased or imbalanced media reporting?",
+              "retrieval_content": "Query: Is there a paper that connects the basic elements of storytelling with biased or imbalanced media reporting?",
+              "distance": 0.5451200008392334
+            },
+            {
+              "rank": 4,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0003__motivation",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0003",
+              "query_type": "IR",
+              "view_label": "motivation",
+              "query_text": "How to better attract readers to news articles by generating personalized headlines?",
+              "retrieval_content": "Query: How to better attract readers to news articles by generating personalized headlines?",
+              "distance": 0.5454699424189287
+            },
+            {
+              "rank": 5,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0006__motivation",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0006",
+              "query_type": "IR",
+              "view_label": "motivation",
+              "query_text": "Papers that apply RLHF to address the hallucination problem in image and video description.",
+              "retrieval_content": "Query: Papers that apply RLHF to address the hallucination problem in image and video description.",
+              "distance": 0.5524641902723417
+            }
+          ]
+        },
+        {
+          "query_text": "Which papers use a causal or counterfactual view to judge whether individual chain-of-thought steps are actually needed for the final answer in LLM reasoning?",
+          "query_type": "IR",
+          "is_multimodal": false,
+          "source_view": "method",
+          "related_bullet_indice": 1,
+          "related_bullet_justification": "The bullet is about treating reasoning-step usefulness as a causal necessity question. The query lifts this to the broader method family of counterfactual evaluation for CoT steps, while keeping the concrete hook of LLM chain-of-thought reasoning.",
+          "multimodal_rationale": null,
+          "retrieved_golden_queries": [
+            {
+              "rank": 1,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0007__method",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0007",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "retrieval_content": "Query: Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "distance": 0.43955748552769247
+            },
+            {
+              "rank": 2,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0081__method",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0081",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Is there a parameter-efficient fine-tuning method (PEFT) that allows adjusting the number of optimized parameters to any value, irrespective of the model's architecture or choice of the adapter?",
+              "retrieval_content": "Query: Is there a parameter-efficient fine-tuning method (PEFT) that allows adjusting the number of optimized parameters to any value, irrespective of the model's architecture or choice of the adapter?",
+              "distance": 0.4422176480293234
+            },
+            {
+              "rank": 3,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0063__method",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0063",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Which paper studies the concept of enhancing the coverage of a selective prediction system by re-attempting the questions on which it was not sufficiently confident.",
+              "retrieval_content": "Query: Which paper studies the concept of enhancing the coverage of a selective prediction system by re-attempting the questions on which it was not sufficiently confident.",
+              "distance": 0.4592915177345237
+            },
+            {
+              "rank": 4,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0017__method",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0017",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Find papers on trigger-free document-level event extraction methods that do not use human-annotated triggers.",
+              "retrieval_content": "Query: Find papers on trigger-free document-level event extraction methods that do not use human-annotated triggers.",
+              "distance": 0.4951242798714971
+            },
+            {
+              "rank": 5,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0040__method",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0040",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Help me search for the work related to the synthetic data of large language models. I want to know how to automatically generate large-scale, high-quality, diverse, difficult, and valuable long thought data for learning.",
+              "retrieval_content": "Query: Help me search for the work related to the synthetic data of large language models. I want to know how to automatically generate large-scale, high-quality, diverse, difficult, and valuable long thought data for learning.",
+              "distance": 0.5021591187810364
+            }
+          ]
+        },
+        {
+          "query_text": "Find work on testing reasoning faithfulness by swapping out one intermediate step, rolling the rest of the chain forward again, and seeing whether the answer changes.",
+          "query_type": "IR",
+          "is_multimodal": false,
+          "source_view": "method",
+          "related_bullet_indice": 2,
+          "related_bullet_justification": "The main intent is counterfactual intervention on intermediate reasoning followed by downstream regeneration. The query captures that broader retrieval angle in plain language without reconstructing the full procedure.",
+          "multimodal_rationale": null,
+          "retrieved_golden_queries": [
+            {
+              "rank": 1,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0007__method",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0007",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "retrieval_content": "Query: Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "distance": 0.43955748552769247
+            },
+            {
+              "rank": 2,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0081__method",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0081",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Is there a parameter-efficient fine-tuning method (PEFT) that allows adjusting the number of optimized parameters to any value, irrespective of the model's architecture or choice of the adapter?",
+              "retrieval_content": "Query: Is there a parameter-efficient fine-tuning method (PEFT) that allows adjusting the number of optimized parameters to any value, irrespective of the model's architecture or choice of the adapter?",
+              "distance": 0.4422176480293234
+            },
+            {
+              "rank": 3,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0063__method",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0063",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Which paper studies the concept of enhancing the coverage of a selective prediction system by re-attempting the questions on which it was not sufficiently confident.",
+              "retrieval_content": "Query: Which paper studies the concept of enhancing the coverage of a selective prediction system by re-attempting the questions on which it was not sufficiently confident.",
+              "distance": 0.4592915177345237
+            },
+            {
+              "rank": 4,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0017__method",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0017",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Find papers on trigger-free document-level event extraction methods that do not use human-annotated triggers.",
+              "retrieval_content": "Query: Find papers on trigger-free document-level event extraction methods that do not use human-annotated triggers.",
+              "distance": 0.4951242798714971
+            },
+            {
+              "rank": 5,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0040__method",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0040",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Help me search for the work related to the synthetic data of large language models. I want to know how to automatically generate large-scale, high-quality, diverse, difficult, and valuable long thought data for learning.",
+              "retrieval_content": "Query: Help me search for the work related to the synthetic data of large language models. I want to know how to automatically generate large-scale, high-quality, diverse, difficult, and valuable long thought data for learning.",
+              "distance": 0.5021591187810364
+            }
+          ]
+        },
+        {
+          "query_text": "Are there methods that improve chain-of-thought quality by resampling multiple reasoning traces for the same question and keeping the ones that are more sufficient or reliable?",
+          "query_type": "IR",
+          "is_multimodal": false,
+          "source_view": "method",
+          "related_bullet_indice": 5,
+          "related_bullet_justification": "This bullet points to a broader design goal: selecting better CoTs through repeated sampling under the same prompt. The query abstracts to trace resampling and filtering, with sufficiency/reliability as the full-text hook.",
+          "multimodal_rationale": null,
+          "retrieved_golden_queries": [
+            {
+              "rank": 1,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0007__method",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0007",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "retrieval_content": "Query: Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "distance": 0.43955748552769247
+            },
+            {
+              "rank": 2,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0081__method",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0081",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Is there a parameter-efficient fine-tuning method (PEFT) that allows adjusting the number of optimized parameters to any value, irrespective of the model's architecture or choice of the adapter?",
+              "retrieval_content": "Query: Is there a parameter-efficient fine-tuning method (PEFT) that allows adjusting the number of optimized parameters to any value, irrespective of the model's architecture or choice of the adapter?",
+              "distance": 0.4422176480293234
+            },
+            {
+              "rank": 3,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0063__method",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0063",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Which paper studies the concept of enhancing the coverage of a selective prediction system by re-attempting the questions on which it was not sufficiently confident.",
+              "retrieval_content": "Query: Which paper studies the concept of enhancing the coverage of a selective prediction system by re-attempting the questions on which it was not sufficiently confident.",
+              "distance": 0.4592915177345237
+            },
+            {
+              "rank": 4,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0017__method",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0017",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Find papers on trigger-free document-level event extraction methods that do not use human-annotated triggers.",
+              "retrieval_content": "Query: Find papers on trigger-free document-level event extraction methods that do not use human-annotated triggers.",
+              "distance": 0.4951242798714971
+            },
+            {
+              "rank": 5,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0040__method",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0040",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Help me search for the work related to the synthetic data of large language models. I want to know how to automatically generate large-scale, high-quality, diverse, difficult, and valuable long thought data for learning.",
+              "retrieval_content": "Query: Help me search for the work related to the synthetic data of large language models. I want to know how to automatically generate large-scale, high-quality, diverse, difficult, and valuable long thought data for learning.",
+              "distance": 0.5021591187810364
+            }
+          ]
+        },
+        {
+          "query_text": "Search for papers that shorten chain-of-thought reasoning by pruning steps that have little effect on answer correctness after intervention tests.",
+          "query_type": "IR",
+          "is_multimodal": false,
+          "source_view": "method",
+          "related_bullet_indice": 6,
+          "related_bullet_justification": "The bullet's search intent is concise reasoning via step pruning based on causal impact. The query targets that broader capability and includes intervention-based pruning as the concrete retrieval anchor.",
+          "multimodal_rationale": null,
+          "retrieved_golden_queries": [
+            {
+              "rank": 1,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0007__method",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0007",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "retrieval_content": "Query: Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "distance": 0.43955748552769247
+            },
+            {
+              "rank": 2,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0081__method",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0081",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Is there a parameter-efficient fine-tuning method (PEFT) that allows adjusting the number of optimized parameters to any value, irrespective of the model's architecture or choice of the adapter?",
+              "retrieval_content": "Query: Is there a parameter-efficient fine-tuning method (PEFT) that allows adjusting the number of optimized parameters to any value, irrespective of the model's architecture or choice of the adapter?",
+              "distance": 0.4422176480293234
+            },
+            {
+              "rank": 3,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0063__method",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0063",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Which paper studies the concept of enhancing the coverage of a selective prediction system by re-attempting the questions on which it was not sufficiently confident.",
+              "retrieval_content": "Query: Which paper studies the concept of enhancing the coverage of a selective prediction system by re-attempting the questions on which it was not sufficiently confident.",
+              "distance": 0.4592915177345237
+            },
+            {
+              "rank": 4,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0017__method",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0017",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Find papers on trigger-free document-level event extraction methods that do not use human-annotated triggers.",
+              "retrieval_content": "Query: Find papers on trigger-free document-level event extraction methods that do not use human-annotated triggers.",
+              "distance": 0.4951242798714971
+            },
+            {
+              "rank": 5,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0040__method",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0040",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Help me search for the work related to the synthetic data of large language models. I want to know how to automatically generate large-scale, high-quality, diverse, difficult, and valuable long thought data for learning.",
+              "retrieval_content": "Query: Help me search for the work related to the synthetic data of large language models. I want to know how to automatically generate large-scale, high-quality, diverse, difficult, and valuable long thought data for learning.",
+              "distance": 0.5021591187810364
+            }
+          ]
+        },
+        {
+          "query_text": "Which work presents a two-stage algorithm for chain-of-thought optimization, first resampling candidate reasoning paths and then pruning unnecessary steps so the model can produce concise reasoning later?",
+          "query_type": "IR",
+          "is_multimodal": true,
+          "source_view": "method",
+          "related_bullet_indice": 11,
+          "related_bullet_justification": "The bullet is centered on the structure of the algorithm rather than a generic idea. The query targets related two-stage CoT optimization pipelines with resampling followed by pruning, which is the key retrieval intent.",
+          "multimodal_rationale": "Relevance depends on the algorithm evidence because the claim is specifically about how the staged procedure is organized and interpreted. The algorithm figure/text is needed to verify the resampling stage before necessity-based pruning.",
+          "retrieved_golden_queries": [
+            {
+              "rank": 1,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0007__method",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0007",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "retrieval_content": "Query: Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "distance": 0.43955748552769247
+            },
+            {
+              "rank": 2,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0081__method",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0081",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Is there a parameter-efficient fine-tuning method (PEFT) that allows adjusting the number of optimized parameters to any value, irrespective of the model's architecture or choice of the adapter?",
+              "retrieval_content": "Query: Is there a parameter-efficient fine-tuning method (PEFT) that allows adjusting the number of optimized parameters to any value, irrespective of the model's architecture or choice of the adapter?",
+              "distance": 0.4422176480293234
+            },
+            {
+              "rank": 3,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0063__method",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0063",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Which paper studies the concept of enhancing the coverage of a selective prediction system by re-attempting the questions on which it was not sufficiently confident.",
+              "retrieval_content": "Query: Which paper studies the concept of enhancing the coverage of a selective prediction system by re-attempting the questions on which it was not sufficiently confident.",
+              "distance": 0.4592915177345237
+            },
+            {
+              "rank": 4,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0017__method",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0017",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Find papers on trigger-free document-level event extraction methods that do not use human-annotated triggers.",
+              "retrieval_content": "Query: Find papers on trigger-free document-level event extraction methods that do not use human-annotated triggers.",
+              "distance": 0.4951242798714971
+            },
+            {
+              "rank": 5,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0040__method",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0040",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Help me search for the work related to the synthetic data of large language models. I want to know how to automatically generate large-scale, high-quality, diverse, difficult, and valuable long thought data for learning.",
+              "retrieval_content": "Query: Help me search for the work related to the synthetic data of large language models. I want to know how to automatically generate large-scale, high-quality, diverse, difficult, and valuable long thought data for learning.",
+              "distance": 0.5021591187810364
+            }
+          ]
+        },
+        {
+          "query_text": "Find papers that make counterfactual necessity scores for reasoning steps practical by estimating them from repeated rollout interventions instead of exact causal computation.",
+          "query_type": "IR",
+          "is_multimodal": true,
+          "source_view": "method",
+          "related_bullet_indice": 12,
+          "related_bullet_justification": "This bullet is about a tractable empirical estimator for a causal score. The query abstracts to practical estimation of step necessity from repeated interventions, with rollout-based approximation as the main hook.",
+          "multimodal_rationale": "The equation is essential because the claim is about the operational approximation that turns an intractable counterfactual quantity into something computable from rollouts. Without the equation-based evidence, the method detail is underspecified.",
+          "retrieved_golden_queries": [
+            {
+              "rank": 1,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0007__method",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0007",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "retrieval_content": "Query: Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "distance": 0.43955748552769247
+            },
+            {
+              "rank": 2,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0081__method",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0081",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Is there a parameter-efficient fine-tuning method (PEFT) that allows adjusting the number of optimized parameters to any value, irrespective of the model's architecture or choice of the adapter?",
+              "retrieval_content": "Query: Is there a parameter-efficient fine-tuning method (PEFT) that allows adjusting the number of optimized parameters to any value, irrespective of the model's architecture or choice of the adapter?",
+              "distance": 0.4422176480293234
+            },
+            {
+              "rank": 3,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0063__method",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0063",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Which paper studies the concept of enhancing the coverage of a selective prediction system by re-attempting the questions on which it was not sufficiently confident.",
+              "retrieval_content": "Query: Which paper studies the concept of enhancing the coverage of a selective prediction system by re-attempting the questions on which it was not sufficiently confident.",
+              "distance": 0.4592915177345237
+            },
+            {
+              "rank": 4,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0017__method",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0017",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Find papers on trigger-free document-level event extraction methods that do not use human-annotated triggers.",
+              "retrieval_content": "Query: Find papers on trigger-free document-level event extraction methods that do not use human-annotated triggers.",
+              "distance": 0.4951242798714971
+            },
+            {
+              "rank": 5,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0040__method",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0040",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Help me search for the work related to the synthetic data of large language models. I want to know how to automatically generate large-scale, high-quality, diverse, difficult, and valuable long thought data for learning.",
+              "retrieval_content": "Query: Help me search for the work related to the synthetic data of large language models. I want to know how to automatically generate large-scale, high-quality, diverse, difficult, and valuable long thought data for learning.",
+              "distance": 0.5021591187810364
+            }
+          ]
+        },
+        {
+          "query_text": "Is there a method for scoring how necessary a chain-of-thought step is by using the average success of intervened rollouts, under the assumption that the original reasoning chain is already sufficient?",
+          "query_type": "IR",
+          "is_multimodal": true,
+          "source_view": "method",
+          "related_bullet_indice": 13,
+          "related_bullet_justification": "The bullet's intent is to retrieve work that defines a necessity proxy from intervention outcomes under a sufficiency assumption. The query captures that broader methodological idea while preserving one concrete technical condition for matching.",
+          "multimodal_rationale": "Relevance depends on the equation because the claim concerns a specific mathematical approximation and its reliance on a sufficiency assumption. The equation provides the indispensable grounding for that method choice.",
+          "retrieved_golden_queries": [
+            {
+              "rank": 1,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0007__method",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0007",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "retrieval_content": "Query: Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "distance": 0.43955748552769247
+            },
+            {
+              "rank": 2,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0081__method",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0081",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Is there a parameter-efficient fine-tuning method (PEFT) that allows adjusting the number of optimized parameters to any value, irrespective of the model's architecture or choice of the adapter?",
+              "retrieval_content": "Query: Is there a parameter-efficient fine-tuning method (PEFT) that allows adjusting the number of optimized parameters to any value, irrespective of the model's architecture or choice of the adapter?",
+              "distance": 0.4422176480293234
+            },
+            {
+              "rank": 3,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0063__method",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0063",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Which paper studies the concept of enhancing the coverage of a selective prediction system by re-attempting the questions on which it was not sufficiently confident.",
+              "retrieval_content": "Query: Which paper studies the concept of enhancing the coverage of a selective prediction system by re-attempting the questions on which it was not sufficiently confident.",
+              "distance": 0.4592915177345237
+            },
+            {
+              "rank": 4,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0017__method",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0017",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Find papers on trigger-free document-level event extraction methods that do not use human-annotated triggers.",
+              "retrieval_content": "Query: Find papers on trigger-free document-level event extraction methods that do not use human-annotated triggers.",
+              "distance": 0.4951242798714971
+            },
+            {
+              "rank": 5,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0040__method",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0040",
+              "query_type": "IR",
+              "view_label": "method",
+              "query_text": "Help me search for the work related to the synthetic data of large language models. I want to know how to automatically generate large-scale, high-quality, diverse, difficult, and valuable long thought data for learning.",
+              "retrieval_content": "Query: Help me search for the work related to the synthetic data of large language models. I want to know how to automatically generate large-scale, high-quality, diverse, difficult, and valuable long thought data for learning.",
+              "distance": 0.5021591187810364
+            }
+          ]
+        },
+        {
+          "query_text": "Find papers on chain-of-thought methods that make reasoning traces much shorter while keeping the same or better accuracy on math or commonsense benchmarks.",
+          "query_type": "IR",
+          "is_multimodal": false,
+          "source_view": "experiment/result",
+          "related_bullet_indice": 1,
+          "related_bullet_justification": "The bullet’s core intent is the accuracy versus reasoning-length result. This query abstracts to the broader problem of compressing chain-of-thought without hurting performance, while keeping one concrete hook: math or commonsense evaluation.",
+          "multimodal_rationale": null,
+          "retrieved_golden_queries": [
+            {
+              "rank": 1,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0007__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0007",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "retrieval_content": "Query: Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "distance": 0.4099261409000232
+            },
+            {
+              "rank": 2,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0018__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0018",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Provide papers explaining why the in-context learning performance of LLMs cannot surpass that of supervised fine-tuned small language models in information extraction tasks, such as NER, RE, and EE.",
+              "retrieval_content": "Query: Provide papers explaining why the in-context learning performance of LLMs cannot surpass that of supervised fine-tuned small language models in information extraction tasks, such as NER, RE, and EE.",
+              "distance": 0.43225419521331787
+            },
+            {
+              "rank": 3,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0022__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0022",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Search for papers related to large language models that demonstrate how the same prompt with different responses can improve the performance of the SFT model.",
+              "retrieval_content": "Query: Search for papers related to large language models that demonstrate how the same prompt with different responses can improve the performance of the SFT model.",
+              "distance": 0.44592833518981934
+            },
+            {
+              "rank": 4,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0002__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0002",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Give me papers that share some insights about how large language models gain in-context learning capability in the process of pre-training.",
+              "retrieval_content": "Query: Give me papers that share some insights about how large language models gain in-context learning capability in the process of pre-training.",
+              "distance": 0.46029359102249146
+            },
+            {
+              "rank": 5,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0050__experiment_result",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0050",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Which paper first shows that it is possible to maintain high LLM reasoning performance with in-context examples that are absurdly wrong?",
+              "retrieval_content": "Query: Which paper first shows that it is possible to maintain high LLM reasoning performance with in-context examples that are absurdly wrong?",
+              "distance": 0.4611880022641419
+            }
+          ]
+        },
+        {
+          "query_text": "Search for studies comparing reasoning approaches in in-context learning and fine-tuning where compressed explanations or shorter solution steps do not reduce task accuracy.",
+          "query_type": "IR",
+          "is_multimodal": false,
+          "source_view": "experiment/result",
+          "related_bullet_indice": 2,
+          "related_bullet_justification": "The search intent is not the exact compression ratio but the broader empirical finding that large reductions in reasoning length can preserve performance across both ICL and SFT settings. The query uses a natural scholar phrasing and keeps those two settings as retrieval hooks.",
+          "multimodal_rationale": null,
+          "retrieved_golden_queries": [
+            {
+              "rank": 1,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0007__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0007",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "retrieval_content": "Query: Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "distance": 0.4099261409000232
+            },
+            {
+              "rank": 2,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0018__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0018",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Provide papers explaining why the in-context learning performance of LLMs cannot surpass that of supervised fine-tuned small language models in information extraction tasks, such as NER, RE, and EE.",
+              "retrieval_content": "Query: Provide papers explaining why the in-context learning performance of LLMs cannot surpass that of supervised fine-tuned small language models in information extraction tasks, such as NER, RE, and EE.",
+              "distance": 0.43225419521331787
+            },
+            {
+              "rank": 3,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0022__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0022",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Search for papers related to large language models that demonstrate how the same prompt with different responses can improve the performance of the SFT model.",
+              "retrieval_content": "Query: Search for papers related to large language models that demonstrate how the same prompt with different responses can improve the performance of the SFT model.",
+              "distance": 0.44592833518981934
+            },
+            {
+              "rank": 4,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0002__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0002",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Give me papers that share some insights about how large language models gain in-context learning capability in the process of pre-training.",
+              "retrieval_content": "Query: Give me papers that share some insights about how large language models gain in-context learning capability in the process of pre-training.",
+              "distance": 0.46029359102249146
+            },
+            {
+              "rank": 5,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0050__experiment_result",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0050",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Which paper first shows that it is possible to maintain high LLM reasoning performance with in-context examples that are absurdly wrong?",
+              "retrieval_content": "Query: Which paper first shows that it is possible to maintain high LLM reasoning performance with in-context examples that are absurdly wrong?",
+              "distance": 0.4611880022641419
+            }
+          ]
+        },
+        {
+          "query_text": "Give me papers about fine-tuning language models on filtered or cleaner chain-of-thought data to improve downstream reasoning compared with training on raw reasoning traces.",
+          "query_type": "IR",
+          "is_multimodal": false,
+          "source_view": "experiment/result",
+          "related_bullet_indice": 5,
+          "related_bullet_justification": "This bullet points to the empirical comparison between raw CoT supervision and filtered CoT supervision. The query captures the broader training-data quality angle and keeps fine-tuning on reasoning traces as the concrete hook.",
+          "multimodal_rationale": null,
+          "retrieved_golden_queries": [
+            {
+              "rank": 1,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0007__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0007",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "retrieval_content": "Query: Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "distance": 0.4099261409000232
+            },
+            {
+              "rank": 2,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0018__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0018",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Provide papers explaining why the in-context learning performance of LLMs cannot surpass that of supervised fine-tuned small language models in information extraction tasks, such as NER, RE, and EE.",
+              "retrieval_content": "Query: Provide papers explaining why the in-context learning performance of LLMs cannot surpass that of supervised fine-tuned small language models in information extraction tasks, such as NER, RE, and EE.",
+              "distance": 0.43225419521331787
+            },
+            {
+              "rank": 3,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0022__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0022",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Search for papers related to large language models that demonstrate how the same prompt with different responses can improve the performance of the SFT model.",
+              "retrieval_content": "Query: Search for papers related to large language models that demonstrate how the same prompt with different responses can improve the performance of the SFT model.",
+              "distance": 0.44592833518981934
+            },
+            {
+              "rank": 4,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0002__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0002",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Give me papers that share some insights about how large language models gain in-context learning capability in the process of pre-training.",
+              "retrieval_content": "Query: Give me papers that share some insights about how large language models gain in-context learning capability in the process of pre-training.",
+              "distance": 0.46029359102249146
+            },
+            {
+              "rank": 5,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0050__experiment_result",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0050",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Which paper first shows that it is possible to maintain high LLM reasoning performance with in-context examples that are absurdly wrong?",
+              "retrieval_content": "Query: Which paper first shows that it is possible to maintain high LLM reasoning performance with in-context examples that are absurdly wrong?",
+              "distance": 0.4611880022641419
+            }
+          ]
+        },
+        {
+          "query_text": "Look for papers that compare intervention-based selection of in-context reasoning examples against fluency or perplexity based selection methods for better accuracy-efficiency trade-offs.",
+          "query_type": "IR",
+          "is_multimodal": true,
+          "source_view": "experiment/result",
+          "related_bullet_indice": 11,
+          "related_bullet_justification": "The bullet’s search intent is a baseline comparison: intervention-based example selection versus fluency-based heuristics in ICL. The query abstracts away from paper-specific names but keeps the comparison and the accuracy-efficiency angle that would help retrieve related work.",
+          "multimodal_rationale": "The selected bullet depends on comparative evidence shown in a table that documents the added baseline comparison. The relevance of this query therefore relies on multimodal evidence because the concrete empirical comparison is supported by tabulated results rather than text alone.",
+          "retrieved_golden_queries": [
+            {
+              "rank": 1,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0007__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0007",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "retrieval_content": "Query: Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "distance": 0.4099261409000232
+            },
+            {
+              "rank": 2,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0018__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0018",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Provide papers explaining why the in-context learning performance of LLMs cannot surpass that of supervised fine-tuned small language models in information extraction tasks, such as NER, RE, and EE.",
+              "retrieval_content": "Query: Provide papers explaining why the in-context learning performance of LLMs cannot surpass that of supervised fine-tuned small language models in information extraction tasks, such as NER, RE, and EE.",
+              "distance": 0.43225419521331787
+            },
+            {
+              "rank": 3,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0022__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0022",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Search for papers related to large language models that demonstrate how the same prompt with different responses can improve the performance of the SFT model.",
+              "retrieval_content": "Query: Search for papers related to large language models that demonstrate how the same prompt with different responses can improve the performance of the SFT model.",
+              "distance": 0.44592833518981934
+            },
+            {
+              "rank": 4,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0002__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0002",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Give me papers that share some insights about how large language models gain in-context learning capability in the process of pre-training.",
+              "retrieval_content": "Query: Give me papers that share some insights about how large language models gain in-context learning capability in the process of pre-training.",
+              "distance": 0.46029359102249146
+            },
+            {
+              "rank": 5,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0050__experiment_result",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0050",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Which paper first shows that it is possible to maintain high LLM reasoning performance with in-context examples that are absurdly wrong?",
+              "retrieval_content": "Query: Which paper first shows that it is possible to maintain high LLM reasoning performance with in-context examples that are absurdly wrong?",
+              "distance": 0.4611880022641419
+            }
+          ]
+        },
+        {
+          "query_text": "Which papers compare chain-of-thought prompting with ReAct-style or tree search reasoning methods in terms of accuracy and token efficiency on commonsense or math tasks?",
+          "query_type": "IR",
+          "is_multimodal": true,
+          "source_view": "experiment/result",
+          "related_bullet_indice": 12,
+          "related_bullet_justification": "The bullet is about empirical comparisons among reasoning baselines, especially efficiency versus accuracy. This query targets that comparison directly and keeps one concrete setting hook: commonsense or math tasks.",
+          "multimodal_rationale": "The selected bullet summarizes a supplementary table with cross-method results over models and datasets. Multimodal evidence matters because the detailed trade-off comparison comes from the table contents, not just surrounding prose.",
+          "retrieved_golden_queries": [
+            {
+              "rank": 1,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0007__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0007",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "retrieval_content": "Query: Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "distance": 0.4099261409000232
+            },
+            {
+              "rank": 2,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0018__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0018",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Provide papers explaining why the in-context learning performance of LLMs cannot surpass that of supervised fine-tuned small language models in information extraction tasks, such as NER, RE, and EE.",
+              "retrieval_content": "Query: Provide papers explaining why the in-context learning performance of LLMs cannot surpass that of supervised fine-tuned small language models in information extraction tasks, such as NER, RE, and EE.",
+              "distance": 0.43225419521331787
+            },
+            {
+              "rank": 3,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0022__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0022",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Search for papers related to large language models that demonstrate how the same prompt with different responses can improve the performance of the SFT model.",
+              "retrieval_content": "Query: Search for papers related to large language models that demonstrate how the same prompt with different responses can improve the performance of the SFT model.",
+              "distance": 0.44592833518981934
+            },
+            {
+              "rank": 4,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0002__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0002",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Give me papers that share some insights about how large language models gain in-context learning capability in the process of pre-training.",
+              "retrieval_content": "Query: Give me papers that share some insights about how large language models gain in-context learning capability in the process of pre-training.",
+              "distance": 0.46029359102249146
+            },
+            {
+              "rank": 5,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0050__experiment_result",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0050",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Which paper first shows that it is possible to maintain high LLM reasoning performance with in-context examples that are absurdly wrong?",
+              "retrieval_content": "Query: Which paper first shows that it is possible to maintain high LLM reasoning performance with in-context examples that are absurdly wrong?",
+              "distance": 0.4611880022641419
+            }
+          ]
+        },
+        {
+          "query_text": "Search for work showing that fine-tuning on pruned or less redundant reasoning chains leads to fewer reasoning steps and better judged logical validity.",
+          "query_type": "IR",
+          "is_multimodal": true,
+          "source_view": "experiment/result",
+          "related_bullet_indice": 13,
+          "related_bullet_justification": "The underlying intent is the observed behavior that reducing redundancy in reasoning data improves output quality. The query expresses that broader finding in plain language and keeps the human-judged validity signal as a useful retrieval hook.",
+          "multimodal_rationale": "The claim is drawn from a table that reports before-and-after trends on steps, redundancy, and expert validity across several model families. Because those trends are table-based, multimodal evidence is necessary for relevance.",
+          "retrieved_golden_queries": [
+            {
+              "rank": 1,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0007__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0007",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "retrieval_content": "Query: Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "distance": 0.4099261409000232
+            },
+            {
+              "rank": 2,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0018__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0018",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Provide papers explaining why the in-context learning performance of LLMs cannot surpass that of supervised fine-tuned small language models in information extraction tasks, such as NER, RE, and EE.",
+              "retrieval_content": "Query: Provide papers explaining why the in-context learning performance of LLMs cannot surpass that of supervised fine-tuned small language models in information extraction tasks, such as NER, RE, and EE.",
+              "distance": 0.43225419521331787
+            },
+            {
+              "rank": 3,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0022__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0022",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Search for papers related to large language models that demonstrate how the same prompt with different responses can improve the performance of the SFT model.",
+              "retrieval_content": "Query: Search for papers related to large language models that demonstrate how the same prompt with different responses can improve the performance of the SFT model.",
+              "distance": 0.44592833518981934
+            },
+            {
+              "rank": 4,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0002__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0002",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Give me papers that share some insights about how large language models gain in-context learning capability in the process of pre-training.",
+              "retrieval_content": "Query: Give me papers that share some insights about how large language models gain in-context learning capability in the process of pre-training.",
+              "distance": 0.46029359102249146
+            },
+            {
+              "rank": 5,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0050__experiment_result",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0050",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Which paper first shows that it is possible to maintain high LLM reasoning performance with in-context examples that are absurdly wrong?",
+              "retrieval_content": "Query: Which paper first shows that it is possible to maintain high LLM reasoning performance with in-context examples that are absurdly wrong?",
+              "distance": 0.4611880022641419
+            }
+          ]
+        },
+        {
+          "query_text": "Find papers analyzing the offline cost of filtering or selecting chain-of-thought training data, especially cases where the overhead depends more on rollout branching or search behavior than on explanation length alone.",
+          "query_type": "IR",
+          "is_multimodal": true,
+          "source_view": "experiment/result",
+          "related_bullet_indice": 14,
+          "related_bullet_justification": "The bullet’s intent is a complexity result about data filtering overhead, not the whole method. The query lifts that into a broader search for analyses of offline reasoning-data selection cost, while preserving the concrete cost-scaling hook.",
+          "multimodal_rationale": "This bullet relies on an overhead analysis table containing the quantitative evidence for how filtering cost scales. The multimodal component is essential because the nontrivial relationship between cost and reasoning behavior is supported by tabulated analysis.",
+          "retrieved_golden_queries": [
+            {
+              "rank": 1,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0007__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0007",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "retrieval_content": "Query: Papers that propose methods based on large language models and evaluate their performance through experiments on the HotPotQA dataset.",
+              "distance": 0.4099261409000232
+            },
+            {
+              "rank": 2,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0018__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0018",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Provide papers explaining why the in-context learning performance of LLMs cannot surpass that of supervised fine-tuned small language models in information extraction tasks, such as NER, RE, and EE.",
+              "retrieval_content": "Query: Provide papers explaining why the in-context learning performance of LLMs cannot surpass that of supervised fine-tuned small language models in information extraction tasks, such as NER, RE, and EE.",
+              "distance": 0.43225419521331787
+            },
+            {
+              "rank": 3,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0022__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0022",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Search for papers related to large language models that demonstrate how the same prompt with different responses can improve the performance of the SFT model.",
+              "retrieval_content": "Query: Search for papers related to large language models that demonstrate how the same prompt with different responses can improve the performance of the SFT model.",
+              "distance": 0.44592833518981934
+            },
+            {
+              "rank": 4,
+              "example_id": "IR_golden_pasa_realscholarquery_with_targets_0002__experiment_result",
+              "query_id": "IR_golden_pasa_realscholarquery_with_targets_0002",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Give me papers that share some insights about how large language models gain in-context learning capability in the process of pre-training.",
+              "retrieval_content": "Query: Give me papers that share some insights about how large language models gain in-context learning capability in the process of pre-training.",
+              "distance": 0.46029359102249146
+            },
+            {
+              "rank": 5,
+              "example_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0050__experiment_result",
+              "query_id": "IR_golden_litsearch_human_queries_quality2_with_targets_0050",
+              "query_type": "IR",
+              "view_label": "experiment/result",
+              "query_text": "Which paper first shows that it is possible to maintain high LLM reasoning performance with in-context examples that are absurdly wrong?",
+              "retrieval_content": "Query: Which paper first shows that it is possible to maintain high LLM reasoning performance with in-context examples that are absurdly wrong?",
+              "distance": 0.4611880022641419
+            }
+          ]
+        }
+      ],
+      "generated_at": "2026-05-28T08:18:01.133038"
+    }
+  ],
+  "total_papers": 1,
+  "total_queries": 15,
+  "generated_at": "2026-05-28T08:18:01.136463"
+}

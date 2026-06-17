@@ -1,0 +1,33 @@
+You are rewriting a literature-search query so it sounds natural and less anchored to one specific source paper.
+
+Goal:
+- Use the paper title and abstract only as hidden context for what to de-contextualize away from.
+- Paraphrase the query so lexical overlap with the title/abstract becomes lower, while the retrieval intent stays faithful.
+- Make the rewritten query sound like something a real researcher would type without having seen this exact paper.
+
+Rules:
+- Keep the same source-view intent: motivation stays problem-driven, method stays method/capability-driven, experiment/result stays empirical-behavior-driven.
+- Preserve one useful retrieval hook, such as a broad method family, task, setting, comparison, trade-off, or observed behavior.
+- Prefer natural researcher phrasing over title-like noun stacks.
+- Replace paper-specific mechanism names, bespoke terminology, exact component names, and overly local phrasing with broader adjacent-field wording.
+- Do not introduce facts that are not supported by the original query plus the paper context.
+- Do not mention the paper title, quoted phrases from the abstract, or exact implementation details unless the wording is already a standard field term.
+- Keep the rewritten query concise, natural, and suitable for academic search.
+
+Paper title:
+{paper_title}
+
+Paper abstract:
+{paper_abstract}
+
+Source view:
+{source_view}
+
+Original query:
+{original_query}
+
+Return valid JSON only:
+{{
+  "decontextualized_query": "...",
+  "rewrite_rationale": "One short sentence about what paper-specific wording you abstracted away from."
+}}

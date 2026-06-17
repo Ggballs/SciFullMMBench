@@ -32,8 +32,8 @@ The CLI provides these commands:
 - `filter`
 - `summarize`
 - `init-golden-query-embeddings`
-- `import-golden-query-embeddings`
 - `generate-queries`
+- `decontextualize-queries`
 - `hard-negative-mining`
 - `query-analysis`
 - `run-all`
@@ -46,11 +46,12 @@ The normal stage order is:
 1. `download`
 2. `filter`
 3. `summarize`
-4. `init-golden-query-embeddings` and `import-golden-query-embeddings` once before Stage 3
+4. `init-golden-query-embeddings` once before Stage 3
 5. `generate-queries`
-6. `query-analysis`
-7. `hard-negative-mining`
-8. `update-final-json` if you need to rebuild the combined final JSON later
+6. `decontextualize-queries`
+7. `query-analysis`
+8. `hard-negative-mining`
+9. `update-final-json` if you need to rebuild the combined final JSON later
 
 ## Commands
 
@@ -72,7 +73,7 @@ Useful options:
 - `--year`: target year
 - `--max-papers`: max number of papers
 - `--forum-id`: fetch one or more OpenReview forum ids as a comma-separated list, for example `ID_1, ID_2`
-- `--username`, `--password`, `--token`: override OpenReview credentials from `config.yaml`
+- `--username`, `--password`, `--token`: override OpenReview credentials from `configs/config.yaml`
 
 ### 2. Filter
 
@@ -99,7 +100,7 @@ Useful options:
 - `--base-url`
 - `--model`
 
-These override `config.yaml` for the LLM backend. API keys are read from `llm.api_tokens`.
+These override `configs/config.yaml` for the LLM backend. API keys are read from `llm.api_tokens`.
 
 ### 4. Generate Queries
 
@@ -107,19 +108,18 @@ Run stage-3 query generation from summarized papers. Stage 3 emits both IR and Q
 for each supported view (`motivation`, `method`, `experiment/result`) and retrieves few-shot examples
 from PostgreSQL/pgvector.
 
-Before the first run, prepare the normalized retrieval-ICL JSON, initialize the pgvector table,
-and import golden examples:
+Before the first run, prepare the normalized retrieval-ICL JSON and initialize the pgvector table:
 
 ```bash
 openreview-pipeline prepare-golden-retrieval-icl-examples
 openreview-pipeline init-golden-query-embeddings
-openreview-pipeline import-golden-query-embeddings
 ```
 
 The prepare step reads final human-consensus labels, keeps `accept` and `fix`, maps
 `experiment` to `experiment/result`, stores title-only targets, and builds `indexing_content`
-and `retrieval_content`. The import reads `stages.generate_queries.golden_classifications_path`,
-embeds `indexing_content` with BGE-M3, and upserts rows into `golden_query_embeddings`.
+and `retrieval_content`. If `golden_query_embeddings` is empty, Stage 3 reads
+`stages.generate_queries.golden_classifications_path`, embeds `indexing_content` with BGE-M3,
+and upserts rows into `golden_query_embeddings` automatically.
 
 ```bash
 openreview-pipeline generate-queries \
@@ -132,14 +132,34 @@ Useful options:
 - `--base-url`
 - `--model`
 
-### 5. Query Analysis
+### 5.5. Decontextualize Queries
 
-Run stage-4 query analysis. This command analyzes the stage-3 query set, using stage-2 summaries and optional stage-0 metadata.
+Run the new post-stage-3 rewrite step. This command uses the stage-2 title and abstract context to
+paraphrase each generated query into more natural search wording with lower lexical overlap.
+
+```bash
+openreview-pipeline decontextualize-queries \
+  --summarized-input data/02_summarized.json \
+  --queries-input data/03_queries.json \
+  --output data/03_queries_decontextualized.json
+```
+
+Useful options:
+
+- `--base-url`
+- `--model`
+
+The output preserves the original query in `original_query_text` and writes the rewritten text into
+`query_text`, so downstream stages can consume the decontextualized version directly.
+
+### 6. Query Analysis
+
+Run stage-4 query analysis. This command analyzes the decontextualized query set, using stage-2 summaries and optional stage-0 metadata.
 
 ```bash
 openreview-pipeline query-analysis \
   --summarized-input data/02_summarized.json \
-  --queries-input data/03_queries.json \
+  --queries-input data/03_queries_decontextualized.json \
   --downloaded-input data/00_downloaded.json \
   --output-dir data/04_query_analysis
 ```
@@ -158,13 +178,13 @@ Expected output directory contents typically include:
 - `query_analysis.json`
 - `query_analysis.md`
 
-### 6. Hard Negative Mining
+### 7. Hard Negative Mining
 
 Run stage-5 hard negative mining from generated queries. If `--query-analysis-input` is provided, only stage-4 surviving queries are mined.
 
 ```bash
 openreview-pipeline hard-negative-mining \
-  --input data/03_queries.json \
+  --input data/03_queries_decontextualized.json \
   --query-analysis-input data/04_query_analysis \
   --output data/05_hard_negatives.json
 ```
@@ -296,7 +316,7 @@ PYTHONPATH=src python3 -m openreview_pipeline.cli run-all --help
 
 The CLI reads configuration from:
 
-- [config.yaml](/Users/marswei/Documents/SciFullMMBench/config.yaml:1)
+- [configs/config.yaml](/Users/marswei/Documents/SciFullMMBench/configs/config.yaml:1)
 
 CLI flags such as `--base-url`, `--model`, `--username`, and `--token` override config values for that invocation. LLM API keys are configured only through `llm.api_tokens`.
 
@@ -408,7 +428,7 @@ docker compose exec -T gradio python -m openreview_pipeline.cli run-pipeline \
   --forum-id JEGDp1E4OH \
   --max-papers 1 \
   --summarize-limit 1 && \
-docker compose exec -T gradio python scripts/render_query_bullet_comments_md.py \
+docker compose exec -T gradio python tests/scripts/render_query_bullet_comments_md.py \
   "$OUT/final_pipeline_output.json" \
   -o "$OUT/query_bullet_original_comments.md" \
   --max-comment-chars 2000 && \

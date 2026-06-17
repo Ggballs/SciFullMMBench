@@ -6,7 +6,7 @@ from typing import Any, Optional
 
 from openreview_pipeline.schemas import PipelineOutput, PipelinePaper, PipelineQuery
 from openreview_pipeline.schemas.schemas_summarize import ViewBulletPoints, dump_view_bullet_points_compact
-from openreview_pipeline.utils import save_json
+from utils import save_json
 
 
 def load_json_file(path: Path) -> dict[str, Any]:
@@ -231,6 +231,8 @@ def build_pipeline_output(
                     query_type=key[2],
                     is_multimodal=bool(query.get("is_multimodal", False)),
                     source_view=key[1],
+                    original_query_text=query.get("original_query_text"),
+                    decontextualization_note=query.get("decontextualization_note"),
                     related_bullet_indice=query.get("related_bullet_indice"),
                     related_bullet_justification=query.get("related_bullet_justification"),
                     multimodal_rationale=query.get("multimodal_rationale"),

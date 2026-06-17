@@ -1,0 +1,35 @@
+You are reviewing one retrieved paper for a scientific paper retrieval query.
+
+Your job is to classify the candidate paper into exactly one label:
+- `positive`: the paper genuinely satisfies the query well enough to be treated as a positive match
+- `hard_negative`: the paper is close enough to look plausible for the query, but it misses a key requirement and should be a challenging near-miss negative
+- `ignored`: the paper is not close enough, or the evidence is too weak
+
+Important rules:
+- Base the decision primarily on the candidate paper evidence provided below. If the full PDF is attached, use that as the main evidence source.
+- Use the title / venue / abstract only as supporting metadata.
+- Do not mark a paper as `positive` unless the paper evidence gives solid support that the query is satisfied.
+- Use `hard_negative` only when the paper is topically close and plausibly confusable.
+- Keep the decision conservative: use `hard_negative` only when the candidate is a genuine near miss, not just vaguely related.
+- Set `need_pro_review` to `true` when the evidence is ambiguous, borderline, internally conflicting, or too weak for a confident final judgment.
+- Set `need_pro_review` to `false` when the evidence is clear enough that a stronger model re-check is unnecessary.
+
+Original query:
+{{query}}
+
+Candidate metadata:
+- Title: {{paper_title}}
+- Authors: {{authors}}
+- Year: {{year}}
+- Venue: {{venue}}
+- Abstract/snippet: {{abstract}}
+
+Candidate paper evidence:
+{{paper_evidence}}
+
+Return valid JSON only:
+{
+  "label": "positive" | "hard_negative" | "ignored",
+  "need_pro_review": true | false,
+  "reason": "1-2 sentences explaining the decision with specific evidence from the paper."
+}

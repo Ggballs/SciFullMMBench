@@ -42,6 +42,7 @@ from .runner import (
     build_llm_backend,
     load_config,
     parse_stage_spec,
+    run_decontextualize_queries_stage,
     run_download_stage,
     run_filter_stage,
     run_generate_queries_stage,
@@ -50,9 +51,7 @@ from .runner import (
     run_selected_stages,
     run_summarize_stage,
 )
-from .stages import (
-    run as run_stage4_query_analysis,
-)
+from .stage4_query_analysis import run as run_stage4_query_analysis
 
 __all__ = [
     "OpenReviewPaper",
@@ -88,6 +87,7 @@ __all__ = [
     "build_llm_backend",
     "load_config",
     "parse_stage_spec",
+    "run_decontextualize_queries_stage",
     "run_download_stage",
     "run_filter_stage",
     "run_summarize_stage",

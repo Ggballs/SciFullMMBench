@@ -1,0 +1,76 @@
+You are generating IR-style literature search queries from query-facing bullet seeds.
+
+The input bullets have already been abstracted into `query_seed` text. Use those seeds as relevance anchors, not as final wording.
+
+Use the retrieved golden queries as the main style guide. Generate all requested queries for this view in one JSON response.
+
+## Goal
+Write natural human search queries as if the user had not seen this paper.
+
+Think in this direction:
+scholar search need -> this source paper is relevant because the selected query_seed supports it.
+
+## Style Rules
+- Use retrieved golden queries as the main guide for wording, sentence shape, length, and specificity. Also use them to calibrate topic specificity — golden queries describe research needs at a level any scholar in the field would recognize, using general method names, known benchmarks, and broad problem framings.
+- Prefer words, phrases, and openings from the retrieved golden queries over words from the query_seed.
+- Before writing each query, identify words in the seed that appear in the paper title or describe this paper's unique mechanism. Replace those with broader research terms an adjacent-field scholar would use.
+- Target the middle level: broad enough to sound like a real search need, but specific enough that the selected query_seed is useful relevance evidence.
+- Keep one plain full-text hook, such as a method family, dataset/setting, constraint, comparison, trade-off, ablation, or empirical behavior.
+- Use everyday research wording. Keep standard field terms, but avoid paper-internal technical wording unless similar wording appears in the retrieved golden queries.
+- Avoid reverse lookup queries: do not reconstruct this paper's exact mechanism, equation, assumption, implementation recipe, staged workflow, named component, parameter choice, baseline list, metric bundle, or table-specific detail.
+
+- Avoid mini-paper titles, dense noun-phrase headers, exact numbers, paper-specific taxonomies, coined terms, step-by-step procedural chains, and exact figure/table/equation/algorithm labels.
+- If the selected seed came from multimodal evidence, use that only to decide `is_multimodal` and the rationale. Do not put evidence-artifact words such as table, figure, equation, algorithm, formulation, approximation, or design into the query unless they appear in the retrieved golden queries.
+
+
+## Generation Rules
+- Generate exactly {num_queries} IR-style queries.
+- Prefer different bullets; reuse a bullet only if there are too few strong seeds.
+- If reusing a bullet, change the retrieval angle.
+- Text-only bullets have `multimodal_ref: none`; set `is_multimodal=false` and `multimodal_rationale=null`.
+- Multimodal bullets have a non-empty `multimodal_ref`; generate one query for each requested multimodal bullet, set `is_multimodal=true`, and use the bullet's multimodal rationale to explain why relevance depends on multimodal evidence.
+
+Mode-specific rule:
+{query_mode_instructions}
+
+Retrieved IR-style exemplars:
+{retrieved_examples}
+
+Paper title:
+{paper_title}
+
+View label:
+{view_label}
+
+View definition:
+{view_definition}
+
+View-specific requirement:
+{view_specific_requirement}
+
+View summary:
+{view_summary}
+
+Query-facing bullet seeds:
+{bullets}
+
+Output valid JSON only:
+
+{{
+  "queries": [
+    {{
+      "query_text": "...",
+      "is_multimodal": false,
+      "multimodal_rationale": null,
+      "related_bullet_indice": 1,
+      "related_bullet_justification": "Briefly explain why the selected query_seed makes this paper relevant to the query."
+    }},
+    {{
+      "query_text": "...",
+      "is_multimodal": true,
+      "multimodal_rationale": "Use the selected bullet's multimodal rationale to explain why relevance depends on multimodal evidence.",
+      "related_bullet_indice": 2,
+      "related_bullet_justification": "Briefly explain why the selected query_seed makes this paper relevant to the query."
+    }}
+  ]
+}}

@@ -74,6 +74,13 @@ openreview-pipeline = "openreview_pipeline.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+openreview_pipeline = [
+    "prompts/*.txt",
+    "prompts/*.json",
+    "prompts/query_analysis/*.txt",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py39"

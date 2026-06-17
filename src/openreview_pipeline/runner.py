@@ -9,34 +9,33 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 import yaml
+from utils.project_paths import DEFAULT_CONFIG_PATH, REPO_ROOT
 
-from openreview_pipeline.llm import OpenAICompatibleBackend
+from utils.llm import OpenAICompatibleBackend
 from openreview_pipeline.schemas import DownloadedPapersDataset
 from openreview_pipeline.schemas.schemas_filter import FilteredPapersDataset, FilterResult, FilterRuleResult
 from openreview_pipeline.schemas.schemas_queries import GeneratedQueriesDataset, GeneratedQueriesForPaper
-from openreview_pipeline.utils import load_json, save_json
-from openreview_pipeline.stages import (
-    DatasetDownloader,
+from utils import load_json, save_json
+from openreview_pipeline.stage0_download import DatasetDownloader, parse_forum_ids
+from openreview_pipeline.stage1_filter import RuleBasedFilter
+from openreview_pipeline.stage2_summarize import Summarizer
+from openreview_pipeline.stage3_generate_queries import QueryGenerator
+from openreview_pipeline.stage3b_decontextualize_queries import QueryDecontextualizer
+from openreview_pipeline.stage4_query_analysis import run as run_stage4_query_analysis
+from openreview_pipeline.stage5_hard_negative_mining import (
     HardNegativeMiner,
-    QueryGenerator,
-    RuleBasedFilter,
-    Summarizer,
     build_google_scholar_client,
     resolve_hard_negative_llm_settings,
-    run as run_stage4_query_analysis,
 )
-from openreview_pipeline.stages.stage0_download import parse_forum_ids
 
 logger = logging.getLogger(__name__)
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG_PATH = REPO_ROOT / "config.yaml"
 
 LOGICAL_STAGE_ORDER = [
     "download",
     "filter",
     "summarize",
     "generate_queries",
+    "decontextualize_queries",
     "query_analysis",
     "hard_negative_mining",
 ]
@@ -51,6 +50,9 @@ STAGE_ALIASES = {
     "3": "generate_queries",
     "generate_queries": "generate_queries",
     "generate-queries": "generate_queries",
+    "3.5": "decontextualize_queries",
+    "decontextualize_queries": "decontextualize_queries",
+    "decontextualize-queries": "decontextualize_queries",
     "4": "query_analysis",
     "query_analysis": "query_analysis",
     "query-analysis": "query_analysis",
@@ -64,6 +66,7 @@ DEFAULT_STAGE_FILENAMES = {
     "filter": "01_filtered.json",
     "summarize": "02_summarized.json",
     "generate_queries": "03_queries.json",
+    "decontextualize_queries": "03_queries_decontextualized.json",
     "hard_negative_mining": "05_hard_negatives.json",
 }
 
@@ -75,6 +78,7 @@ class PipelinePaths:
     filtered_path: Path
     summarized_path: Path
     queries_path: Path
+    decontextualized_queries_path: Path
     query_analysis_output_dir: Path
     hard_negatives_path: Path
 
@@ -83,6 +87,17 @@ def _normalize_path(path: Optional[Path | str]) -> Optional[Path]:
     if path is None:
         return None
     return Path(path).expanduser().resolve()
+
+
+def _select_effective_queries_path(queries_path: Optional[Path], decontextualized_path: Optional[Path]) -> Optional[Path]:
+    if decontextualized_path and decontextualized_path.is_file():
+        if not queries_path or not queries_path.is_file():
+            return decontextualized_path
+        if decontextualized_path.stat().st_mtime >= queries_path.stat().st_mtime:
+            return decontextualized_path
+    if queries_path and queries_path.is_file():
+        return queries_path
+    return decontextualized_path if decontextualized_path and decontextualized_path.is_file() else None
 
 
 def load_config(config_path: Optional[Path | str] = None) -> dict:
@@ -214,12 +229,69 @@ def resolve_search_settings(
 
     resolved_max_results = max_results or search_config.get("max_results", 10)
     resolved_language = language or search_config.get("language", "en")
+    cache_dir = os.environ.get("SCIFULL_SEARCH_CACHE_DIR")
+    if not cache_dir:
+        configured_cache_dir = search_config.get("cache_dir")
+        cache_dir = str(configured_cache_dir).strip() if configured_cache_dir else ""
+    semantic_scholar_api_keys = os.environ.get("SCIFULL_SEMANTIC_SCHOLAR_API_KEYS")
+    if semantic_scholar_api_keys:
+        resolved_semantic_scholar_api_keys = [
+            token.strip()
+            for token in semantic_scholar_api_keys.replace("\n", ",").split(",")
+            if token.strip()
+        ]
+    else:
+        configured_semantic_keys = search_config.get("semantic_scholar_api_keys", [])
+        if isinstance(configured_semantic_keys, str):
+            resolved_semantic_scholar_api_keys = [
+                token.strip()
+                for token in configured_semantic_keys.replace("\n", ",").split(",")
+                if token.strip()
+            ]
+        elif isinstance(configured_semantic_keys, list):
+            resolved_semantic_scholar_api_keys = [
+                str(token).strip() for token in configured_semantic_keys if str(token).strip()
+            ]
+        else:
+            resolved_semantic_scholar_api_keys = []
 
     return {
         "provider": resolved_provider,
         "serpapi_api_key": serpapi_api_key or search_config.get("serpapi_api_key", ""),
+        "semantic_scholar_api_keys": resolved_semantic_scholar_api_keys,
         "max_results": int(resolved_max_results),
         "language": str(resolved_language),
+        "timeout_seconds": float(
+            os.environ.get(
+                "SCIFULL_SEARCH_TIMEOUT_SECONDS",
+                search_config.get("timeout_seconds", 30.0),
+            )
+        ),
+        "min_interval_seconds": float(
+            os.environ.get(
+                "SCIFULL_SEARCH_MIN_INTERVAL_SECONDS",
+                search_config.get("min_interval_seconds", 0.0),
+            )
+        ),
+        "max_retries": int(
+            os.environ.get(
+                "SCIFULL_SEARCH_MAX_RETRIES",
+                search_config.get("max_retries", 3),
+            )
+        ),
+        "retry_backoff_seconds": float(
+            os.environ.get(
+                "SCIFULL_SEARCH_RETRY_BACKOFF_SECONDS",
+                search_config.get("retry_backoff_seconds", 3.0),
+            )
+        ),
+        "retry_backoff_multiplier": float(
+            os.environ.get(
+                "SCIFULL_SEARCH_RETRY_BACKOFF_MULTIPLIER",
+                search_config.get("retry_backoff_multiplier", 2.0),
+            )
+        ),
+        "cache_dir": cache_dir,
     }
 
 
@@ -345,6 +417,7 @@ def resolve_pipeline_paths(
     filtered_path: Optional[Path | str] = None,
     summarized_path: Optional[Path | str] = None,
     queries_path: Optional[Path | str] = None,
+    decontextualized_queries_path: Optional[Path | str] = None,
     query_analysis_output_dir: Optional[Path | str] = None,
     hard_negatives_path: Optional[Path | str] = None,
 ) -> PipelinePaths:
@@ -353,6 +426,7 @@ def resolve_pipeline_paths(
         _normalize_path(filtered_path),
         _normalize_path(summarized_path),
         _normalize_path(queries_path),
+        _normalize_path(decontextualized_queries_path),
         _normalize_path(query_analysis_output_dir),
         _normalize_path(hard_negatives_path),
     ]
@@ -372,6 +446,7 @@ def resolve_pipeline_paths(
         filtered_path=stage_path(filtered_path, "filter"),
         summarized_path=stage_path(summarized_path, "summarize"),
         queries_path=stage_path(queries_path, "generate_queries"),
+        decontextualized_queries_path=stage_path(decontextualized_queries_path, "decontextualize_queries"),
         query_analysis_output_dir=_normalize_path(query_analysis_output_dir) or (base_dir / "04_query_analysis"),
         hard_negatives_path=stage_path(hard_negatives_path, "hard_negative_mining"),
     )
@@ -627,6 +702,7 @@ def run_generate_queries_stage(
         llm=llm_backend,
         max_concurrent_papers=int(stage_settings["max_concurrent_papers"]),
         golden_embedding_db_url=str(generate_settings["golden_embedding_db_url"]),
+        golden_classifications_path=str(generate_settings["golden_classifications_path"]),
         golden_examples_k=int(generate_settings["golden_examples_k"]),
         queries_per_type_view=generate_settings["queries_per_type_view"],
         bge_model_path=str(generate_settings["bge_model_path"]),
@@ -636,6 +712,35 @@ def run_generate_queries_stage(
         embedding_service_timeout=float(generate_settings["embedding_service_timeout"]),
     )
     generator.run(input_path, output_path)
+    return output_path
+
+
+def run_decontextualize_queries_stage(
+    *,
+    summarized_path: Path | str,
+    queries_path: Path | str,
+    output_path: Path | str,
+    config_path: Optional[Path | str] = None,
+    base_url: Optional[str] = None,
+    model: Optional[str] = None,
+    llm_backend=None,
+) -> Path:
+    summarized_path = _require_input("decontextualize_queries", _normalize_path(summarized_path))
+    queries_path = _require_input("decontextualize_queries", _normalize_path(queries_path))
+    output_path = Path(output_path).expanduser().resolve()
+    _ensure_parent(output_path)
+
+    llm_backend = llm_backend or build_llm_backend(
+        config_path,
+        base_url=base_url,
+        model=model,
+    )
+    stage_settings = resolve_stage_settings(config_path)
+    decontextualizer = QueryDecontextualizer(
+        llm=llm_backend,
+        max_concurrent_papers=int(stage_settings["max_concurrent_papers"]),
+    )
+    decontextualizer.run(summarized_path, queries_path, output_path)
     return output_path
 
 
@@ -651,7 +756,6 @@ def run_hard_negative_mining_stage(
     serpapi_api_key: Optional[str] = None,
     scholar_max_results: Optional[int] = None,
     scholar_language: Optional[str] = None,
-    download_selected_pdfs: bool = False,
     llm_backend=None,
 ) -> Path:
     input_path = _require_input("hard_negative_mining", _normalize_path(input_path))
@@ -674,13 +778,25 @@ def run_hard_negative_mining_stage(
     scholar_client = build_google_scholar_client(
         str(search_settings["provider"]),
         serpapi_api_key=str(search_settings["serpapi_api_key"]),
+        semantic_scholar_api_keys=[
+            str(token)
+            for token in search_settings.get("semantic_scholar_api_keys", [])
+            if str(token).strip()
+        ],
         language=str(search_settings["language"]),
+        timeout_seconds=float(search_settings["timeout_seconds"]),
+        min_interval_seconds=float(search_settings["min_interval_seconds"]),
+        max_retries=int(search_settings["max_retries"]),
+        retry_backoff_seconds=float(search_settings["retry_backoff_seconds"]),
+        retry_backoff_multiplier=float(search_settings["retry_backoff_multiplier"]),
+        cache_dir=Path(str(search_settings["cache_dir"])).expanduser().resolve()
+        if str(search_settings["cache_dir"]).strip()
+        else None,
     )
     miner = HardNegativeMiner(
         llm=llm_backend,
         scholar_client=scholar_client,
         scholar_max_results=int(search_settings["max_results"]),
-        download_selected_pdfs=download_selected_pdfs,
         review_max_workers=int(stage_settings["hard_negative_review_max_workers"]),
     )
 
@@ -728,6 +844,16 @@ def run_query_analysis_stage(
     return output_dir
 
 
+def _generate_simplified_queries(queries_path: Path) -> None:
+    try:
+        from scripts.simplify_queries import simplify
+        output = queries_path.parent / "03_queries_simplified.json"
+        if queries_path.exists():
+            simplify(str(queries_path), str(output))
+    except Exception:
+        pass
+
+
 def run_selected_stages(
     stage_spec: str | Sequence[str],
     *,
@@ -737,6 +863,7 @@ def run_selected_stages(
     filtered_path: Optional[Path | str] = None,
     summarized_path: Optional[Path | str] = None,
     queries_path: Optional[Path | str] = None,
+    decontextualized_queries_path: Optional[Path | str] = None,
     query_analysis_output_dir: Optional[Path | str] = None,
     hard_negatives_path: Optional[Path | str] = None,
     venue: str = "ICLR",
@@ -756,7 +883,6 @@ def run_selected_stages(
     serpapi_api_key: Optional[str] = None,
     scholar_max_results: Optional[int] = None,
     scholar_language: Optional[str] = None,
-    download_selected_pdfs: bool = False,
     skip_filter: bool = False,
 ) -> PipelinePaths:
     stages = parse_stage_spec(stage_spec)
@@ -772,6 +898,7 @@ def run_selected_stages(
         filtered_path=filtered_path,
         summarized_path=summarized_path,
         queries_path=queries_path,
+        decontextualized_queries_path=decontextualized_queries_path,
         query_analysis_output_dir=query_analysis_output_dir,
         hard_negatives_path=hard_negatives_path,
     )
@@ -780,6 +907,10 @@ def run_selected_stages(
     filtered_source = paths.filtered_path if paths.filtered_path.is_file() else None
     summarized_source = paths.summarized_path if paths.summarized_path.is_file() else None
     queries_source = paths.queries_path if paths.queries_path.is_file() else None
+    decontextualized_queries_source = _select_effective_queries_path(
+        queries_source,
+        paths.decontextualized_queries_path,
+    )
 
     for stage in stages:
         if stage == "download":
@@ -828,9 +959,25 @@ def run_selected_stages(
                 model=model,
             )
             queries_source = current_input
-        elif stage == "query_analysis":
+            _generate_simplified_queries(paths.queries_path)
+        elif stage == "decontextualize_queries":
             summary_input = summarized_source or paths.summarized_path
             query_input = queries_source or paths.queries_path
+            current_input = run_decontextualize_queries_stage(
+                summarized_path=_require_input(stage, summary_input),
+                queries_path=_require_input(stage, query_input),
+                output_path=paths.decontextualized_queries_path,
+                config_path=config_path,
+                base_url=base_url,
+                model=model,
+            )
+            decontextualized_queries_source = current_input
+        elif stage == "query_analysis":
+            summary_input = summarized_source or paths.summarized_path
+            query_input = _select_effective_queries_path(
+                queries_source,
+                paths.decontextualized_queries_path,
+            ) or paths.queries_path
             run_query_analysis_stage(
                 summarized_path=_require_input(stage, summary_input),
                 queries_path=_require_input(stage, query_input),
@@ -844,7 +991,12 @@ def run_selected_stages(
         elif stage == "hard_negative_mining":
             query_input = _require_input(
                 stage,
-                queries_source or current_input or paths.queries_path,
+                _select_effective_queries_path(
+                    queries_source,
+                    paths.decontextualized_queries_path,
+                )
+                or current_input
+                or paths.queries_path,
             )
             run_hard_negative_mining_stage(
                 input_path=query_input,
@@ -861,7 +1013,6 @@ def run_selected_stages(
                 serpapi_api_key=serpapi_api_key,
                 scholar_max_results=scholar_max_results,
                 scholar_language=scholar_language,
-                download_selected_pdfs=download_selected_pdfs,
             )
             current_input = query_input
 

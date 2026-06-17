@@ -1,14 +1,17 @@
 import logging
-import json
 from pathlib import Path
+from typing import Optional
 
 import click
 
-from openreview_pipeline.app_logging import configure_project_logging
+from utils.app_logging import configure_project_logging
+from utils.project_paths import DEFAULT_CONFIG_PATH
 from openreview_pipeline.pipeline_output_builder import build_pipeline_output, write_pipeline_output
 from openreview_pipeline.runner import (
     build_llm_backend,
     resolve_generate_query_settings,
+    resolve_pipeline_paths,
+    run_decontextualize_queries_stage,
     run_download_stage,
     run_filter_stage,
     run_generate_queries_stage,
@@ -17,25 +20,21 @@ from openreview_pipeline.runner import (
     run_selected_stages,
     run_summarize_stage,
 )
-from openreview_pipeline.utils.db.golden_query_embeddings import (
-    GoldenQueryEmbeddingRow,
+from utils.db.golden_query_embeddings import (
     ensure_schema,
     get_engine,
-    upsert_golden_query_embeddings,
 )
-from openreview_pipeline.utils.golden_retrieval_icl import (
+from utils.golden_retrieval_icl import (
     DEFAULT_OUTPUT_PATH,
     IR_CONSENSUS_PATH,
     QA_CONSENSUS_PATH,
     build_examples_from_csv_paths,
     write_examples_json,
 )
-from openreview_pipeline.utils.embeddings import build_text_embedder
-
 configure_project_logging()
 logger = logging.getLogger(__name__)
 
-CONFIG_PATH = Path(__file__).parent.parent.parent / "config.yaml"
+CONFIG_PATH = DEFAULT_CONFIG_PATH
 
 
 @click.group()
@@ -117,6 +116,23 @@ def generate_queries(input_path: str, output: str, base_url: str, model: str):
     )
 
 
+@cli.command("decontextualize-queries")
+@click.option("--summarized-input", type=click.Path(exists=True), required=True, help="Stage-2 summarized dataset path")
+@click.option("--queries-input", type=click.Path(exists=True), required=True, help="Stage-3 generated queries dataset path")
+@click.option("--output", "-o", type=click.Path(), default="data/03_queries_decontextualized.json", help="Output path")
+@click.option("--base-url", default=None, help="LLM API base URL (overrides config)")
+@click.option("--model", default=None, help="Model name (overrides config)")
+def decontextualize_queries(summarized_input: str, queries_input: str, output: str, base_url: str, model: str):
+    run_decontextualize_queries_stage(
+        summarized_path=Path(summarized_input),
+        queries_path=Path(queries_input),
+        output_path=Path(output),
+        config_path=CONFIG_PATH,
+        base_url=base_url,
+        model=model,
+    )
+
+
 @cli.command("init-golden-query-embeddings")
 @click.option("--db-url", default=None, help="PostgreSQL SQLAlchemy URL (overrides config)")
 @click.option("--embedding-dimension", default=1024, type=int, help="pgvector dimension")
@@ -167,70 +183,16 @@ def prepare_golden_retrieval_icl_examples(
     click.echo(f"Wrote preparation report to {output_path.with_name(output_path.stem + '_report.json')}.")
 
 
-@cli.command("import-golden-query-embeddings")
-@click.option("--db-url", default=None, help="PostgreSQL SQLAlchemy URL (overrides config)")
-@click.option("--golden-classifications-path", type=click.Path(exists=True), default=None, help="Normalized retrieval-ICL examples JSON")
-@click.option("--bge-model-path", default=None, help="BGE-M3 model path")
-@click.option("--bge-device", default=None, help="BGE device")
-@click.option("--embedding-service-url", default=None, help="HTTP embedding endpoint")
-@click.option("--embedding-service-timeout", default=120.0, type=float, help="HTTP embedding timeout")
-@click.option("--embedding-dimension", default=1024, type=int, help="pgvector dimension")
-def import_golden_query_embeddings(
-    db_url: str,
-    golden_classifications_path: str,
-    bge_model_path: str,
-    bge_device: str,
-    embedding_service_url: str,
-    embedding_service_timeout: float,
-    embedding_dimension: int,
-):
-    settings = resolve_generate_query_settings(CONFIG_PATH)
-    path = Path(golden_classifications_path or str(settings["golden_classifications_path"]))
-    raw_rows = json.loads(path.expanduser().resolve().read_text(encoding="utf-8"))
-    eligible = [row for row in raw_rows if str(row.get("indexing_content") or "").strip()]
-
-    embedder = build_text_embedder(
-        model_path=str(bge_model_path or settings["bge_model_path"]),
-        device=str(bge_device or settings["bge_device"]),
-        service_url=str(embedding_service_url or settings.get("embedding_service_url") or "").strip()
-        or None,
-        timeout_seconds=float(embedding_service_timeout),
-    )
-    vectors = embedder.embed_texts([str(row.get("indexing_content") or "") for row in eligible])
-    rows = [
-        GoldenQueryEmbeddingRow(
-            example_id=str(row.get("example_id") or ""),
-            query_id=str(row.get("query_id") or ""),
-            query_type=str(row.get("query_type") or "").strip().upper(),
-            view_label=str(row.get("view_label") or "").strip(),
-            query_text=str(row.get("query") or "").strip(),
-            target_papers=[str(title) for title in row.get("target_papers", [])],
-            answer_original_content=str(row.get("answer_original_content") or ""),
-            answer_tldr=str(row.get("answer_tldr") or ""),
-            human_view_note=str(row.get("human_view_note") or ""),
-            indexing_content=str(row.get("indexing_content") or "").strip(),
-            retrieval_content=str(row.get("retrieval_content") or "").strip(),
-            embedding=embedding,
-        )
-        for row, embedding in zip(eligible, vectors)
-    ]
-    engine = get_engine(db_url or str(settings["golden_embedding_db_url"]))
-    ensure_schema(engine, embedding_dimension=embedding_dimension)
-    count = upsert_golden_query_embeddings(engine, rows)
-    click.echo(f"Imported {count} golden query embedding rows.")
-
-
 @cli.command("hard-negative-mining")
 @click.option("--input", "-i", "input_path", type=click.Path(exists=True), required=True, help="Input generated queries dataset path")
 @click.option("--query-analysis-input", type=click.Path(exists=True), default=None, help="Optional stage-4 query analysis directory used to keep only surviving queries")
 @click.option("--output", "-o", type=click.Path(), default="data/05_hard_negatives.json", help="Output path")
 @click.option("--base-url", default=None, help="LLM API base URL (overrides config)")
 @click.option("--model", default=None, help="Model name (overrides config)")
-@click.option("--scholar-provider", default=None, help="Google Scholar backend: 'serpapi' or 'scholarly' (overrides config)")
-@click.option("--serpapi-api-key", default=None, help="SerpAPI key for real Google Scholar search (overrides config)")
-@click.option("--scholar-max-results", default=None, type=int, help="Maximum Google Scholar candidates to retrieve per query")
+@click.option("--scholar-provider", default=None, help="Search backend: 'serpapi', 'scholarly', 'arxiv', or 'semantic_scholar' (overrides config)")
+@click.option("--serpapi-api-key", default=None, help="SerpAPI key when using the 'serpapi' backend")
+@click.option("--scholar-max-results", default=None, type=int, help="Maximum candidates to retrieve per query")
 @click.option("--scholar-language", default=None, help="Google Scholar language code, e.g. 'en'")
-@click.option("--download-selected-pdfs", is_flag=True, help="Download selected hard-negative/positive PDFs instead of storing URL-only metadata")
 def hard_negative_mining(
     input_path: str,
     query_analysis_input: str,
@@ -241,7 +203,6 @@ def hard_negative_mining(
     serpapi_api_key: str,
     scholar_max_results: int,
     scholar_language: str,
-    download_selected_pdfs: bool,
 ):
     run_hard_negative_mining_stage(
         input_path=Path(input_path),
@@ -254,7 +215,6 @@ def hard_negative_mining(
         serpapi_api_key=serpapi_api_key,
         scholar_max_results=scholar_max_results,
         scholar_language=scholar_language,
-        download_selected_pdfs=download_selected_pdfs,
     )
 
 
@@ -293,7 +253,6 @@ def query_analysis(
 @click.option("--summarize-limit", default=None, type=int, help="Maximum papers to summarize with the LLM")
 @click.option("--base-url", default=None, help="LLM API base URL (overrides config)")
 @click.option("--model", default=None, help="Model name (overrides config)")
-@click.option("--download-selected-pdfs", is_flag=True, help="Download selected hard-negative/positive PDFs instead of storing URL-only metadata")
 @click.option("--skip-filter", is_flag=True, help="Mark all downloaded papers as passed instead of applying stage-1 filtering")
 @click.option("--final-output", type=click.Path(), default=None, help="Final combined JSON path")
 def run_all(
@@ -305,7 +264,6 @@ def run_all(
     summarize_limit: int,
     base_url: str,
     model: str,
-    download_selected_pdfs: bool,
     skip_filter: bool,
     final_output: str,
 ):
@@ -320,7 +278,6 @@ def run_all(
         config_path=CONFIG_PATH,
         base_url=base_url,
         model=model,
-        download_selected_pdfs=download_selected_pdfs,
         skip_filter=skip_filter,
     )
     final_output_path = (
@@ -332,7 +289,7 @@ def run_all(
         downloaded_path=paths.downloaded_path,
         filtered_path=paths.filtered_path,
         summarized_path=paths.summarized_path,
-        queries_path=paths.queries_path,
+        queries_path=_resolve_queries_dataset_path(paths.output_dir, None),
         hard_negatives_path=paths.hard_negatives_path,
         query_analysis_output_dir=paths.query_analysis_output_dir,
     )
@@ -350,11 +307,11 @@ def run_all(
 @click.option("--summarize-limit", default=None, type=int, help="Maximum papers to summarize with the LLM")
 @click.option("--base-url", default=None, help="LLM API base URL (overrides config)")
 @click.option("--model", default=None, help="Model name (overrides config)")
-@click.option("--download-selected-pdfs", is_flag=True, help="Download selected hard-negative/positive PDFs instead of storing URL-only metadata")
 @click.option("--skip-filter", is_flag=True, help="Mark all downloaded papers as passed instead of applying stage-1 filtering")
 @click.option("--final-output", type=click.Path(), default=None, help="Final combined JSON path")
 @click.option("--downloaded-input", type=click.Path(exists=True), default=None, help="Reuse existing 00_downloaded.json (skip stage-0 download)")
 @click.option("--input-path", type=click.Path(exists=True), default=None, help="Input path for the first selected stage (overrides --downloaded-input as input)")
+@click.option("--sync-gradio", is_flag=True, help="Sync final output to Gradio display")
 def run_pipeline(
     stages: str,
     output_dir: str,
@@ -365,11 +322,11 @@ def run_pipeline(
     summarize_limit: int,
     base_url: str,
     model: str,
-    download_selected_pdfs: bool,
     skip_filter: bool,
     final_output: str,
     downloaded_input: str,
     input_path: str,
+    sync_gradio: bool,
 ):
     stage_input = Path(input_path) if input_path else (Path(downloaded_input) if downloaded_input else None)
     paths = run_selected_stages(
@@ -384,10 +341,14 @@ def run_pipeline(
         config_path=CONFIG_PATH,
         base_url=base_url,
         model=model,
-        download_selected_pdfs=download_selected_pdfs,
         skip_filter=skip_filter,
         downloaded_path=Path(downloaded_input) if downloaded_input else None,
     )
+
+    # Generate simplified queries JSON right after stage 3
+    if paths.queries_path and paths.queries_path.exists():
+        _simplify_queries_json(paths.output_dir / "final_pipeline_output.json")
+
     final_output_path = (
         Path(final_output).expanduser().resolve()
         if final_output
@@ -398,12 +359,80 @@ def run_pipeline(
         downloaded_path=paths.downloaded_path,
         filtered_path=paths.filtered_path,
         summarized_path=paths.summarized_path,
-        queries_path=paths.queries_path,
+        queries_path=_resolve_queries_dataset_path(paths.output_dir, None),
         hard_negatives_path=paths.hard_negatives_path,
         query_analysis_output_dir=paths.query_analysis_output_dir,
     )
     write_pipeline_output(final_output_path, artifact)
     click.echo(str(final_output_path))
+
+    _generate_markdown_report(final_output_path)
+    click.echo(str(final_output_path.parent / "query_bullet_original_comments.md"))
+
+    _simplify_queries_json(final_output_path)
+    click.echo(str(final_output_path.parent / "03_queries_simplified.json"))
+
+    if sync_gradio:
+        _sync_to_gradio(final_output_path.parent, final_output_path)
+
+
+def _generate_markdown_report(final_json_path: Path) -> None:
+    try:
+        from scripts.render_query_bullet_comments_md import render_report, load_pipeline
+        output = final_json_path.parent / "query_bullet_original_comments.md"
+        data = load_pipeline(final_json_path)
+        output.write_text(render_report(data, max_comment_chars=1800), encoding="utf-8")
+    except Exception as exc:
+        click.echo(f"Markdown report generation skipped: {exc}", err=True)
+
+
+def _simplify_queries_json(final_json_path: Path) -> None:
+    try:
+        from scripts.simplify_queries import simplify
+        queries_path = final_json_path.parent / "03_queries.json"
+        output = final_json_path.parent / "03_queries_simplified.json"
+        if queries_path.exists():
+            simplify(str(queries_path), str(output))
+    except Exception as exc:
+        click.echo(f"Simplified queries generation skipped: {exc}", err=True)
+
+
+GRADIO_OUTPUT_DIR = Path("outputs")
+
+
+def _sync_to_gradio(output_dir: Path, final_json_path: Path) -> None:
+    try:
+        import shutil
+        target_json = GRADIO_OUTPUT_DIR / "final_pipeline_output.json"
+        target_analysis = GRADIO_OUTPUT_DIR / "04_query_analysis"
+        target_md = GRADIO_OUTPUT_DIR / "query_bullet_original_comments.md"
+        shutil.copy2(final_json_path, target_json)
+        if target_analysis.exists():
+            shutil.rmtree(target_analysis)
+        analysis_src = output_dir / "04_query_analysis"
+        if analysis_src.exists():
+            shutil.copytree(analysis_src, target_analysis)
+        md_src = output_dir / "query_bullet_original_comments.md"
+        if md_src.exists():
+            shutil.copy2(md_src, target_md)
+        click.echo(f"Synced to Gradio: {target_json}")
+    except Exception as exc:
+        click.echo(f"Gradio sync skipped: {exc}", err=True)
+
+
+def _resolve_queries_dataset_path(base: Path, override: Optional[str]) -> Path:
+    if override:
+        return Path(override).expanduser().resolve()
+    paths = resolve_pipeline_paths(output_dir=base)
+    if (
+        paths.decontextualized_queries_path.is_file()
+        and (
+            not paths.queries_path.is_file()
+            or paths.decontextualized_queries_path.stat().st_mtime >= paths.queries_path.stat().st_mtime
+        )
+    ):
+        return paths.decontextualized_queries_path
+    return paths.queries_path
 
 
 @cli.command("update-final-json")
@@ -415,6 +444,7 @@ def run_pipeline(
 @click.option("--queries-path", type=click.Path(exists=True), default=None, help="Optional override for 03_queries.json")
 @click.option("--hard-negatives-path", type=click.Path(exists=True), default=None, help="Optional override for 05_hard_negatives.json")
 @click.option("--query-analysis-dir", type=click.Path(exists=True), default=None, help="Optional override for 04_query_analysis directory")
+@click.option("--sync-gradio", is_flag=True, help="Sync final output to Gradio display")
 def update_final_json(
     base_dir: str,
     output: str,
@@ -424,6 +454,7 @@ def update_final_json(
     queries_path: str,
     hard_negatives_path: str,
     query_analysis_dir: str,
+    sync_gradio: bool,
 ):
     base = Path(base_dir).expanduser().resolve()
     final_output_path = Path(output).expanduser().resolve() if output else (base / "final_pipeline_output.json")
@@ -433,12 +464,21 @@ def update_final_json(
         downloaded_path=Path(downloaded_path).expanduser().resolve() if downloaded_path else (base / "00_downloaded.json"),
         filtered_path=Path(filtered_path).expanduser().resolve() if filtered_path else (base / "01_filtered.json"),
         summarized_path=Path(summarized_path).expanduser().resolve() if summarized_path else (base / "02_summarized.json"),
-        queries_path=Path(queries_path).expanduser().resolve() if queries_path else (base / "03_queries.json"),
+        queries_path=_resolve_queries_dataset_path(base, queries_path),
         hard_negatives_path=Path(hard_negatives_path).expanduser().resolve() if hard_negatives_path else (base / "05_hard_negatives.json"),
         query_analysis_output_dir=Path(query_analysis_dir).expanduser().resolve() if query_analysis_dir else (base / "04_query_analysis"),
     )
     write_pipeline_output(final_output_path, artifact)
     click.echo(str(final_output_path))
+
+    _generate_markdown_report(final_output_path)
+    click.echo(str(final_output_path.parent / "query_bullet_original_comments.md"))
+
+    _simplify_queries_json(final_output_path)
+    click.echo(str(final_output_path.parent / "03_queries_simplified.json"))
+
+    if sync_gradio:
+        _sync_to_gradio(final_output_path.parent, final_output_path)
 
 
 def main():

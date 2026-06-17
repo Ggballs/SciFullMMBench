@@ -11,6 +11,8 @@ class PipelineQuery(BaseModel):
     query_type: str = "IR"
     is_multimodal: bool = False
     source_view: str = ""
+    original_query_text: Optional[str] = None
+    decontextualization_note: Optional[str] = None
     related_bullet_indice: Optional[int] = None
     related_bullet_justification: Optional[str] = None
     multimodal_rationale: Optional[str] = None

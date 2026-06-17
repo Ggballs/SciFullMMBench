@@ -1,0 +1,56 @@
+dataset:
+  queries_path: /data3/weiyiyang/dataset_cache/MAPLE/queries/all_queries.jsonl
+  corpus_path: /data3/weiyiyang/dataset_cache/MAPLE/corpus/corpus.jsonl
+  query_id_field: query_id
+  query_text_field: query_text
+  target_paper_id_field: target_paper_id
+  source_view_field: source_view
+  corpus_paper_id_field: paper_id
+  title_field: title
+  abstract_field: abstract
+  long_text_field: null
+
+output_dir: /data3/weiyiyang/code/SciFullMMBench/outputs/per_view_retrieval_maple_eval
+top_k:
+  - 10
+  - 20
+bootstrap_samples: 1000
+random_seed: 13
+
+model_lineup:
+  - name: BM25
+    type: bm25
+    model_id_or_path: bm25
+    device: null
+    service_url: null
+    cache_dir: /data3/weiyiyang/code/SciFullMMBench/outputs/per_view_retrieval_maple_eval/cache/bm25
+  - name: Qwen3-Embedding
+    type: dense_embedding
+    model_id_or_path: /data3/weiyiyang/model_cache/Qwen3-Embedding-0.6B
+    device: cuda:3
+    service_url: http://127.0.0.1:18081/embed/qwen3
+    cache_dir: /data3/weiyiyang/code/SciFullMMBench/outputs/per_view_retrieval_maple_eval/cache/qwen3_embedding
+  - name: BGE-M3
+    type: dense_embedding
+    model_id_or_path: /data3/yangyinghao/bge-m3
+    device: cuda:3
+    service_url: http://127.0.0.1:18080/embed
+    cache_dir: /data3/weiyiyang/code/SciFullMMBench/outputs/per_view_retrieval_maple_eval/cache/bge_m3
+  - name: LongEmbed
+    type: dense_embedding
+    model_id_or_path: /data3/weiyiyang/model_cache/dewey_en_beta
+    device: cuda:3
+    service_url: http://127.0.0.1:18081/embed/dewey
+    cache_dir: /data3/weiyiyang/code/SciFullMMBench/outputs/per_view_retrieval_maple_eval/cache/longembed
+  - name: SPECTER2
+    type: dense_embedding
+    model_id_or_path: /data3/weiyiyang/model_cache/specter2_base
+    device: cuda:3
+    service_url: http://127.0.0.1:18081/embed/specter2
+    cache_dir: /data3/weiyiyang/code/SciFullMMBench/outputs/per_view_retrieval_maple_eval/cache/specter2
+  - name: SCiNCL
+    type: dense_embedding
+    model_id_or_path: /data3/weiyiyang/model_cache/scincl
+    device: cuda:3
+    service_url: http://127.0.0.1:18081/embed/scincl
+    cache_dir: /data3/weiyiyang/code/SciFullMMBench/outputs/per_view_retrieval_maple_eval/cache/scincl

@@ -91,6 +91,10 @@ outputs/query_analysis_comparison/*
 !outputs/query_analysis_comparison/03_litsearch_human/style_analysis.json
 test_data/
 offline-process/
+tests/
+.claude/
+.pycache_check/
+docs/upcoming_working_session_summary.md
 
 # Logs
 *.log

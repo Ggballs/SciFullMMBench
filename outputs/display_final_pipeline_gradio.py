@@ -739,9 +739,9 @@ def score_badge(label: str, value: Any) -> str:
 def retrieval_badge(label: str, value: Any) -> str:
     text = str(value or "N/A")
     normalized = text.upper()
-    if normalized in {"PASS", "LOW"}:
+    if normalized in {"PASS", "LOW", "LOW-LEXICAL-OVERLAP", "LOW-SEMANTIC-OVERLAP"}:
         return badge(f"{label}: {text}", "#dcfce7", "#166534")
-    if normalized in {"FAIL", "HIGH"}:
+    if normalized in {"FAIL", "HIGH", "HIGH-LEXICAL-OVERLAP"}:
         return badge(f"{label}: {text}", "#fee2e2", "#991b1b")
     return badge(f"{label}: {text}", "#e5e7eb", "#111827")
 
@@ -749,7 +749,7 @@ def retrieval_badge(label: str, value: Any) -> str:
 def build_paper_choices(final_data: Dict[str, Any]) -> List[Tuple[str, str]]:
     choices = []
     for idx, paper in enumerate(final_data.get("papers", []), start=1):
-        query_count = len(paper.get("queries", []))
+        query_count = len(_display_queries(paper))
         label = f"[{idx}] {paper.get('paper_title', 'Untitled')} | {paper.get('paper_id', 'unknown')} | q={query_count}"
         choices.append((label, paper.get("paper_id", f"paper_{idx}")))
     return choices
@@ -759,7 +759,7 @@ def build_paper_stats_df(final_data: Dict[str, Any]) -> pd.DataFrame:
     rows = []
     for paper in final_data.get("papers", []):
         openreview = paper.get("openreview", {}) or {}
-        queries = paper.get("queries", []) or []
+        queries = _display_queries(paper)
         keep = sum(1 for query in queries if safe_get(query, "query_analysis", "decision") == "Keep")
         reject = sum(1 for query in queries if safe_get(query, "query_analysis", "decision") == "Hard Reject")
         rows.append(
@@ -929,7 +929,7 @@ def combine_human_style_summary(human_bundle: Optional[Dict[str, Any]]) -> Dict[
             "constraint_count_mean": float(sum(constraint_counts) / len(constraint_counts)) if constraint_counts else None,
             "unmatched_template_count": templates.get("unmatched_count", 0),
             "unmatched_template_share": templates.get("unmatched_ratio"),
-            "rescore_prompt": "prompts/query_analysis/style_analysis.txt",
+            "rescore_prompt": "src/openreview_pipeline/prompts/query_analysis/style_analysis.txt",
         }
 
     def _dataset_total(data: Dict[str, Any]) -> int:
@@ -1036,6 +1036,8 @@ def extract_generated_style_scores(final_data: Dict[str, Any]) -> pd.DataFrame:
     rows = []
     for paper in final_data.get("papers", []):
         for query in paper.get("queries", []):
+            if not _is_display_query(query):
+                continue
             llm = safe_get(query, "query_analysis", "style_evaluation", "llm_based", default={}) or {}
             rule_based = safe_get(query, "query_analysis", "style_evaluation", "rule_based", default={}) or {}
             rows.append(
@@ -1097,18 +1099,19 @@ def build_overview_html(
         or final_data.get("stage5_summary")
         or {}
     )
-    decision_counts = query_analysis_summary.get("decision_counts", {}) or {}
-    if not decision_counts:
-        decision_counts = {"Keep": 0, "Hard Reject": 0}
-        for paper in final_data.get("papers", []):
-            for query in paper.get("queries", []) or []:
-                decision = safe_get(query, "query_analysis", "decision", default="")
-                if decision in decision_counts:
-                    decision_counts[decision] += 1
+    decision_counts = {"Keep": 0, "Hard Reject": 0}
+    for paper in final_data.get("papers", []):
+        for query in _display_queries(paper):
+            decision = safe_get(query, "query_analysis", "decision", default="")
+            if decision in decision_counts:
+                decision_counts[decision] += 1
 
     cards = [
         ("Papers", fmt_int(len(final_data.get("papers", [])))),
-        ("Queries", fmt_int(dataset.get("stage4_total_queries") or dataset.get("stage3_total_queries") or 0)),
+        (
+            "Queries",
+            fmt_int(sum(len(_display_queries(p)) for p in final_data.get("papers", []))),
+        ),
         ("Keep Queries", fmt_int(decision_counts.get("Keep", 0))),
         ("Hard Reject Queries", fmt_int(decision_counts.get("Hard Reject", 0))),
         ("Hard Negatives", fmt_int(dataset.get("stage5_total_hard_negatives") or dataset.get("stage4_total_hard_negatives") or 0)),
@@ -1284,20 +1287,33 @@ def plot_word_count_distribution(
     return fig
 
 
+def _is_display_query(query: Dict[str, Any]) -> bool:
+    if query.get("is_multimodal", False):
+        return False
+    if safe_get(query, "query_analysis", "decision") != "Keep":
+        return False
+    return True
+
+
+def _display_queries(paper: Dict[str, Any]) -> list:
+    return [q for q in (paper.get("queries") or []) if _is_display_query(q)]
+
+
 def build_view_choices(paper: Dict[str, Any]) -> List[Tuple[str, str]]:
     views = [("all", "all")]
     seen = set()
-    for query in paper.get("queries", []):
+    display_queries = _display_queries(paper)
+    for query in display_queries:
         view = query.get("source_view", "unknown")
         if view not in seen:
             seen.add(view)
-            count = sum(1 for item in paper.get("queries", []) if item.get("source_view") == view)
+            count = sum(1 for item in display_queries if item.get("source_view") == view)
             views.append((f"{view} ({count})", view))
     return views
 
 
 def get_filtered_queries(paper: Dict[str, Any], source_view: str) -> List[Dict[str, Any]]:
-    queries = paper.get("queries", []) or []
+    queries = _display_queries(paper)
     if source_view == "all":
         return queries
     return [query for query in queries if query.get("source_view") == source_view]
@@ -1433,6 +1449,8 @@ def build_query_label_map(
 ) -> List[Tuple[str, str]]:
     out = []
     for idx, query in enumerate(paper.get("queries", []), start=1):
+        if not _is_display_query(query):
+            continue
         if source_view != "all" and query.get("source_view") != source_view:
             continue
         decision = safe_get(query, "query_analysis", "decision", default="N/A")
@@ -1471,7 +1489,7 @@ def build_paper_detail_html(paper: Dict[str, Any]) -> str:
             badge(f"Year: {openreview.get('year', 'N/A')}"),
             badge(f"Reviews: {len(openreview.get('reviews', []) or [])}"),
             badge(f"Comments: {len(openreview.get('comments', []) or [])}"),
-            badge(f"Queries: {len(paper.get('queries', []) or [])}", "#ecfeff", "#155e75"),
+            badge(f"Queries: {len(_display_queries(paper))}", "#ecfeff", "#155e75"),
         ]
     )
 
@@ -2084,9 +2102,13 @@ def score_group_box(title: str, items_html: str) -> str:
 def _query_display_parts(query: Dict[str, Any], paper: Dict[str, Any]) -> Tuple[str, str, str, int, int]:
     query_text = str(query.get("query_text", ""))
     query_number = "?"
-    for idx, paper_query in enumerate(paper.get("queries", []) or [], start=1):
+    visible_idx = 0
+    for paper_query in paper.get("queries", []) or []:
+        if not _is_display_query(paper_query):
+            continue
+        visible_idx += 1
         if paper_query.get("query_text") == query.get("query_text"):
-            query_number = str(idx)
+            query_number = str(visible_idx)
             break
     return query_text, query_number, f"Q{query_number}: {query_text}", len(query_text.split()), len(query_text)
 
@@ -2123,7 +2145,7 @@ def build_query_header_html(query: Dict[str, Any], paper: Dict[str, Any], human_
                 </div>
                 <div style="border:1px solid #e5e7eb;border-radius:10px;padding:10px;background:white">
                     <div style="font-size:12px;font-weight:800;color:#4b5563;margin-bottom:6px">Retrieval Effectiveness</div>
-                    {retrieval_badge("Full-Paper Reliance", retrieval.get("full_paper_reliance"))}
+                    {retrieval_badge("Abstract Relevance", retrieval.get("abstract_relevance"))}
                 </div>
             </div>
             """,
@@ -2171,6 +2193,7 @@ def build_related_source_html(query: Dict[str, Any], paper: Dict[str, Any]) -> s
         f"""
         <div style="margin-bottom:6px">{plain_meta(f'View: {bullet_view}')}{plain_meta(f'Bullet: {query.get("related_bullet_indice", "N/A")}')}</div>
         <div style="margin-bottom:6px;white-space:pre-wrap;line-height:1.6"><b>Summarized Bullet Point:</b> {esc(bullet_text or 'N/A')}</div>
+        <div style="margin-bottom:6px;white-space:pre-wrap;line-height:1.6"><b>Query Seed:</b> {esc(query.get('related_seed') or 'N/A')}</div>
         {bullet_multimodal_html}
         {query_multimodal_html}
         {build_source_refs_details(paper, bullet_source_refs)}
@@ -2208,7 +2231,7 @@ def build_query_analysis_html(query: Dict[str, Any], human_summary: Dict[str, An
         </div>
         <div style="border:1px solid #eef2f7;border-radius:12px;padding:12px;background:#fafafa">
             <div style="font-size:14px;font-weight:800;margin-bottom:8px">Retrieval Effectiveness</div>
-            <div style="margin-bottom:6px">{retrieval_badge("Full-Paper Reliance", retrieval.get("full_paper_reliance"))}</div>
+            <div style="margin-bottom:6px">{retrieval_badge("Abstract Relevance", retrieval.get("abstract_relevance"))}</div>
             <div style="white-space:pre-wrap;line-height:1.6"><b>Retrieval Reasoning:</b> {esc(retrieval.get('reasoning', ''))}</div>
         </div>
         """,

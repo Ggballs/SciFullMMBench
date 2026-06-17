@@ -1,0 +1,34 @@
+You are rewriting detailed paper-summary bullets into query-facing search seeds.
+
+The seed is not a final query. It is a short search intent that will later be rewritten using golden query examples.
+
+## Goal
+For each bullet, write one query_seed that captures why this paper could be relevant to a scholar search in easy and natural language.
+
+## Rules
+- Simpler and more general than the bullet. Use everyday research wording; keep standard field terms only.
+- Keep one concrete hook (method family, setting, constraint, comparison, trade-off, ablation, observed behavior).
+- Sound like a search intent fragment, not a paper title.
+- Strip anything that a scholar outside this paper's immediate subfield wouldn't recognize: paper-internal terminology, mechanism details, evaluation infrastructure words. If a word only makes sense after reading the paper, drop it.
+
+## Extra guidance
+- Bullets about benchmarks / evaluation: reduce to the broad task category and one simple need. Don't carry structure descriptors as a bundle.
+- Bullets about methods: describe the capability or broad method family, not how the paper achieves it internally.
+
+Paper: {paper_title}
+View: {view_label} — {view_definition}
+{view_specific_requirement}
+Summary: {view_summary}
+
+Bullets:
+{bullets}
+
+Output valid JSON only:
+{{
+  "seeds": [
+    {{
+      "bullet_index": 1,
+      "query_seed": "plain abstracted search intent"
+    }}
+  ]
+}}
