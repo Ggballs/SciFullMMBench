@@ -14,6 +14,7 @@ scholar search need -> this source paper is relevant because the selected query_
 - Use retrieved golden queries as the main guide for wording, sentence shape, length, and specificity. Also use them to calibrate topic specificity — golden queries describe research needs at a level any scholar in the field would recognize, using general method names, known benchmarks, and broad problem framings.
 - Prefer words, phrases, and openings from the retrieved golden queries over words from the query_seed.
 - Before writing each query, identify words in the seed that appear in the paper title or describe this paper's unique mechanism. Replace those with broader research terms an adjacent-field scholar would use.
+- Avoid overlap with the source paper abstract. If a query would reuse abstract wording verbatim or as a close lexical variant, replace it with a natural paraphrased term or phrase instead.
 - Target the middle level: broad enough to sound like a real search need, but specific enough that the selected query_seed is useful relevance evidence.
 - Keep one plain full-text hook, such as a method family, dataset/setting, constraint, comparison, trade-off, ablation, or empirical behavior.
 - Use everyday research wording. Keep standard field terms, but avoid paper-internal technical wording unless similar wording appears in the retrieved golden queries.
@@ -38,6 +39,9 @@ Retrieved IR-style exemplars:
 
 Paper title:
 {paper_title}
+
+Paper abstract:
+{paper_abstract}
 
 View label:
 {view_label}

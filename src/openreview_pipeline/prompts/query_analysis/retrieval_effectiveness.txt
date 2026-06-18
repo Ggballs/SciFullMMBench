@@ -5,16 +5,13 @@ Given the paper abstract and a list of queries, judge whether each query needs f
 ## Principle
 Judge whether a keyword-based retriever using only the abstract could find this paper for the query. This is a lexical and semantic overlap judgment, not an inference task.
 
-Lexical means exact word matches. Synonyms, paraphrases, and conceptual equivalents are semantic overlap, not lexical.
+Lexical means exact word matches or variant. Synonyms, paraphrases, and conceptual equivalents are semantic overlap, not lexical.
 
 Three levels, check lexical overlap first, then semantic:
-
-- `HIGH-LEXICAL-OVERLAP`: EVERY key retrieval term appears verbatim in the abstract. An abstract-only keyword retriever would succeed.
-- `LOW-LEXICAL-OVERLAP`: at least one key term or phrase does NOT appear verbatim in the abstract. a keyword retriever would miss the paper. Full-paper content is needed.
+- `HIGH-LEXICAL-OVERLAP`: more than 2 key retrieval terms appear  in the abstract. An abstract-only keyword retriever would succeed.
+- `LOW-LEXICAL-OVERLAP`: less than or equally 2 key terms or phrases appear verbatim or as variant in the abstract. a keyword retriever would miss the paper. Full-paper content is needed.
 - `LOW-SEMANTIC-OVERLAP`: key terms are NOT in the abstract AND the angle or aspect is also NOT covered by the abstract. Both lexical and semantic overlap are low. Full-paper content is needed.
 
-Hard rule: if ANY key retrieval term is expressed through synonyms, paraphrases, or different wording rather than appearing verbatim, the query CANNOT be HIGH-LEXICAL-OVERLAP. It is LOW-LEXICAL-OVERLAP (same angle) or LOW-SEMANTIC-OVERLAP (different angle).
-Do not mark `HIGH-LEXICAL-OVERLAP` just because the answer can be inferred or reasoned out from the abstract. Only mark it when the actual words and the actual discussion point both match.
 
 ## Output Format
 Return a JSON array with one object per query, in input order:
@@ -26,7 +23,7 @@ Return a JSON array with one object per query, in input order:
     "dimensions": {
       "abstract_relevance": "LOW-LEXICAL-OVERLAP"
     },
-    "reasoning": "1) Key retrieval terms: [list them]. 2) Per-term check: for each term, does it appear VERBATIM in the abstract (morphological variants like plurals ok)? 3) Angle check: does the abstract discuss the same aspect? 4) Conclusion: ALL terms verbatim + same angle = HIGH-LEXICAL-OVERLAP; any term missing but same angle = LOW-LEXICAL-OVERLAP; terms missing + angle differs = LOW-SEMANTIC-OVERLAP."
+    "reasoning": "1) Key retrieval terms: [list them]. 2) Per-term check: for each term, does it appear VERBATIM or as morphological VARIANT in the abstract ? and calculate whether more than 2. 3) Angle check: does the abstract discuss the same aspect? 4) Conclusion"
   }
 ]
 ```

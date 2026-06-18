@@ -94,8 +94,7 @@ offline-process/
 tests/
 .claude/
 .pycache_check/
-docs/upcoming_working_session_summary.md
-
+CODEX_or_CLAUDE_CODE_MUST_READ.md
 # Logs
 *.log
 

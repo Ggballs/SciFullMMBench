@@ -10,12 +10,14 @@ For each bullet, write one query_seed that captures why this paper could be rele
 - Keep one concrete hook (method family, setting, constraint, comparison, trade-off, ablation, observed behavior).
 - Sound like a search intent fragment, not a paper title.
 - Strip anything that a scholar outside this paper's immediate subfield wouldn't recognize: paper-internal terminology, mechanism details, evaluation infrastructure words. If a word only makes sense after reading the paper, drop it.
+- Avoid overlap with the source paper abstract. If a seed would reuse abstract wording verbatim or as a close lexical variant, replace it with a natural paraphrased term or phrase instead.
 
 ## Extra guidance
 - Bullets about benchmarks / evaluation: reduce to the broad task category and one simple need. Don't carry structure descriptors as a bundle.
 - Bullets about methods: describe the capability or broad method family, not how the paper achieves it internally.
 
 Paper: {paper_title}
+Abstract: {paper_abstract}
 View: {view_label} — {view_definition}
 {view_specific_requirement}
 Summary: {view_summary}

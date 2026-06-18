@@ -43,6 +43,15 @@ if _ARXIV_TUNNEL_PORT > 0:
 StageCallback = Callable[[str, dict[str, Any]], None]
 
 
+def _pdf_proxy_settings() -> dict[str, Any]:
+    return {
+        "http_proxy": os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or "",
+        "https_proxy": os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or "",
+        "arxiv_tunnel_port": _ARXIV_TUNNEL_PORT,
+        "uses_connect_to_tunnel": bool(_ARXIV_CONNECT_TO_ARGS),
+    }
+
+
 class _PdfDownloadGate:
     def __init__(self, cooldown_seconds: float) -> None:
         self._cooldown_seconds = max(0.0, float(cooldown_seconds))
@@ -475,12 +484,17 @@ class Stage5RuntimeSupport:
                 _PDF_DOWNLOAD_GATE.acquire(int(worker_id or 0), paper_title)
                 try:
                     if on_stage_update is not None:
-                        on_stage_update("download", {"pdf_url": pdf_url})
+                        on_stage_update("download", {"pdf_url": pdf_url, **_pdf_proxy_settings()})
+                    proxy_settings = _pdf_proxy_settings()
                     logger.info(
-                        "stage5_pdf_download_begin title=%r pdf_url=%s force_redownload=%s",
+                        "stage5_pdf_download_begin title=%r pdf_url=%s force_redownload=%s http_proxy=%r https_proxy=%r arxiv_tunnel_port=%s uses_connect_to_tunnel=%s",
                         paper_title,
                         pdf_url,
                         force_redownload,
+                        proxy_settings["http_proxy"],
+                        proxy_settings["https_proxy"],
+                        proxy_settings["arxiv_tunnel_port"],
+                        proxy_settings["uses_connect_to_tunnel"],
                     )
                     for attempt in range(1, _PDF_DOWNLOAD_MAX_RETRIES + 1):
                         try:

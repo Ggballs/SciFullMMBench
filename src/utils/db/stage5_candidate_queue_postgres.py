@@ -213,12 +213,24 @@ def claim_pending_candidates(
     claim_sql = text(
         f"""
         WITH
+        query_progress AS (
+            SELECT
+                query_key,
+                COUNT(*) FILTER (WHERE review_status = 'completed') AS completed_reviews,
+                COUNT(*) FILTER (WHERE review_status = 'completed' AND review_label = 'hard_negative') AS completed_hard_negatives
+            FROM {STAGE5_CANDIDATE_QUEUE_CANONICAL_VIEW}
+            GROUP BY query_key
+        ),
         claimable AS (
             SELECT q.id
             FROM {STAGE5_CANDIDATE_QUEUE_TABLE} AS q
             JOIN {STAGE5_CANDIDATE_QUEUE_CANONICAL_VIEW} AS c
               ON c.id = q.id
+            LEFT JOIN query_progress AS qp
+              ON qp.query_key = q.query_key
             WHERE q.review_status = 'pending'
+              AND COALESCE(qp.completed_hard_negatives, 0) < 10
+              AND COALESCE(qp.completed_reviews, 0) < 30
             ORDER BY q.query_key, q.retrieval_rank, q.id
             FOR UPDATE OF q SKIP LOCKED
             LIMIT :limit
@@ -275,6 +287,49 @@ def update_candidate_result(
                 "review_payload": None if review_payload is None else json.dumps(review_payload),
             },
         )
+
+
+def close_satisfied_query_pending_candidates(
+    query_key: str,
+    *,
+    engine: Optional[Engine] = None,
+    db_url: Optional[str] = None,
+) -> int:
+    db = ensure_schema(engine=engine, db_url=db_url)
+    close_sql = text(
+        f"""
+        WITH query_progress AS (
+            SELECT
+                query_key,
+                COUNT(*) FILTER (WHERE review_status = 'completed') AS completed_reviews,
+                COUNT(*) FILTER (WHERE review_status = 'completed' AND review_label = 'hard_negative') AS completed_hard_negatives
+            FROM {STAGE5_CANDIDATE_QUEUE_CANONICAL_VIEW}
+            WHERE query_key = :query_key
+            GROUP BY query_key
+        )
+        UPDATE {STAGE5_CANDIDATE_QUEUE_TABLE} AS q
+        SET parse_status = 'skipped',
+            review_status = 'completed',
+            review_label = 'ignored',
+            review_reason = 'review_budget_exhausted',
+            error_message = NULL,
+            review_payload = jsonb_build_object(
+                'label', 'ignored',
+                'reason', 'review_budget_exhausted'
+            ),
+            updated_at = CURRENT_TIMESTAMP
+        FROM query_progress AS qp
+        WHERE q.query_key = :query_key
+          AND q.review_status = 'pending'
+          AND (
+                COALESCE(qp.completed_hard_negatives, 0) >= 10
+                OR COALESCE(qp.completed_reviews, 0) >= 30
+          )
+        """
+    )
+    with db.begin() as conn:
+        result = conn.execute(close_sql, {"query_key": str(query_key)})
+    return int(result.rowcount or 0)
 
 
 def reset_stale_processing_candidates(

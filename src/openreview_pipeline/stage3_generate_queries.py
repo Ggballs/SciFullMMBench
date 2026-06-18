@@ -424,6 +424,7 @@ class QueryGenerator:
         self,
         *,
         paper_title: str,
+        paper_abstract: str,
         view,
         bullets: list[BulletContext],
     ) -> list[BulletContext]:
@@ -434,6 +435,7 @@ class QueryGenerator:
         view_summary = str(getattr(view, "summary", "") or "N/A").strip()
         prompt = self._seed_prompt_template().format(
             paper_title=paper_title,
+            paper_abstract=paper_abstract or "N/A",
             view_label=view_name,
             view_definition=VIEW_DEFINITIONS.get(view_name, "N/A"),
             view_specific_requirement=self._view_specific_requirement(view_name),
@@ -535,6 +537,7 @@ class QueryGenerator:
         *,
         query_type: str,
         paper_title: str,
+        paper_abstract: str,
         view,
         prompt_context: RetrievedPromptContext,
         num_queries: int,
@@ -548,6 +551,7 @@ class QueryGenerator:
             query_mode_instructions=query_mode_instructions,
             retrieved_examples=self._format_retrieved_examples(prompt_context.examples),
             paper_title=paper_title,
+            paper_abstract=paper_abstract or "N/A",
             view_label=view_name,
             view_definition=VIEW_DEFINITIONS.get(view_name, "N/A"),
             view_specific_requirement=self._view_specific_requirement(view_name),
@@ -666,6 +670,7 @@ class QueryGenerator:
         *,
         paper_id: str,
         paper_title: str,
+        paper_abstract: str,
         view,
         query_type: str,
         prompt_context: RetrievedPromptContext,
@@ -678,6 +683,7 @@ class QueryGenerator:
         prompt = self._build_prompt(
             query_type=query_type,
             paper_title=paper_title,
+            paper_abstract=paper_abstract,
             view=view,
             prompt_context=prompt_context,
             num_queries=expected,
@@ -757,11 +763,17 @@ class QueryGenerator:
                 fixed.append(query)
         return fixed
 
-    def generate_queries_for_paper(self, paper_id: str, paper_title: str, summary) -> GeneratedQueriesForPaper:
+    def generate_queries_for_paper(
+        self,
+        paper_id: str,
+        paper_title: str,
+        summary,
+    ) -> GeneratedQueriesForPaper:
         logger.debug("Generating queries for paper: %s", paper_id)
 
         queries: list[RetrievalQuery] = []
         expected_query_count = 0
+        paper_abstract = str(getattr(summary, "abstract", "") or "").strip()
         for view in summary.views:
             view_name = normalize_view_label(str(view.view_name))
             if view_name not in VIEW_DEFINITIONS:
@@ -783,6 +795,7 @@ class QueryGenerator:
                 all_bullets = self._bullet_contexts_from_raw(raw_bullets)
                 seeded_bullets = self._abstract_bullets_for_query(
                     paper_title=paper_title,
+                    paper_abstract=paper_abstract,
                     view=view,
                     bullets=all_bullets,
                 )
@@ -813,6 +826,7 @@ class QueryGenerator:
                     self._generate_with_context(
                         paper_id=paper_id,
                         paper_title=paper_title,
+                        paper_abstract=paper_abstract,
                         view=view,
                         query_type=query_type,
                         prompt_context=prompt_context,

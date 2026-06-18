@@ -560,10 +560,9 @@ class SemanticScholarSearchClient(GoogleScholarClient):
             try:
                 accumulated: List[dict[str, Any]] = []
                 token: Optional[str] = None
-                target_count = max(1, min(int(limit), 50)) * 20
-                max_pages = max(1, min(10, (target_count + self._MAX_PAGE_SIZE - 1) // self._MAX_PAGE_SIZE))
+                target_count = max(1, int(limit))
 
-                for _ in range(max_pages):
+                while True:
                     params = dict(base_params)
                     if token:
                         params["token"] = token
@@ -631,7 +630,7 @@ class SemanticScholarSearchClient(GoogleScholarClient):
                     source="semantic_scholar_bulk_api",
                 )
             )
-            if len(results) >= max(1, min(int(limit), 50)):
+            if len(results) >= max(1, int(limit)):
                 break
         return results
 
@@ -804,11 +803,15 @@ def _slugify(text: str, max_length: int = 80) -> str:
 
 
 class HardNegativeMiner(Stage5RuntimeSupport):
+    DEFAULT_SCHOLAR_MAX_RESULTS = 100
+    DEFAULT_RERANK_TOP_N = 30
+    DEFAULT_MAX_HARD_NEGATIVES = 10
+
     def __init__(
         self,
         llm: LLMBackend,
         scholar_client: GoogleScholarClient,
-        scholar_max_results: int = 10,
+        scholar_max_results: int = DEFAULT_SCHOLAR_MAX_RESULTS,
         pdf_output_dir: Optional[Path] = None,
         review_max_workers: int = 1,
         *,
@@ -863,7 +866,9 @@ class HardNegativeMiner(Stage5RuntimeSupport):
         if not compact_keywords:
             logger.warning("No keywords extracted for query; skipping retrieval query build.")
             return []
-        return [" ".join(compact_keywords[:2]).strip()]
+        if len(compact_keywords) >= 2:
+            return [" ".join(compact_keywords[:2]).strip()]
+        return [compact_keywords[0]]
 
     def _build_fallback_search_queries(self, keywords: List[str]) -> List[str]:
         fallback_queries: List[str] = []
@@ -876,14 +881,28 @@ class HardNegativeMiner(Stage5RuntimeSupport):
                 fallback_queries.append(compact)
         return fallback_queries
 
+    def _build_search_plan(self, query_text: str, keywords: List[str]) -> List[str]:
+        plan: List[str] = []
+        for candidate_query in self._build_search_queries(query_text, keywords):
+            normalized = candidate_query.strip()
+            if normalized and normalized not in plan:
+                plan.append(normalized)
+        for fallback_query in self._build_fallback_search_queries(keywords):
+            normalized = fallback_query.strip()
+            if normalized and normalized not in plan:
+                plan.append(normalized)
+        return plan
+
     def _search_google_scholar(self, search_queries: List[str]) -> List[ScholarCandidatePaper]:
         unique_candidates: dict[str, ScholarCandidatePaper] = {}
-        per_query_limit = max(3, self.scholar_max_results // max(1, len(search_queries)))
 
         for search_query in search_queries:
+            remaining = self.scholar_max_results - len(unique_candidates)
+            if remaining <= 0:
+                break
             self._search_query_attempts += 1
             try:
-                candidates = self.scholar_client.search(search_query, per_query_limit)
+                candidates = self.scholar_client.search(search_query, remaining)
             except Exception as exc:
                 self._search_query_failures += 1
                 self._search_failed_queries[search_query] = self._search_failed_queries.get(search_query, 0) + 1
@@ -919,21 +938,8 @@ class HardNegativeMiner(Stage5RuntimeSupport):
         query_text: str,
         keywords: List[str],
     ) -> tuple[List[str], List[ScholarCandidatePaper]]:
-        search_queries = self._build_search_queries(query_text, keywords)
+        search_queries = self._build_search_plan(query_text, keywords)
         candidates = self._search_google_scholar(search_queries)
-        for fallback_query in self._build_fallback_search_queries(keywords):
-            if fallback_query in search_queries or len(candidates) >= self.scholar_max_results:
-                continue
-            logger.info(
-                "Primary search returned %s candidates for query '%s'; supplementing with fallback phrase '%s'.",
-                len(candidates),
-                query_text,
-                fallback_query,
-            )
-            fallback_candidates = self._search_google_scholar([fallback_query])
-            if fallback_candidates:
-                candidates = self._merge_candidates(candidates, fallback_candidates)
-                search_queries = [*search_queries, fallback_query]
         return search_queries, candidates
 
     def _paper_identifier(self, paper_title: str, arxiv_id: Optional[str]) -> str:
@@ -1211,7 +1217,7 @@ class HardNegativeMiner(Stage5RuntimeSupport):
         self,
         query: str,
         candidates: List[ScholarCandidatePaper],
-        top_n: int = 30,
+        top_n: int = DEFAULT_RERANK_TOP_N,
     ) -> List[ScholarCandidatePaper]:
         """Use DeepSeek to rank candidates by relevance to the query (title + abstract only).
 
@@ -1269,7 +1275,7 @@ class HardNegativeMiner(Stage5RuntimeSupport):
         self,
         query: str,
         candidates: List[ScholarCandidatePaper],
-        max_hard_negatives: int = 10,
+        max_hard_negatives: int = DEFAULT_MAX_HARD_NEGATIVES,
     ) -> tuple[List[HardNegativePaper], List[PositivePaper]]:
         if not candidates:
             return [], []
@@ -1341,13 +1347,19 @@ class HardNegativeMiner(Stage5RuntimeSupport):
         search_queries, candidates = self.retrieve_candidates_for_query(query.query_text, keywords)
 
         # Rank by relevance (title+abstract) using DeepSeek, keep top-30 for review
-        review_candidates = self._rank_candidates_by_relevance(query.query_text, candidates, top_n=30)
+        review_candidates = self._rank_candidates_by_relevance(
+            query.query_text,
+            candidates,
+            top_n=self.DEFAULT_RERANK_TOP_N,
+        )
         logger.info(
             "Ranked %d → %d candidates for LLM review", len(candidates), len(review_candidates),
         )
 
         hard_negatives, positives = self._review_candidates(
-            query.query_text, review_candidates, max_hard_negatives=10,
+            query.query_text,
+            review_candidates,
+            max_hard_negatives=self.DEFAULT_MAX_HARD_NEGATIVES,
         )
         self._download_selected_pdfs(query.query_text, hard_negatives, "hard_negatives")
         self._download_selected_pdfs(query.query_text, positives, "positives")
@@ -1367,7 +1379,7 @@ class HardNegativeMiner(Stage5RuntimeSupport):
             keywords_extracted=keywords,
             search_queries_used=search_queries,
             retrieved_candidates=len(candidates),
-            mining_method="semantic_scholar_ranked_50_30",
+            mining_method=f"semantic_scholar_ranked_{self.scholar_max_results}_{self.DEFAULT_RERANK_TOP_N}",
         )
 
     def _result_key(self, result: HardNegativeMiningResult) -> tuple[str, str, str, str]:
