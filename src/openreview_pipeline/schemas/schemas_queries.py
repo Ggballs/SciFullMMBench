@@ -90,10 +90,25 @@ class RetrievalQuery(BaseModel):
         return text or None
 
 
+class SeedGenerationBullet(BaseModel):
+    index: int
+    bullet_text: str
+    query_seed: str
+    multimodal_ref: List[str] = Field(default_factory=list)
+    multimodal_dependency: str = "none"
+    multimodal_dependency_rationale: Optional[str] = None
+
+
+class SeedGenerationView(BaseModel):
+    view_name: str
+    bullets: List[SeedGenerationBullet] = Field(default_factory=list)
+
+
 class GeneratedQueriesForPaper(BaseModel):
     paper_id: str
     paper_title: str
     queries_by_view: List[RetrievalQuery]
+    seed_generation: List[SeedGenerationView] = Field(default_factory=list)
     generated_at: datetime = Field(default_factory=datetime.now)
 
 

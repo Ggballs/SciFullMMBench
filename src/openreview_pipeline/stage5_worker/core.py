@@ -20,7 +20,7 @@ from urllib.request import Request, urlopen
 from pydantic import BaseModel, Field
 from tqdm.auto import tqdm
 
-from utils.llm import LLMBackend
+from utils.llm import LLMBackend, OpenAICompatibleBackend
 from openreview_pipeline.schemas.schemas_queries import GeneratedQueriesDataset, RetrievalQuery
 from utils import load_json, load_prompt_template, save_json
 from utils.project_paths import resolve_prompt_path
@@ -34,7 +34,8 @@ from .runtime import (
 
 logger = logging.getLogger(__name__)
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-DEEPSEEK_MODEL = "deepseek-v4-pro"
+DEEPSEEK_MODEL = "deepseek-v4-flash"
+DEEPSEEK_PRO_MODEL = "deepseek-v4-pro"
 
 os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "matplotlib"))
 
@@ -132,6 +133,7 @@ class ScholarCandidatePaper(BaseModel):
     url: Optional[str] = None
     pdf_url: Optional[str] = None
     pdf_path: Optional[str] = None
+    full_text_path: Optional[str] = None
     pdf_download_status: Optional[str] = None
     pdf_download_error: Optional[str] = None
     citations: Optional[int] = None
@@ -150,6 +152,7 @@ class HardNegativePaper(BaseModel):
     url: Optional[str] = None
     pdf_url: Optional[str] = None
     pdf_path: Optional[str] = None
+    full_text_path: Optional[str] = None
     pdf_download_status: Optional[str] = None
     pdf_download_error: Optional[str] = None
     citations: Optional[int] = None
@@ -167,6 +170,7 @@ class PositivePaper(BaseModel):
     url: Optional[str] = None
     pdf_url: Optional[str] = None
     pdf_path: Optional[str] = None
+    full_text_path: Optional[str] = None
     pdf_download_status: Optional[str] = None
     pdf_download_error: Optional[str] = None
     citations: Optional[int] = None
@@ -820,6 +824,7 @@ class HardNegativeMiner(Stage5RuntimeSupport):
     ):
         self.llm = llm
         self._ranking_llm = ranking_llm
+        self._pro_review_llm = self._build_pro_review_llm(llm)
         self.scholar_client = scholar_client
         self.scholar_max_results = max(3, int(scholar_max_results))
         self.pdf_output_dir = pdf_output_dir.resolve() if pdf_output_dir else None
@@ -828,6 +833,93 @@ class HardNegativeMiner(Stage5RuntimeSupport):
         self._search_query_attempts = 0
         self._search_query_failures = 0
         self._search_failed_queries: dict[str, int] = {}
+
+    @staticmethod
+    def _build_pro_review_llm(primary_llm: LLMBackend) -> Optional[LLMBackend]:
+        if not isinstance(primary_llm, OpenAICompatibleBackend):
+            return None
+        model_name = str(getattr(primary_llm, "model", "") or "").strip().lower()
+        if "flash" not in model_name:
+            return None
+        pro_model = re.sub(r"flash", "pro", getattr(primary_llm, "model"), flags=re.IGNORECASE)
+        if str(pro_model).strip().lower() == model_name:
+            pro_model = DEEPSEEK_PRO_MODEL
+        request_manager = getattr(primary_llm, "request_manager", None)
+        if request_manager is None:
+            return None
+        api_tokens = []
+        for slot in getattr(request_manager, "_slots", []):
+            token = getattr(getattr(slot, "client", None), "api_key", None)
+            if token:
+                api_tokens.append(str(token))
+        if not api_tokens:
+            return None
+        return OpenAICompatibleBackend(
+            base_url=str(getattr(primary_llm, "base_url", DEEPSEEK_BASE_URL)),
+            api_tokens=api_tokens,
+            model=str(pro_model),
+            max_tokens=int(getattr(primary_llm, "max_tokens", 4096)),
+            temperature=float(getattr(primary_llm, "temperature", 0.0)),
+            seed=getattr(primary_llm, "seed", None),
+            reasoning_effort=getattr(primary_llm, "reasoning_effort", None),
+            embedding_model=getattr(primary_llm, "embedding_model", None),
+            per_key_request_interval_seconds=float(getattr(request_manager, "per_key_request_interval_seconds", 0.0)),
+            per_key_max_concurrent_requests=int(getattr(request_manager, "per_key_max_concurrent_requests", 1)),
+            max_retries=int(getattr(request_manager, "max_retries", 3)),
+            retry_backoff_seconds=float(getattr(request_manager, "retry_backoff_seconds", 8.0)),
+        )
+
+    def _run_review_llm(
+        self,
+        llm_backend: LLMBackend,
+        *,
+        prompt: str,
+        candidate_title: str,
+    ) -> tuple[Optional[dict[str, Any]], dict[str, Any]]:
+        llm_started_at = time.monotonic()
+        response = llm_backend.generate(prompt)
+        llm_request_seconds = time.monotonic() - llm_started_at
+        llm_wait_seconds = 0.0
+        llm_token = None
+        request_manager = getattr(llm_backend, "request_manager", None)
+        if request_manager is not None and hasattr(request_manager, "get_last_call_metadata"):
+            metadata = request_manager.get_last_call_metadata()
+            if metadata is not None:
+                llm_wait_seconds = float(metadata.wait_seconds)
+                llm_request_seconds = float(metadata.request_seconds)
+                llm_token = metadata.masked_token
+        logger.info(
+            "stage5_llm_request_complete title=%r model=%s wait_seconds=%.3f request_seconds=%.3f token=%s",
+            candidate_title,
+            getattr(llm_backend, "model", None),
+            llm_wait_seconds,
+            llm_request_seconds,
+            llm_token,
+        )
+        try:
+            json_match = re.search(r"\{[\s\S]*\}", response)
+            parsed = json.loads(json_match.group()) if json_match else {}
+        except Exception as exc:
+            logger.warning("stage5_response_parse_failed title=%r error=%s", candidate_title, exc)
+            return None, {
+                "deepseek_wait_seconds": llm_wait_seconds,
+                "deepseek_request_seconds": llm_request_seconds,
+                "review_model": str(getattr(llm_backend, "model", "") or ""),
+                "review_token": llm_token,
+            }
+        if not isinstance(parsed, dict):
+            return None, {
+                "deepseek_wait_seconds": llm_wait_seconds,
+                "deepseek_request_seconds": llm_request_seconds,
+                "review_model": str(getattr(llm_backend, "model", "") or ""),
+                "review_token": llm_token,
+            }
+        return parsed, {
+            "deepseek_wait_seconds": llm_wait_seconds,
+            "deepseek_request_seconds": llm_request_seconds,
+            "review_model": str(getattr(llm_backend, "model", "") or ""),
+            "review_token": llm_token,
+        }
 
     def _load_prompt(self, filename: str) -> str:
         return load_prompt_template(resolve_prompt_path(filename))
@@ -1032,6 +1124,7 @@ class HardNegativeMiner(Stage5RuntimeSupport):
             url=candidate.url,
             pdf_url=candidate.pdf_url,
             pdf_path=candidate.pdf_path,
+            full_text_path=candidate.full_text_path,
             pdf_download_status=candidate.pdf_download_status,
             pdf_download_error=candidate.pdf_download_error,
             citations=candidate.citations,
@@ -1055,6 +1148,7 @@ class HardNegativeMiner(Stage5RuntimeSupport):
             url=candidate.url,
             pdf_url=candidate.pdf_url,
             pdf_path=candidate.pdf_path,
+            full_text_path=candidate.full_text_path,
             pdf_download_status=candidate.pdf_download_status,
             pdf_download_error=candidate.pdf_download_error,
             citations=candidate.citations,
@@ -1084,7 +1178,17 @@ class HardNegativeMiner(Stage5RuntimeSupport):
         pdf_url = candidate.pdf_url or _build_arxiv_pdf_url(candidate.arxiv_id) or _extract_pdf_url(candidate.url)
         candidate.pdf_url = pdf_url
 
-        if pdf_url:
+        if candidate.full_text_path and Path(candidate.full_text_path).exists():
+            markdown = Path(candidate.full_text_path).read_text(encoding="utf-8")
+            evidence = docling_evidence_template.format(markdown=markdown[:60000])
+            parse_status = "parsed"
+            timings = {
+                "download_seconds": 0.0,
+                "docling_wait_seconds": 0.0,
+                "docling_parse_seconds": 0.0,
+                "docling_stage": "reused_parsed_full_text",
+            }
+        elif pdf_url:
             pdf_result = self._download_and_parse_pdf(
                 pdf_url,
                 candidate.paper_title,
@@ -1093,6 +1197,8 @@ class HardNegativeMiner(Stage5RuntimeSupport):
                 on_stage_update=on_stage_update,
             )
             markdown = pdf_result["markdown"]
+            candidate.pdf_path = str(pdf_result.get("pdf_path") or "") or candidate.pdf_path
+            candidate.full_text_path = str(pdf_result.get("full_text_path") or "") or candidate.full_text_path
             timings = dict(pdf_result["metrics"])
             failure_stage = str(pdf_result.get("failure_stage") or "")
             if failure_stage in {"download_failed", "docling_parse_failed"}:
@@ -1148,33 +1254,7 @@ class HardNegativeMiner(Stage5RuntimeSupport):
         )
         if on_stage_update is not None:
             on_stage_update("llm", {"parse_status": parse_status})
-        llm_started_at = time.monotonic()
-        response = self.llm.generate(prompt)
-        llm_request_seconds = time.monotonic() - llm_started_at
-        llm_wait_seconds = 0.0
-        llm_token = None
-        request_manager = getattr(self.llm, "request_manager", None)
-        if request_manager is not None and hasattr(request_manager, "get_last_call_metadata"):
-            metadata = request_manager.get_last_call_metadata()
-            if metadata is not None:
-                llm_wait_seconds = float(metadata.wait_seconds)
-                llm_request_seconds = float(metadata.request_seconds)
-                llm_token = metadata.masked_token
-        logger.info(
-            "stage5_llm_request_complete title=%r wait_seconds=%.3f request_seconds=%.3f token=%s",
-            candidate.paper_title,
-            llm_wait_seconds,
-            llm_request_seconds,
-            llm_token,
-        )
-
-        try:
-            json_match = re.search(r"\{[\s\S]*\}", response)
-            parsed = json.loads(json_match.group()) if json_match else {}
-        except Exception as exc:
-            logger.warning("stage5_response_parse_failed title=%r error=%s", candidate.paper_title, exc)
-            return None
-
+        parsed, llm_metrics = self._run_review_llm(self.llm, prompt=prompt, candidate_title=candidate.paper_title)
         if not isinstance(parsed, dict):
             return None
 
@@ -1188,18 +1268,48 @@ class HardNegativeMiner(Stage5RuntimeSupport):
             need_pro_review = need_pro_review.strip().lower() in {"1", "true", "yes", "y"}
         else:
             need_pro_review = bool(need_pro_review)
+
+        escalated_to_pro = False
+        if need_pro_review and self._pro_review_llm is not None:
+            pro_parsed, pro_metrics = self._run_review_llm(
+                self._pro_review_llm,
+                prompt=prompt,
+                candidate_title=candidate.paper_title,
+            )
+            if isinstance(pro_parsed, dict):
+                pro_label = str(pro_parsed.get("label", "")).strip().lower()
+                if pro_label in {"positive", "hard_negative", "ignored"}:
+                    parsed = pro_parsed
+                    label = pro_label
+                    reason = str(pro_parsed.get("reason", "")).strip()
+                    pro_need = pro_parsed.get("need_pro_review", False)
+                    if isinstance(pro_need, str):
+                        need_pro_review = pro_need.strip().lower() in {"1", "true", "yes", "y"}
+                    else:
+                        need_pro_review = bool(pro_need)
+                    llm_metrics["deepseek_wait_seconds"] = float(llm_metrics.get("deepseek_wait_seconds", 0.0) or 0.0) + float(pro_metrics.get("deepseek_wait_seconds", 0.0) or 0.0)
+                    llm_metrics["deepseek_request_seconds"] = float(llm_metrics.get("deepseek_request_seconds", 0.0) or 0.0) + float(pro_metrics.get("deepseek_request_seconds", 0.0) or 0.0)
+                    llm_metrics["review_model"] = str(pro_metrics.get("review_model") or llm_metrics.get("review_model") or "")
+                    llm_metrics["review_token"] = pro_metrics.get("review_token") or llm_metrics.get("review_token")
+                    escalated_to_pro = True
+                    logger.info(
+                        "stage5_llm_escalated_to_pro title=%r final_label=%s",
+                        candidate.paper_title,
+                        label,
+                    )
         return {
             "label": label,
             "reason": reason,
             "need_pro_review": need_pro_review,
+            "escalated_to_pro": escalated_to_pro,
             "candidate": candidate,
             "parse_status": parse_status,
             "review_status": "completed",
             "error_message": None,
             "timings": {
                 **timings,
-                "deepseek_wait_seconds": llm_wait_seconds,
-                "deepseek_request_seconds": llm_request_seconds,
+                "deepseek_wait_seconds": float(llm_metrics.get("deepseek_wait_seconds", 0.0) or 0.0),
+                "deepseek_request_seconds": float(llm_metrics.get("deepseek_request_seconds", 0.0) or 0.0),
                 "total_row_seconds": time.monotonic() - started_at,
             },
         }

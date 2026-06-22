@@ -20,16 +20,37 @@ from openreview_pipeline.stage5_worker.core import (
 from openreview_pipeline.stage5_worker.runtime import (
     DOCLING_TIMEOUT_SECONDS_DEFAULT,
     StageCallback,
+    configure_stage5_runtime,
     get_docling_runtime_snapshot,
     get_pdf_download_runtime_snapshot,
+)
+from openreview_pipeline.stage5_worker.queue import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_DOCLING_POOL_SIZE,
+    DEFAULT_HTTP_PROXY,
+    DEFAULT_HTTPS_PROXY,
+    DEFAULT_MONITOR_INTERVAL,
+    DEFAULT_QUEUE_TABLE_NAME,
+    DEFAULT_SCHEDULER_MODE,
+    filter_queries_by_paper_ids,
+    run_stage5_queue_mode,
 )
 
 __all__ = [
     "ArxivSearchClient",
     "CachedRateLimitedSearchClient",
+    "configure_stage5_runtime",
+    "DEFAULT_BATCH_SIZE",
+    "DEFAULT_DOCLING_POOL_SIZE",
+    "DEFAULT_HTTP_PROXY",
+    "DEFAULT_HTTPS_PROXY",
+    "DEFAULT_MONITOR_INTERVAL",
+    "DEFAULT_QUEUE_TABLE_NAME",
+    "DEFAULT_SCHEDULER_MODE",
     "DEEPSEEK_BASE_URL",
     "DEEPSEEK_MODEL",
     "DOCLING_TIMEOUT_SECONDS_DEFAULT",
+    "filter_queries_by_paper_ids",
     "GoogleScholarClient",
     "HardNegativeMiner",
     "HardNegativeMiningDataset",
@@ -46,5 +67,5 @@ __all__ = [
     "get_docling_runtime_snapshot",
     "get_pdf_download_runtime_snapshot",
     "resolve_hard_negative_llm_settings",
+    "run_stage5_queue_mode",
 ]
-

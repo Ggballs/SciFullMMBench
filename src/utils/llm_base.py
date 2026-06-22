@@ -50,6 +50,7 @@ class _LLMKeySlot:
     semaphore: BoundedSemaphore
     lock: threading.Lock
     last_request_started_at: float = 0.0
+    disabled: bool = False
 
 
 @dataclass
@@ -97,6 +98,34 @@ class LLMRequestManager:
         self._next_slot_index = 0
         self._thread_local = threading.local()
 
+    def _active_slots(self) -> list[_LLMKeySlot]:
+        return [slot for slot in self._slots if not slot.disabled]
+
+    def _is_key_forbidden(self, exc: Exception) -> bool:
+        status_code = getattr(exc, "status_code", None)
+        if status_code == 403:
+            return True
+
+        response = getattr(exc, "response", None)
+        if response is not None and getattr(response, "status_code", None) == 403:
+            return True
+
+        body = str(exc).lower()
+        return "403" in body and "forbidden" in body
+
+    def _disable_slot(self, slot: _LLMKeySlot, exc: Exception) -> None:
+        with self._lock:
+            if slot.disabled:
+                return
+            slot.disabled = True
+            active = len(self._active_slots())
+        logger.error(
+            "llm_key_disabled token=%s active_keys_remaining=%s error=%s",
+            slot.masked_token,
+            active,
+            exc,
+        )
+
     @staticmethod
     def _mask_token(token: str) -> str:
         token = token.strip()
@@ -106,19 +135,24 @@ class LLMRequestManager:
 
     def _ordered_slots(self, avoid_slot: Optional[_LLMKeySlot] = None) -> list[_LLMKeySlot]:
         with self._lock:
+            active_slots = [slot for slot in self._slots if not slot.disabled]
+            if not active_slots:
+                return []
             start_index = self._next_slot_index
-            self._next_slot_index = (self._next_slot_index + 1) % len(self._slots)
+            self._next_slot_index = (self._next_slot_index + 1) % len(active_slots)
             ordered = [
-                self._slots[(start_index + offset) % len(self._slots)]
-                for offset in range(len(self._slots))
+                active_slots[(start_index + offset) % len(active_slots)]
+                for offset in range(len(active_slots))
             ]
-            if avoid_slot is not None and len(self._slots) > 1:
+            if avoid_slot is not None and len(active_slots) > 1:
                 ordered = [slot for slot in ordered if slot is not avoid_slot]
-            return ordered or list(self._slots)
+            return ordered or list(active_slots)
 
     def _acquire_slot(self, avoid_slot: Optional[_LLMKeySlot] = None) -> tuple[_LLMKeySlot, float]:
         started_at = time.monotonic()
         ordered = self._ordered_slots(avoid_slot=avoid_slot)
+        if not ordered:
+            raise RuntimeError("All LLM API keys are disabled after 403 responses.")
         for slot in ordered:
             if slot.semaphore.acquire(blocking=False):
                 return slot, time.monotonic() - started_at
@@ -186,6 +220,28 @@ class LLMRequestManager:
                     attempt=attempt,
                     success=False,
                 )
+                if self._is_key_forbidden(exc):
+                    self._disable_slot(slot, exc)
+                    if not self._active_slots():
+                        logger.error(
+                            "llm_all_keys_disabled operation=%s attempt=%s error=%s",
+                            operation_name,
+                            attempt,
+                            exc,
+                        )
+                        break
+                    logger.warning(
+                        "llm_request_retry_after_disable operation=%s token=%s attempt=%s/%s "
+                        "wait_seconds=%.3f request_seconds=%.3f error=%s",
+                        operation_name,
+                        slot.masked_token,
+                        attempt,
+                        self.max_retries,
+                        wait_seconds,
+                        request_seconds,
+                        exc,
+                    )
+                    continue
                 if attempt >= self.max_retries:
                     logger.error(
                         "llm_request_exhausted operation=%s token=%s wait_seconds=%.3f request_seconds=%.3f attempt=%s error=%s",
@@ -226,6 +282,7 @@ class OpenAICompatibleBackend(LLMBackend):
         max_tokens: int = 4096,
         temperature: float = 0.0,
         seed: Optional[int] = None,
+        reasoning_effort: Optional[str] = None,
         embedding_model: Optional[str] = None,
         per_key_request_interval_seconds: float = 0.0,
         per_key_max_concurrent_requests: int = 1,
@@ -237,6 +294,7 @@ class OpenAICompatibleBackend(LLMBackend):
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.seed = seed
+        self.reasoning_effort = str(reasoning_effort).strip() if reasoning_effort else None
         self.embedding_model = embedding_model
         self.request_manager = LLMRequestManager(
             base_url=base_url,
@@ -265,9 +323,27 @@ class OpenAICompatibleBackend(LLMBackend):
         }
         if self.seed is not None:
             kwargs["seed"] = self.seed
+        if self.reasoning_effort:
+            kwargs["reasoning"] = {"effort": self.reasoning_effort}
         return kwargs
 
+    def _should_use_reasoning_api(self) -> bool:
+        return bool(self.reasoning_effort)
+
     def generate(self, prompt: str, **kwargs) -> str:
+        if self._should_use_reasoning_api():
+            response = self.request_manager.call(
+                "responses completion",
+                lambda client: client.responses.create(
+                    input=[{"role": "user", "content": prompt}],
+                    **self._responses_kwargs(),
+                ),
+            )
+            content = self._extract_response_text(response)
+            if content:
+                return content
+            raise ValueError("Responses API returned no output_text for generate().")
+
         response = self.request_manager.call(
             "chat completion",
             lambda client: client.chat.completions.create(
@@ -291,6 +367,22 @@ class OpenAICompatibleBackend(LLMBackend):
         return response
 
     def generate_json(self, prompt: str, **kwargs) -> dict[str, Any]:
+        if self._should_use_reasoning_api():
+            response = self.request_manager.call(
+                "responses JSON completion",
+                lambda client: client.responses.create(
+                    input=[{"role": "user", "content": prompt}],
+                    **self._responses_kwargs(),
+                ),
+            )
+            content = self._extract_response_text(response)
+            json_match = re.search(r'\{[\s\S]*\}', content)
+            if json_match:
+                raw = json_match.group()
+                raw = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', raw)
+                return json.loads(raw)
+            return {"raw": content}
+
         response = self.request_manager.call(
             "chat JSON completion",
             lambda client: client.chat.completions.create(
@@ -426,6 +518,7 @@ def create_openai_compatible_backend(
     max_tokens: int = 4096,
     temperature: float = 0.0,
     seed: Optional[int] = None,
+    reasoning_effort: Optional[str] = None,
     embedding_model: Optional[str] = None,
     per_key_request_interval_seconds: float = 0.0,
     per_key_max_concurrent_requests: int = 1,
@@ -439,6 +532,7 @@ def create_openai_compatible_backend(
         max_tokens=max_tokens,
         temperature=temperature,
         seed=seed,
+        reasoning_effort=reasoning_effort,
         embedding_model=embedding_model,
         per_key_request_interval_seconds=per_key_request_interval_seconds,
         per_key_max_concurrent_requests=per_key_max_concurrent_requests,
@@ -485,6 +579,11 @@ def main() -> None:
         model=llm_config["model"],
         max_tokens=int(llm_config.get("max_tokens", 4096)),
         temperature=float(llm_config.get("temperature", 0.0)),
+        reasoning_effort=(
+            str(llm_config.get("reasoning_effort")).strip()
+            if llm_config.get("reasoning_effort") is not None
+            else None
+        ),
         per_key_request_interval_seconds=float(llm_config.get("per_key_request_interval_seconds", 0.0)),
         per_key_max_concurrent_requests=int(llm_config.get("per_key_max_concurrent_requests", 1)),
         max_retries=int(llm_config.get("max_retries", 3)),

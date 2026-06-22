@@ -218,12 +218,14 @@ class Summarizer:
         prompt_template: Optional[str] = None,
         llm_limit: Optional[int] = None,
         max_concurrent_papers: int = 1,
+        include_multimodal_evidence: bool = True,
     ):
         self.llm = llm
         self.views = views or DEFAULT_VIEWS
         self._prompt_template = prompt_template
         self.llm_limit = llm_limit
         self.max_concurrent_papers = max(1, int(max_concurrent_papers))
+        self.include_multimodal_evidence = bool(include_multimodal_evidence)
         self._multimodal_prompt_template: Optional[str] = None
 
     def _get_prompt_template(self) -> str:
@@ -674,13 +676,14 @@ class Summarizer:
                 )
             )
         views = self._clear_general_multimodal_fields(views)
-        multimodal_bullets = self._generate_multimodal_bullets(
-            paper_title=paper_title,
-            paper_abstract=paper_abstract,
-            paper_meta=paper_meta,
-        )
-        if multimodal_bullets:
-            views = self._merge_multimodal_bullets(views, multimodal_bullets)
+        if self.include_multimodal_evidence:
+            multimodal_bullets = self._generate_multimodal_bullets(
+                paper_title=paper_title,
+                paper_abstract=paper_abstract,
+                paper_meta=paper_meta,
+            )
+            if multimodal_bullets:
+                views = self._merge_multimodal_bullets(views, multimodal_bullets)
 
         return PaperSummary(
             paper_id=paper_id,

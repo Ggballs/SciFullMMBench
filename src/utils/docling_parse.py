@@ -120,6 +120,21 @@ def build_text_only_converter(*, disable_table_structure: bool) -> Any:
     from docling.datamodel.pipeline_options import PdfPipelineOptions
     from docling.document_converter import DocumentConverter, PdfFormatOption
 
+    # Limit internal thread pools to prevent thread explosion under concurrency
+    try:
+        import torch
+        torch.set_num_threads(32)
+        torch.set_num_interop_threads(2)
+    except Exception:
+        pass
+    try:
+        import onnxruntime
+        opts = onnxruntime.SessionOptions()
+        opts.intra_op_num_threads = 2
+        opts.inter_op_num_threads = 2
+    except Exception:
+        pass
+
     pipeline_options = PdfPipelineOptions()
     pipeline_options.do_table_structure = not disable_table_structure
     pipeline_options.generate_page_images = False
@@ -136,7 +151,28 @@ def build_text_only_converter(*, disable_table_structure: bool) -> Any:
     )
 
 
-def parse_pdf_text_only(pdf_path: str | Path, *, disable_table_structure: bool = False) -> dict[str, Any]:
+import threading
+
+_CONVERTER_LOCK = threading.Lock()
+_CONVERTER_POOL: list[Any] = []
+_CONVERTER_POOL_SIZE = 0
+
+def _get_converter_from_pool(disable_table_structure: bool) -> Any:
+    global _CONVERTER_POOL_SIZE
+    if _CONVERTER_POOL_SIZE == 0:
+        import os
+        _CONVERTER_POOL_SIZE = int(os.environ.get("DOCLING_POOL_SIZE", "8"))
+    with _CONVERTER_LOCK:
+        if _CONVERTER_POOL:
+            return _CONVERTER_POOL.pop()
+    return build_text_only_converter(disable_table_structure=disable_table_structure)
+
+def _return_converter_to_pool(converter: Any) -> None:
+    with _CONVERTER_LOCK:
+        if len(_CONVERTER_POOL) < _CONVERTER_POOL_SIZE:
+            _CONVERTER_POOL.append(converter)
+
+def parse_pdf_text_only(pdf_path: str | Path, *, disable_table_structure: bool = False, converter: Any = None) -> dict[str, Any]:
     pdf_path = Path(pdf_path).expanduser().resolve()
     if not pdf_path.is_file():
         return {
@@ -147,8 +183,11 @@ def parse_pdf_text_only(pdf_path: str | Path, *, disable_table_structure: bool =
             "table_structure_enabled": not disable_table_structure,
         }
 
-    try:
+    own_converter = False
+    if converter is None:
         converter = build_text_only_converter(disable_table_structure=disable_table_structure)
+        own_converter = True
+    try:
         result = converter.convert(str(pdf_path))
         document = result.document
         return {

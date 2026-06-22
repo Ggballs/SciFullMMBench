@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 from dataclasses import dataclass
 from datetime import datetime
@@ -20,12 +21,22 @@ from openreview_pipeline.stage0_download import DatasetDownloader, parse_forum_i
 from openreview_pipeline.stage1_filter import RuleBasedFilter
 from openreview_pipeline.stage2_summarize import Summarizer
 from openreview_pipeline.stage3_generate_queries import QueryGenerator
-from openreview_pipeline.stage3b_decontextualize_queries import QueryDecontextualizer
 from openreview_pipeline.stage4_query_analysis import run as run_stage4_query_analysis
 from openreview_pipeline.stage5_hard_negative_mining import (
     HardNegativeMiner,
     build_google_scholar_client,
     resolve_hard_negative_llm_settings,
+)
+from openreview_pipeline.stage5_worker.queue import (
+    DEFAULT_BATCH_SIZE as STAGE5_QUEUE_DEFAULT_BATCH_SIZE,
+    DEFAULT_DOCLING_POOL_SIZE as STAGE5_QUEUE_DEFAULT_DOCLING_POOL_SIZE,
+    DEFAULT_HTTP_PROXY as STAGE5_QUEUE_DEFAULT_HTTP_PROXY,
+    DEFAULT_HTTPS_PROXY as STAGE5_QUEUE_DEFAULT_HTTPS_PROXY,
+    DEFAULT_MONITOR_INTERVAL as STAGE5_QUEUE_DEFAULT_MONITOR_INTERVAL,
+    DEFAULT_QUEUE_TABLE_NAME as STAGE5_QUEUE_DEFAULT_TABLE_NAME,
+    DEFAULT_SCHEDULER_MODE as STAGE5_QUEUE_DEFAULT_SCHEDULER_MODE,
+    filter_queries_by_paper_ids,
+    run_stage5_queue_mode,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,7 +46,6 @@ LOGICAL_STAGE_ORDER = [
     "filter",
     "summarize",
     "generate_queries",
-    "decontextualize_queries",
     "query_analysis",
     "hard_negative_mining",
 ]
@@ -50,9 +60,6 @@ STAGE_ALIASES = {
     "3": "generate_queries",
     "generate_queries": "generate_queries",
     "generate-queries": "generate_queries",
-    "3.5": "decontextualize_queries",
-    "decontextualize_queries": "decontextualize_queries",
-    "decontextualize-queries": "decontextualize_queries",
     "4": "query_analysis",
     "query_analysis": "query_analysis",
     "query-analysis": "query_analysis",
@@ -66,7 +73,6 @@ DEFAULT_STAGE_FILENAMES = {
     "filter": "01_filtered.json",
     "summarize": "02_summarized.json",
     "generate_queries": "03_queries.json",
-    "decontextualize_queries": "03_queries_decontextualized.json",
     "hard_negative_mining": "05_hard_negatives.json",
 }
 
@@ -78,7 +84,6 @@ class PipelinePaths:
     filtered_path: Path
     summarized_path: Path
     queries_path: Path
-    decontextualized_queries_path: Path
     query_analysis_output_dir: Path
     hard_negatives_path: Path
 
@@ -87,17 +92,6 @@ def _normalize_path(path: Optional[Path | str]) -> Optional[Path]:
     if path is None:
         return None
     return Path(path).expanduser().resolve()
-
-
-def _select_effective_queries_path(queries_path: Optional[Path], decontextualized_path: Optional[Path]) -> Optional[Path]:
-    if decontextualized_path and decontextualized_path.is_file():
-        if not queries_path or not queries_path.is_file():
-            return decontextualized_path
-        if decontextualized_path.stat().st_mtime >= queries_path.stat().st_mtime:
-            return decontextualized_path
-    if queries_path and queries_path.is_file():
-        return queries_path
-    return decontextualized_path if decontextualized_path and decontextualized_path.is_file() else None
 
 
 def load_config(config_path: Optional[Path | str] = None) -> dict:
@@ -207,6 +201,7 @@ def resolve_generate_query_settings(
             "golden_classifications_path",
             "outputs/query_analysis/golden_retrieval_icl_examples.json",
         ),
+        "include_multimodal_queries": bool(generate_config.get("include_multimodal_queries", True)),
     }
 
 
@@ -332,6 +327,11 @@ def build_llm_backend(
         max_tokens=int(settings.get("max_tokens", 4096)),
         temperature=float(settings.get("temperature", 0.0)),
         seed=int(seed) if seed is not None else None,
+        reasoning_effort=(
+            str(settings.get("reasoning_effort")).strip()
+            if settings.get("reasoning_effort") is not None
+            else None
+        ),
         per_key_request_interval_seconds=float(settings.get("per_key_request_interval_seconds", 0.0)),
         per_key_max_concurrent_requests=int(settings.get("per_key_max_concurrent_requests", 1)),
         max_retries=int(settings.get("max_retries", 3)),
@@ -344,12 +344,21 @@ def build_hard_negative_llm_backend(
     *,
     base_url: Optional[str] = None,
     model: Optional[str] = None,
+    per_key_request_interval_seconds_override: Optional[float] = None,
+    per_key_max_concurrent_requests_override: Optional[int] = None,
 ):
     settings = resolve_hard_negative_llm_settings(
         load_config(config_path),
         base_url=base_url,
         model=model,
     )
+    if per_key_request_interval_seconds_override is not None:
+        settings["per_key_request_interval_seconds"] = float(per_key_request_interval_seconds_override)
+    if per_key_max_concurrent_requests_override is not None:
+        settings["per_key_max_concurrent_requests"] = max(
+            1,
+            int(per_key_max_concurrent_requests_override),
+        )
     seed = settings.get("seed")
     return OpenAICompatibleBackend(
         base_url=str(settings["base_url"]),
@@ -358,6 +367,11 @@ def build_hard_negative_llm_backend(
         max_tokens=int(settings.get("max_tokens", 4096)),
         temperature=float(settings.get("temperature", 0.0)),
         seed=int(seed) if seed is not None else None,
+        reasoning_effort=(
+            str(settings.get("reasoning_effort")).strip()
+            if settings.get("reasoning_effort") is not None
+            else None
+        ),
         per_key_request_interval_seconds=float(settings.get("per_key_request_interval_seconds", 0.0)),
         per_key_max_concurrent_requests=int(settings.get("per_key_max_concurrent_requests", 1)),
         max_retries=int(settings.get("max_retries", 3)),
@@ -417,7 +431,6 @@ def resolve_pipeline_paths(
     filtered_path: Optional[Path | str] = None,
     summarized_path: Optional[Path | str] = None,
     queries_path: Optional[Path | str] = None,
-    decontextualized_queries_path: Optional[Path | str] = None,
     query_analysis_output_dir: Optional[Path | str] = None,
     hard_negatives_path: Optional[Path | str] = None,
 ) -> PipelinePaths:
@@ -426,7 +439,6 @@ def resolve_pipeline_paths(
         _normalize_path(filtered_path),
         _normalize_path(summarized_path),
         _normalize_path(queries_path),
-        _normalize_path(decontextualized_queries_path),
         _normalize_path(query_analysis_output_dir),
         _normalize_path(hard_negatives_path),
     ]
@@ -446,7 +458,6 @@ def resolve_pipeline_paths(
         filtered_path=stage_path(filtered_path, "filter"),
         summarized_path=stage_path(summarized_path, "summarize"),
         queries_path=stage_path(queries_path, "generate_queries"),
-        decontextualized_queries_path=stage_path(decontextualized_queries_path, "decontextualize_queries"),
         query_analysis_output_dir=_normalize_path(query_analysis_output_dir) or (base_dir / "04_query_analysis"),
         hard_negatives_path=stage_path(hard_negatives_path, "hard_negative_mining"),
     )
@@ -479,6 +490,26 @@ def _filter_queries_for_hard_negative_mining(
 
     with analysis_path.open("r", encoding="utf-8") as handle:
         raw_analysis = json.load(handle)
+
+    required_low_query_views = {"motivation", "method", "experiment/result"}
+    low_overlap_labels = {"LOW-LEXICAL-OVERLAP", "LOW-SEMANTIC-OVERLAP"}
+    eligible_paper_ids = set()
+    for paper in raw_analysis.get("papers", []):
+        if not isinstance(paper, dict):
+            continue
+        paper_id = str(paper.get("paper_id", "")).strip()
+        if not paper_id:
+            continue
+        low_query_views = {
+            str(query.get("source_view", "")).strip()
+            for query in paper.get("queries", [])
+            if isinstance(query, dict)
+            and str(((query.get("retrieval_evaluation") or {}).get("abstract_relevance", ""))).strip()
+            in low_overlap_labels
+        }
+        if required_low_query_views.issubset(low_query_views):
+            eligible_paper_ids.add(paper_id)
+
     keep_keys = {
         (
             str(paper.get("paper_id", "")),
@@ -487,12 +518,15 @@ def _filter_queries_for_hard_negative_mining(
             str(query.get("query_type", "IR")),
         )
         for paper in raw_analysis.get("papers", [])
-        if isinstance(paper, dict)
+        if isinstance(paper, dict) and str(paper.get("paper_id", "")).strip() in eligible_paper_ids
         for query in paper.get("queries", [])
         if isinstance(query, dict) and str(query.get("decision", "")).strip() == "Keep"
     }
     if not keep_keys:
-        logger.info("Stage-4 analysis produced no surviving queries; hard-negative mining will be skipped.")
+        logger.info(
+            "Stage-4 analysis produced no surviving queries after requiring low-query coverage in all 3 views; "
+            "hard-negative mining will be skipped."
+        )
         return GeneratedQueriesDataset(papers_queries=[], total_papers=0, total_queries=0)
 
     filtered_papers = []
@@ -514,8 +548,11 @@ def _filter_queries_for_hard_negative_mining(
         )
 
     logger.info(
-        "Filtered hard-negative mining input from %s to %s queries using stage-4 Keep decisions.",
+        "Filtered hard-negative mining input from %s papers / %s queries to %s eligible papers / %s surviving queries "
+        "using stage-4 paper-level low-query coverage and query-level Keep decisions.",
+        query_dataset.total_papers,
         query_dataset.total_queries,
+        len(filtered_papers),
         sum(len(paper.queries_by_view) for paper in filtered_papers),
     )
     return GeneratedQueriesDataset(
@@ -524,6 +561,32 @@ def _filter_queries_for_hard_negative_mining(
         total_queries=sum(len(paper.queries_by_view) for paper in filtered_papers),
         generated_at=query_dataset.generated_at,
     )
+
+
+def _resolve_stage5_queue_paths(
+    output_path: Path,
+    *,
+    pdf_output_dir: Optional[Path | str] = None,
+    monitor_file: Optional[Path | str] = None,
+    retrieve_done_flag: Optional[Path | str] = None,
+) -> tuple[Optional[Path], Optional[Path], Optional[Path]]:
+    queue_work_dir = output_path.parent / f"{output_path.stem}_queue"
+    resolved_pdf_output_dir = (
+        Path(pdf_output_dir).expanduser().resolve()
+        if pdf_output_dir is not None
+        else (queue_work_dir / "hard_negative_pdfs")
+    )
+    resolved_monitor_file = (
+        Path(monitor_file).expanduser().resolve()
+        if monitor_file is not None
+        else (queue_work_dir / "stage5_queue_monitor.json")
+    )
+    resolved_retrieve_done_flag = (
+        Path(retrieve_done_flag).expanduser().resolve()
+        if retrieve_done_flag is not None
+        else (queue_work_dir / "retrieve_done.flag")
+    )
+    return resolved_pdf_output_dir, resolved_monitor_file, resolved_retrieve_done_flag
 
 
 def run_download_stage(
@@ -668,11 +731,15 @@ def run_summarize_stage(
         base_url=base_url,
         model=model,
     )
+    config = load_config(config_path)
+    stages_config = config.get("stages", {}) if isinstance(config.get("stages"), dict) else {}
+    summarize_config = stages_config.get("summarize", {}) if isinstance(stages_config.get("summarize"), dict) else {}
     stage_settings = resolve_stage_settings(config_path)
     summarizer = Summarizer(
         llm=llm_backend,
         llm_limit=llm_limit,
         max_concurrent_papers=int(stage_settings["max_concurrent_papers"]),
+        include_multimodal_evidence=bool(summarize_config.get("include_multimodal_evidence", True)),
     )
     summarizer.run(input_path, output_path)
     return output_path
@@ -710,37 +777,9 @@ def run_generate_queries_stage(
         embedding_service_url=str(generate_settings.get("embedding_service_url") or "").strip()
         or None,
         embedding_service_timeout=float(generate_settings["embedding_service_timeout"]),
+        include_multimodal_queries=bool(generate_settings.get("include_multimodal_queries", True)),
     )
     generator.run(input_path, output_path)
-    return output_path
-
-
-def run_decontextualize_queries_stage(
-    *,
-    summarized_path: Path | str,
-    queries_path: Path | str,
-    output_path: Path | str,
-    config_path: Optional[Path | str] = None,
-    base_url: Optional[str] = None,
-    model: Optional[str] = None,
-    llm_backend=None,
-) -> Path:
-    summarized_path = _require_input("decontextualize_queries", _normalize_path(summarized_path))
-    queries_path = _require_input("decontextualize_queries", _normalize_path(queries_path))
-    output_path = Path(output_path).expanduser().resolve()
-    _ensure_parent(output_path)
-
-    llm_backend = llm_backend or build_llm_backend(
-        config_path,
-        base_url=base_url,
-        model=model,
-    )
-    stage_settings = resolve_stage_settings(config_path)
-    decontextualizer = QueryDecontextualizer(
-        llm=llm_backend,
-        max_concurrent_papers=int(stage_settings["max_concurrent_papers"]),
-    )
-    decontextualizer.run(summarized_path, queries_path, output_path)
     return output_path
 
 
@@ -756,16 +795,67 @@ def run_hard_negative_mining_stage(
     serpapi_api_key: Optional[str] = None,
     scholar_max_results: Optional[int] = None,
     scholar_language: Optional[str] = None,
+    mode: str = "direct",
+    queue_table_name: str = STAGE5_QUEUE_DEFAULT_TABLE_NAME,
+    scheduler_mode: str = STAGE5_QUEUE_DEFAULT_SCHEDULER_MODE,
+    batch_size: int = STAGE5_QUEUE_DEFAULT_BATCH_SIZE,
+    review_max_workers: Optional[int] = None,
+    docling_pool_size: int = STAGE5_QUEUE_DEFAULT_DOCLING_POOL_SIZE,
+    http_proxy: str = STAGE5_QUEUE_DEFAULT_HTTP_PROXY,
+    https_proxy: str = STAGE5_QUEUE_DEFAULT_HTTPS_PROXY,
+    pdf_output_dir: Optional[Path | str] = None,
+    monitor_file: Optional[Path | str] = None,
+    monitor_interval: int = STAGE5_QUEUE_DEFAULT_MONITOR_INTERVAL,
+    retrieve_done_flag: Optional[Path | str] = None,
+    query_subset_paper_ids: Optional[Sequence[str]] = None,
+    apply_query_analysis_filter: bool = True,
+    retrieval_only: bool = False,
+    parse_only: bool = False,
+    review_only: bool = False,
+    download_only: bool = False,
+    parse_min_query_candidates: int = 25,
+    retrieval_search_max_workers: int = 1,
+    retrieval_rerank_max_workers: int = 1,
+    task_filter: Optional[str] = None,
+    download_workers: int = 1,
+    parse_workers: int = 8,
+    review_workers: int = 200,
     llm_backend=None,
 ) -> Path:
     input_path = _require_input("hard_negative_mining", _normalize_path(input_path))
     output_path = Path(output_path).expanduser().resolve()
     _ensure_parent(output_path)
+    normalized_mode = str(mode).strip().lower() or "direct"
+    if normalized_mode not in {"direct", "queue"}:
+        raise ValueError(f"Unsupported hard-negative mining mode: {mode!r}")
+
+    llm_backend_overrides: dict[str, object] = {}
+    if normalized_mode == "queue" and retrieval_only:
+        hard_negative_settings = resolve_hard_negative_llm_settings(
+            load_config(config_path),
+            base_url=base_url,
+            model=model,
+        )
+        key_count = max(1, len([str(token) for token in hard_negative_settings.get("api_tokens", [])]))
+        rerank_workers = max(1, int(retrieval_rerank_max_workers))
+        per_key_max_concurrent_requests = math.ceil(rerank_workers / key_count) + 1
+        llm_backend_overrides = {
+            "per_key_request_interval_seconds_override": 1.0,
+            "per_key_max_concurrent_requests_override": per_key_max_concurrent_requests,
+        }
+        logger.info(
+            "Tuning hard-negative retrieval LLM concurrency: rerank_workers=%s key_count=%s "
+            "per_key_max_concurrent_requests=%s per_key_request_interval_seconds=1.0",
+            rerank_workers,
+            key_count,
+            per_key_max_concurrent_requests,
+        )
 
     llm_backend = llm_backend or build_hard_negative_llm_backend(
         config_path,
         base_url=base_url,
         model=model,
+        **llm_backend_overrides,
     )
     stage_settings = resolve_stage_settings(config_path)
     search_settings = resolve_search_settings(
@@ -793,17 +883,57 @@ def run_hard_negative_mining_stage(
         if str(search_settings["cache_dir"]).strip()
         else None,
     )
+    query_dataset = load_json(input_path, GeneratedQueriesDataset)
+    filtered_dataset = filter_queries_by_paper_ids(query_dataset, query_subset_paper_ids)
+    if apply_query_analysis_filter:
+        filtered_dataset = _filter_queries_for_hard_negative_mining(
+            query_dataset=filtered_dataset,
+            query_analysis_output_dir=_normalize_path(query_analysis_output_dir),
+        )
+
+    if normalized_mode == "queue":
+        resolved_review_max_workers = int(review_max_workers or stage_settings["hard_negative_review_max_workers"])
+        resolved_pdf_output_dir, resolved_monitor_file, resolved_retrieve_done_flag = _resolve_stage5_queue_paths(
+            output_path,
+            pdf_output_dir=pdf_output_dir,
+            monitor_file=monitor_file,
+            retrieve_done_flag=retrieve_done_flag,
+        )
+        return run_stage5_queue_mode(
+            query_dataset=filtered_dataset,
+            llm_backend=llm_backend,
+            search_settings=search_settings,
+            output_path=output_path,
+            queue_table_name=queue_table_name,
+            scheduler_mode=scheduler_mode,
+            batch_size=int(batch_size),
+            review_max_workers=resolved_review_max_workers,
+            docling_pool_size=int(docling_pool_size),
+            http_proxy=str(http_proxy),
+            https_proxy=str(https_proxy),
+            pdf_output_dir=resolved_pdf_output_dir,
+            monitor_file=resolved_monitor_file,
+            monitor_interval=int(monitor_interval),
+            retrieve_done_flag=resolved_retrieve_done_flag,
+            skip_existing_queries=bool(retrieval_only),
+            retrieval_only=bool(retrieval_only),
+            parse_only=bool(parse_only),
+            review_only=bool(review_only),
+            download_only=bool(download_only),
+            parse_min_query_candidates=int(parse_min_query_candidates),
+            retrieval_search_max_workers=int(retrieval_search_max_workers),
+            retrieval_rerank_max_workers=int(retrieval_rerank_max_workers),
+            download_workers=int(download_workers),
+            parse_workers=int(parse_workers),
+            review_workers=int(review_workers),
+            task_filter=task_filter,
+        )
+
     miner = HardNegativeMiner(
         llm=llm_backend,
         scholar_client=scholar_client,
         scholar_max_results=int(search_settings["max_results"]),
-        review_max_workers=int(stage_settings["hard_negative_review_max_workers"]),
-    )
-
-    query_dataset = load_json(input_path, GeneratedQueriesDataset)
-    filtered_dataset = _filter_queries_for_hard_negative_mining(
-        query_dataset=query_dataset,
-        query_analysis_output_dir=_normalize_path(query_analysis_output_dir),
+        review_max_workers=int(review_max_workers or stage_settings["hard_negative_review_max_workers"]),
     )
     save_json(output_path, miner.apply(filtered_dataset, checkpoint_path=output_path))
     return output_path
@@ -818,6 +948,7 @@ def run_query_analysis_stage(
     downloaded_path: Optional[Path | str] = None,
     base_url: Optional[str] = None,
     model: Optional[str] = None,
+    analysis_modes: Optional[Sequence[str]] = None,
     llm_backend=None,
 ) -> Path:
     summarized_path = _require_input("query_analysis", _normalize_path(summarized_path))
@@ -840,6 +971,7 @@ def run_query_analysis_stage(
         config_path=_normalize_path(config_path) or DEFAULT_CONFIG_PATH,
         downloaded_path=_normalize_path(downloaded_path),
         max_concurrent_papers=int(stage_settings["max_concurrent_papers"]),
+        analysis_modes=list(analysis_modes) if analysis_modes else None,
     )
     return output_dir
 
@@ -863,7 +995,6 @@ def run_selected_stages(
     filtered_path: Optional[Path | str] = None,
     summarized_path: Optional[Path | str] = None,
     queries_path: Optional[Path | str] = None,
-    decontextualized_queries_path: Optional[Path | str] = None,
     query_analysis_output_dir: Optional[Path | str] = None,
     hard_negatives_path: Optional[Path | str] = None,
     venue: str = "ICLR",
@@ -876,6 +1007,7 @@ def run_selected_stages(
     config_path: Optional[Path | str] = None,
     base_url: Optional[str] = None,
     model: Optional[str] = None,
+    query_analysis_modes: Optional[Sequence[str]] = None,
     username: Optional[str] = None,
     password: Optional[str] = None,
     token: Optional[str] = None,
@@ -898,7 +1030,6 @@ def run_selected_stages(
         filtered_path=filtered_path,
         summarized_path=summarized_path,
         queries_path=queries_path,
-        decontextualized_queries_path=decontextualized_queries_path,
         query_analysis_output_dir=query_analysis_output_dir,
         hard_negatives_path=hard_negatives_path,
     )
@@ -907,10 +1038,6 @@ def run_selected_stages(
     filtered_source = paths.filtered_path if paths.filtered_path.is_file() else None
     summarized_source = paths.summarized_path if paths.summarized_path.is_file() else None
     queries_source = paths.queries_path if paths.queries_path.is_file() else None
-    decontextualized_queries_source = _select_effective_queries_path(
-        queries_source,
-        paths.decontextualized_queries_path,
-    )
 
     for stage in stages:
         if stage == "download":
@@ -960,24 +1087,9 @@ def run_selected_stages(
             )
             queries_source = current_input
             _generate_simplified_queries(paths.queries_path)
-        elif stage == "decontextualize_queries":
-            summary_input = summarized_source or paths.summarized_path
-            query_input = queries_source or paths.queries_path
-            current_input = run_decontextualize_queries_stage(
-                summarized_path=_require_input(stage, summary_input),
-                queries_path=_require_input(stage, query_input),
-                output_path=paths.decontextualized_queries_path,
-                config_path=config_path,
-                base_url=base_url,
-                model=model,
-            )
-            decontextualized_queries_source = current_input
         elif stage == "query_analysis":
             summary_input = summarized_source or paths.summarized_path
-            query_input = _select_effective_queries_path(
-                queries_source,
-                paths.decontextualized_queries_path,
-            ) or paths.queries_path
+            query_input = queries_source or paths.queries_path
             run_query_analysis_stage(
                 summarized_path=_require_input(stage, summary_input),
                 queries_path=_require_input(stage, query_input),
@@ -986,17 +1098,13 @@ def run_selected_stages(
                 config_path=config_path,
                 base_url=base_url,
                 model=model,
+                analysis_modes=query_analysis_modes,
             )
             current_input = query_input
         elif stage == "hard_negative_mining":
             query_input = _require_input(
                 stage,
-                _select_effective_queries_path(
-                    queries_source,
-                    paths.decontextualized_queries_path,
-                )
-                or current_input
-                or paths.queries_path,
+                queries_source or current_input or paths.queries_path,
             )
             run_hard_negative_mining_stage(
                 input_path=query_input,

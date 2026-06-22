@@ -7,11 +7,11 @@ import click
 from utils.app_logging import configure_project_logging
 from utils.project_paths import DEFAULT_CONFIG_PATH
 from openreview_pipeline.pipeline_output_builder import build_pipeline_output, write_pipeline_output
+from openreview_pipeline.stage2_prompt_dump import write_stage2_text_prompt
 from openreview_pipeline.runner import (
     build_llm_backend,
     resolve_generate_query_settings,
     resolve_pipeline_paths,
-    run_decontextualize_queries_stage,
     run_download_stage,
     run_filter_stage,
     run_generate_queries_stage,
@@ -101,6 +101,19 @@ def summarize(input_path: str, output: str, base_url: str, model: str):
     )
 
 
+@cli.command("dump-stage2-text-prompt")
+@click.option("--input", "-i", "input_path", type=click.Path(exists=True), required=True, help="Input filtered dataset path")
+@click.option("--output", "-o", type=click.Path(), required=True, help="Output text file path")
+@click.option("--paper-id", default=None, help="Paper id to render; defaults to the first passed paper")
+def dump_stage2_text_prompt(input_path: str, output: str, paper_id: str):
+    output_path = write_stage2_text_prompt(
+        filtered_input_path=Path(input_path),
+        output_path=Path(output),
+        paper_id=paper_id,
+    )
+    click.echo(str(output_path))
+
+
 @cli.command("generate-queries")
 @click.option("--input", "-i", "input_path", type=click.Path(exists=True), required=True, help="Input summarized dataset path")
 @click.option("--output", "-o", type=click.Path(), default="data/03_queries.json", help="Output path")
@@ -109,23 +122,6 @@ def summarize(input_path: str, output: str, base_url: str, model: str):
 def generate_queries(input_path: str, output: str, base_url: str, model: str):
     run_generate_queries_stage(
         input_path=Path(input_path),
-        output_path=Path(output),
-        config_path=CONFIG_PATH,
-        base_url=base_url,
-        model=model,
-    )
-
-
-@cli.command("decontextualize-queries")
-@click.option("--summarized-input", type=click.Path(exists=True), required=True, help="Stage-2 summarized dataset path")
-@click.option("--queries-input", type=click.Path(exists=True), required=True, help="Stage-3 generated queries dataset path")
-@click.option("--output", "-o", type=click.Path(), default="data/03_queries_decontextualized.json", help="Output path")
-@click.option("--base-url", default=None, help="LLM API base URL (overrides config)")
-@click.option("--model", default=None, help="Model name (overrides config)")
-def decontextualize_queries(summarized_input: str, queries_input: str, output: str, base_url: str, model: str):
-    run_decontextualize_queries_stage(
-        summarized_path=Path(summarized_input),
-        queries_path=Path(queries_input),
         output_path=Path(output),
         config_path=CONFIG_PATH,
         base_url=base_url,
@@ -193,6 +189,31 @@ def prepare_golden_retrieval_icl_examples(
 @click.option("--serpapi-api-key", default=None, help="SerpAPI key when using the 'serpapi' backend")
 @click.option("--scholar-max-results", default=None, type=int, help="Maximum candidates to retrieve per query")
 @click.option("--scholar-language", default=None, help="Google Scholar language code, e.g. 'en'")
+@click.option("--mode", type=click.Choice(["direct", "queue"]), default="direct", show_default=True, help="Stage5 execution mode")
+@click.option("--queue-table-name", default="", help="Optional PostgreSQL queue table override for queue mode")
+@click.option("--scheduler-mode", type=click.Choice(["independent_worker", "batch_size"]), default="independent_worker", show_default=True, help="Queue review scheduling mode")
+@click.option("--batch-size", default=20, type=int, show_default=True, help="Batch size when queue scheduler mode is batch_size")
+@click.option("--review-max-workers", default=None, type=int, help="Override review worker count")
+@click.option("--docling-pool-size", default=4, type=int, show_default=True, help="Docling parse concurrency for queue mode")
+@click.option("--http-proxy", default="http://127.0.0.1:7890", show_default=True, help="HTTP proxy used by queue-mode PDF download")
+@click.option("--https-proxy", default="http://127.0.0.1:7890", show_default=True, help="HTTPS proxy used by queue-mode PDF download")
+@click.option("--pdf-output-dir", default=None, type=click.Path(), help="Optional PDF cache directory for queue mode")
+@click.option("--monitor-file", default=None, type=click.Path(), help="Optional queue monitor JSON path")
+@click.option("--monitor-interval", default=300, type=int, show_default=True, help="Queue monitor update interval in seconds")
+@click.option("--retrieve-done-flag", default=None, type=click.Path(), help="Optional queue retrieve-done flag path")
+@click.option("--retrieval-search-max-workers", default=1, type=int, show_default=True, help="Queue retrieval only: Semantic Scholar search concurrency across keys")
+@click.option("--retrieval-rerank-max-workers", default=1, type=int, show_default=True, help="Queue retrieval only: DeepSeek rerank concurrency across queries")
+@click.option("--parse-only", is_flag=True, help="Queue mode only: skip retrieval/review and only download+Docling-parse existing queue candidates")
+@click.option("--review-only", is_flag=True, help="Queue mode only: skip retrieval and only review existing queue candidates")
+@click.option("--download-only", is_flag=True, help="Queue mode only: only download PDFs for existing queue candidates")
+@click.option("--parse-min-query-candidates", default=25, type=int, show_default=True, help="Queue parse-only: only parse queries with at least this many retrieved candidates")
+@click.option("--paper-id", "paper_ids", multiple=True, help="Restrict queue/direct run to these paper ids; can be repeated")
+@click.option("--skip-query-analysis-filter", is_flag=True, help="Do not apply stage-4 Keep filtering before Stage5")
+@click.option("--retrieval-only", is_flag=True, help="Queue mode only: stop after Semantic Scholar retrieval + DeepSeek rerank and persist pending review rows")
+@click.option("--task", default=None, help="Queue mode: only process rows with this task tag (triggers download→parse→review pipeline)")
+@click.option("--download-workers", default=1, type=int, show_default=True, help="Task pipeline: download workers (Phase 1)")
+@click.option("--parse-workers", default=72, type=int, show_default=True, help="Task pipeline: parse workers (Phase 2)")
+@click.option("--review-workers", default=200, type=int, show_default=True, help="Task pipeline: review workers (Phase 3)")
 def hard_negative_mining(
     input_path: str,
     query_analysis_input: str,
@@ -203,6 +224,31 @@ def hard_negative_mining(
     serpapi_api_key: str,
     scholar_max_results: int,
     scholar_language: str,
+    mode: str,
+    queue_table_name: str,
+    scheduler_mode: str,
+    batch_size: int,
+    review_max_workers: int,
+    docling_pool_size: int,
+    http_proxy: str,
+    https_proxy: str,
+    pdf_output_dir: str,
+    monitor_file: str,
+    monitor_interval: int,
+    retrieve_done_flag: str,
+    retrieval_search_max_workers: int,
+    retrieval_rerank_max_workers: int,
+    parse_only: bool,
+    review_only: bool,
+    download_only: bool,
+    parse_min_query_candidates: int,
+    paper_ids: tuple[str, ...],
+    skip_query_analysis_filter: bool,
+    retrieval_only: bool,
+    task: str,
+    download_workers: int,
+    parse_workers: int,
+    review_workers: int,
 ):
     run_hard_negative_mining_stage(
         input_path=Path(input_path),
@@ -215,6 +261,31 @@ def hard_negative_mining(
         serpapi_api_key=serpapi_api_key,
         scholar_max_results=scholar_max_results,
         scholar_language=scholar_language,
+        mode=mode,
+        queue_table_name=queue_table_name,
+        scheduler_mode=scheduler_mode,
+        batch_size=batch_size,
+        review_max_workers=review_max_workers,
+        docling_pool_size=docling_pool_size,
+        http_proxy=http_proxy,
+        https_proxy=https_proxy,
+        pdf_output_dir=Path(pdf_output_dir) if pdf_output_dir else None,
+        monitor_file=Path(monitor_file) if monitor_file else None,
+        monitor_interval=monitor_interval,
+        retrieve_done_flag=Path(retrieve_done_flag) if retrieve_done_flag else None,
+        retrieval_search_max_workers=retrieval_search_max_workers,
+        retrieval_rerank_max_workers=retrieval_rerank_max_workers,
+        parse_only=parse_only,
+        review_only=review_only,
+        download_only=download_only,
+        parse_min_query_candidates=parse_min_query_candidates,
+        query_subset_paper_ids=list(paper_ids) if paper_ids else None,
+        apply_query_analysis_filter=not skip_query_analysis_filter,
+        retrieval_only=retrieval_only,
+        task_filter=task if task else None,
+        download_workers=download_workers,
+        parse_workers=parse_workers,
+        review_workers=review_workers,
     )
 
 
@@ -225,6 +296,13 @@ def hard_negative_mining(
 @click.option("--output-dir", "-o", type=click.Path(), default="data/04_query_analysis", help="Output directory")
 @click.option("--base-url", default=None, help="LLM API base URL (overrides config)")
 @click.option("--model", default=None, help="Model name (overrides config)")
+@click.option(
+    "--analysis",
+    "analysis_modes",
+    multiple=True,
+    type=click.Choice(["retrieval", "style", "embedding"]),
+    help="Stage-4 analysis blocks to run. Repeatable. Default: run all.",
+)
 def query_analysis(
     summarized_input: str,
     queries_input: str,
@@ -232,6 +310,7 @@ def query_analysis(
     output_dir: str,
     base_url: str,
     model: str,
+    analysis_modes: tuple[str, ...],
 ):
     run_query_analysis_stage(
         summarized_path=Path(summarized_input),
@@ -241,6 +320,7 @@ def query_analysis(
         config_path=CONFIG_PATH,
         base_url=base_url,
         model=model,
+        analysis_modes=list(analysis_modes) if analysis_modes else None,
     )
 
 
@@ -312,6 +392,13 @@ def run_all(
 @click.option("--downloaded-input", type=click.Path(exists=True), default=None, help="Reuse existing 00_downloaded.json (skip stage-0 download)")
 @click.option("--input-path", type=click.Path(exists=True), default=None, help="Input path for the first selected stage (overrides --downloaded-input as input)")
 @click.option("--sync-gradio", is_flag=True, help="Sync final output to Gradio display")
+@click.option(
+    "--query-analysis",
+    "query_analysis_modes",
+    multiple=True,
+    type=click.Choice(["retrieval", "style", "embedding"]),
+    help="Stage-4 analysis blocks to run when query analysis is selected. Repeatable. Default: run all.",
+)
 def run_pipeline(
     stages: str,
     output_dir: str,
@@ -327,6 +414,7 @@ def run_pipeline(
     downloaded_input: str,
     input_path: str,
     sync_gradio: bool,
+    query_analysis_modes: tuple[str, ...],
 ):
     stage_input = Path(input_path) if input_path else (Path(downloaded_input) if downloaded_input else None)
     paths = run_selected_stages(
@@ -341,6 +429,7 @@ def run_pipeline(
         config_path=CONFIG_PATH,
         base_url=base_url,
         model=model,
+        query_analysis_modes=list(query_analysis_modes) if query_analysis_modes else None,
         skip_filter=skip_filter,
         downloaded_path=Path(downloaded_input) if downloaded_input else None,
     )

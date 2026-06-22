@@ -35,10 +35,50 @@ from utils.project_paths import resolve_prompt_path
 
 logger = logging.getLogger(__name__)
 
+ANALYSIS_RETRIEVAL = "retrieval"
+ANALYSIS_STYLE = "style"
+ANALYSIS_EMBEDDING = "embedding"
+DEFAULT_ANALYSIS_MODES = (
+    ANALYSIS_RETRIEVAL,
+    ANALYSIS_STYLE,
+    ANALYSIS_EMBEDDING,
+)
+
 DEFAULT_REFERENCE_STYLE_PATHS = {
     "litsearch": Path("outputs/query_analysis_comparison/03_litsearch_human/style_analysis.json"),
     "pasa": Path("outputs/query_analysis_comparison/02_pasa_realscholar/style_analysis.json"),
 }
+
+
+def _normalize_analysis_modes(analysis_modes: Optional[list[str] | tuple[str, ...] | set[str]]) -> set[str]:
+    if not analysis_modes:
+        return set(DEFAULT_ANALYSIS_MODES)
+    normalized = {str(mode).strip().lower() for mode in analysis_modes if str(mode).strip()}
+    invalid = normalized - set(DEFAULT_ANALYSIS_MODES)
+    if invalid:
+        raise ValueError(
+            "Unsupported Stage 4 analysis mode(s): "
+            + ", ".join(sorted(invalid))
+            + f". Expected one of: {', '.join(DEFAULT_ANALYSIS_MODES)}"
+        )
+    if not normalized:
+        return set(DEFAULT_ANALYSIS_MODES)
+    return normalized
+
+
+def _default_style_evaluation(query_text: str) -> StyleEvaluation:
+    token_length = len(str(query_text or "").split())
+    char_length = len(str(query_text or ""))
+    return StyleEvaluation(
+        rule_based=RuleBasedStyleEvaluation(
+            char_length=char_length,
+            token_length=token_length,
+            question_template="skipped",
+            matched_pattern="skipped",
+            matched_template=False,
+        ),
+        llm_based=LLMStyleEvaluation(),
+    )
 
 
 def _safe_mean(values: list[float]) -> Optional[float]:
@@ -796,7 +836,9 @@ def apply(
     queries_dataset: GeneratedQueriesDataset,
     downloaded_dataset: Optional[DownloadedPapersDataset] = None,
     config_path: Optional[Path | str] = None,
+    analysis_modes: Optional[list[str] | tuple[str, ...] | set[str]] = None,
 ) -> QueryAnalysisDataset:
+    selected_modes = _normalize_analysis_modes(analysis_modes)
     paper_meta = _paper_metadata_map(downloaded_dataset)
     summary_by_id = {item.paper_id: item for item in summarized_dataset.summaries}
 
@@ -805,27 +847,32 @@ def apply(
         for paper in queries_dataset.papers_queries
         for query in paper.queries_by_view
     ]
-    rule_report = rule_judge.analyze_queries(all_queries)
+    rule_report: dict[str, Any] = {}
+    llm_report: dict[str, Any] = {}
+    rule_per_query: dict[int, dict[str, Any]] = {}
+    llm_per_query: dict[int, dict[str, Any]] = {}
+    semantic_per_query: dict[int, dict[str, Any]] = {}
+    if ANALYSIS_STYLE in selected_modes:
+        rule_report = rule_judge.analyze_queries(all_queries)
+        llm_report = llm_judge.analyze_queries(all_queries, llm=llm)
 
-    llm_report = llm_judge.analyze_queries(all_queries, llm=llm)
+        rule_per_query = {
+            item["index"]: item
+            for item in rule_report.get("per_query", [])
+            if isinstance(item, dict)
+        }
+        llm_per_query = {
+            item["index"]: item
+            for item in llm_report.get("llm_judge", {}).get("per_query", [])
+            if isinstance(item, dict)
+        }
+        semantic_per_query = {
+            item["index"]: item
+            for item in llm_report.get("semantic_constraint_analysis", {}).get("per_query", [])
+            if isinstance(item, dict)
+        }
 
-    rule_per_query = {
-        item["index"]: item
-        for item in rule_report.get("per_query", [])
-        if isinstance(item, dict)
-    }
-    llm_per_query = {
-        item["index"]: item
-        for item in llm_report.get("llm_judge", {}).get("per_query", [])
-        if isinstance(item, dict)
-    }
-    semantic_per_query = {
-        item["index"]: item
-        for item in llm_report.get("semantic_constraint_analysis", {}).get("per_query", [])
-        if isinstance(item, dict)
-    }
-
-    retrieval_evaluator = RetrievalEvaluator(llm=llm)
+    retrieval_evaluator = RetrievalEvaluator(llm=llm) if ANALYSIS_RETRIEVAL in selected_modes else None
     papers: list[PaperQueryAnalysis] = []
     decision_counts: Counter[str] = Counter()
     full_paper_counts: Counter[str] = Counter()
@@ -839,42 +886,58 @@ def apply(
 
         analyzed_queries: list[QueryAnalysisEntry] = []
         query_entries = list(paper_queries.queries_by_view)
-        retrieval_evaluations = retrieval_evaluator.evaluate_queries(
-            paper_title=paper_title,
-            abstract=abstract or "",
-            query_texts=[query.query_text for query in query_entries],
-        )
+        if retrieval_evaluator is not None:
+            retrieval_evaluations = retrieval_evaluator.evaluate_queries(
+                paper_title=paper_title,
+                abstract=abstract or "",
+                query_texts=[query.query_text for query in query_entries],
+            )
+        else:
+            retrieval_evaluations = [
+                RetrievalEvaluation(
+                    abstract_relevance="LOW-SEMANTIC-OVERLAP",
+                    false_negative_risk=None,
+                    reasoning="Skipped because retrieval analysis was disabled.",
+                )
+                for _ in query_entries
+            ]
 
         for query, retrieval_evaluation in zip(query_entries, retrieval_evaluations):
-            decision = _decision_for_retrieval(retrieval_evaluation)
-
-            rule_item = rule_per_query.get(query_index, {})
-            llm_item = llm_per_query.get(query_index, {})
-            semantic_item = semantic_per_query.get(query_index, {})
-
-            style_evaluation = StyleEvaluation(
-                rule_based=RuleBasedStyleEvaluation(
-                    char_length=int(rule_item.get("char_length", len(query.query_text))),
-                    token_length=int(rule_item.get("token_length", len(query.query_text.split()))),
-                    question_template=str(rule_item.get("template", "other")),
-                    matched_pattern=str(rule_item.get("matched_pattern", "other")),
-                    matched_template=bool(rule_item.get("matched_template", False)),
-                ),
-                llm_based=LLMStyleEvaluation(
-                    specificity_calibration_score=llm_item.get("specificity_calibration_score"),
-                    specificity_calibration_rationale=str(
-                        llm_item.get("specificity_calibration_rationale", "")
-                    ).strip(),
-                    lexical_naturalism_score=llm_item.get("lexical_naturalism_score"),
-                    lexical_naturalism_rationale=str(
-                        llm_item.get("lexical_naturalism_rationale", "")
-                    ).strip(),
-                    semantic_constraint_count=int(semantic_item.get("semantic_constraint_count", 0)),
-                    semantic_constraint_rationale=str(
-                        semantic_item.get("semantic_constraint_rationale", "")
-                    ).strip(),
-                ),
+            decision = (
+                _decision_for_retrieval(retrieval_evaluation)
+                if ANALYSIS_RETRIEVAL in selected_modes
+                else "Keep"
             )
+
+            if ANALYSIS_STYLE in selected_modes:
+                rule_item = rule_per_query.get(query_index, {})
+                llm_item = llm_per_query.get(query_index, {})
+                semantic_item = semantic_per_query.get(query_index, {})
+                style_evaluation = StyleEvaluation(
+                    rule_based=RuleBasedStyleEvaluation(
+                        char_length=int(rule_item.get("char_length", len(query.query_text))),
+                        token_length=int(rule_item.get("token_length", len(query.query_text.split()))),
+                        question_template=str(rule_item.get("template", "other")),
+                        matched_pattern=str(rule_item.get("matched_pattern", "other")),
+                        matched_template=bool(rule_item.get("matched_template", False)),
+                    ),
+                    llm_based=LLMStyleEvaluation(
+                        specificity_calibration_score=llm_item.get("specificity_calibration_score"),
+                        specificity_calibration_rationale=str(
+                            llm_item.get("specificity_calibration_rationale", "")
+                        ).strip(),
+                        lexical_naturalism_score=llm_item.get("lexical_naturalism_score"),
+                        lexical_naturalism_rationale=str(
+                            llm_item.get("lexical_naturalism_rationale", "")
+                        ).strip(),
+                        semantic_constraint_count=int(semantic_item.get("semantic_constraint_count", 0)),
+                        semantic_constraint_rationale=str(
+                            semantic_item.get("semantic_constraint_rationale", "")
+                        ).strip(),
+                    ),
+                )
+            else:
+                style_evaluation = _default_style_evaluation(query.query_text)
 
             analyzed_queries.append(
                 QueryAnalysisEntry(
@@ -893,7 +956,8 @@ def apply(
             )
 
             decision_counts[decision] += 1
-            full_paper_counts[retrieval_evaluation.abstract_relevance] += 1
+            if ANALYSIS_RETRIEVAL in selected_modes:
+                full_paper_counts[retrieval_evaluation.abstract_relevance] += 1
             query_index += 1
 
         papers.append(
@@ -929,6 +993,26 @@ def apply(
         for query in paper.queries
     ]
 
+    style_summary: dict[str, Any] = {}
+    if ANALYSIS_STYLE in selected_modes:
+        style_summary = {
+            "char_length": rule_report.get("length_stats", {}).get("char_length", {}),
+            "token_length": rule_report.get("length_stats", {}).get("token_length", {}),
+            "question_templates": rule_report.get("question_templates", {}),
+            "representative_examples": rule_report.get("representative_examples", []),
+            "qualitative_metrics": llm_report.get("qualitative_metrics", {}),
+            "semantic_constraint_analysis": llm_report.get("semantic_constraint_analysis", {}),
+            "specificity_calibration_mean": _safe_mean(
+                [float(score) for score in specificity_scores if score is not None]
+            ),
+            "lexical_naturalism_mean": _safe_mean(
+                [float(score) for score in lexical_scores if score is not None]
+            ),
+            "semantic_constraint_count_mean": _safe_mean(
+                [float(score) for score in semantic_counts]
+            ),
+        }
+
     return QueryAnalysisDataset(
         papers=papers,
         total_papers=len(papers),
@@ -937,24 +1021,9 @@ def apply(
             "retrieval_summary": {
                 "full_paper_reliance": dict(full_paper_counts),
             },
-            "style_summary": {
-                "char_length": rule_report.get("length_stats", {}).get("char_length", {}),
-                "token_length": rule_report.get("length_stats", {}).get("token_length", {}),
-                "question_templates": rule_report.get("question_templates", {}),
-                "representative_examples": rule_report.get("representative_examples", []),
-                "qualitative_metrics": llm_report.get("qualitative_metrics", {}),
-                "semantic_constraint_analysis": llm_report.get("semantic_constraint_analysis", {}),
-                "specificity_calibration_mean": _safe_mean(
-                    [float(score) for score in specificity_scores if score is not None]
-                ),
-                "lexical_naturalism_mean": _safe_mean(
-                    [float(score) for score in lexical_scores if score is not None]
-                ),
-                "semantic_constraint_count_mean": _safe_mean(
-                    [float(score) for score in semantic_counts]
-                ),
-            },
+            "style_summary": style_summary,
             "decision_counts": dict(decision_counts),
+            "analysis_modes": sorted(selected_modes),
         },
     )
 
@@ -968,7 +1037,9 @@ def run(
     config_path: Path | str,
     downloaded_path: Optional[Path] = None,
     max_concurrent_papers: int = 1,
+    analysis_modes: Optional[list[str] | tuple[str, ...] | set[str]] = None,
 ) -> dict[str, Path]:
+    selected_modes = _normalize_analysis_modes(analysis_modes)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     summarized_dataset = load_json(summarized_path, SummarizedPapersDataset)
@@ -1031,6 +1102,7 @@ def run(
                 ),
                 downloaded_dataset=downloaded_dataset,
                 config_path=config_path,
+                analysis_modes=selected_modes,
             )
             return paper_artifact.papers
 
@@ -1086,16 +1158,17 @@ def run(
     )
     paths: dict[str, Path] = {"json": json_path, "markdown": md_path}
     try:
-        embedding_path = write_query_embedding_analysis(
-            artifact=artifact,
-            output_dir=output_dir,
-            config_path=config_path,
-        )
-        if embedding_path is not None:
-            paths["embedding_analysis"] = embedding_path
-            paths["embedding_dataset_projection"] = output_dir / "query_embedding_dataset_projection.png"
-            paths["embedding_view_projection"] = output_dir / "query_embedding_view_projection.png"
-            logger.info("Query embedding analysis written to %s", embedding_path)
+        if ANALYSIS_EMBEDDING in selected_modes:
+            embedding_path = write_query_embedding_analysis(
+                artifact=artifact,
+                output_dir=output_dir,
+                config_path=config_path,
+            )
+            if embedding_path is not None:
+                paths["embedding_analysis"] = embedding_path
+                paths["embedding_dataset_projection"] = output_dir / "query_embedding_dataset_projection.png"
+                paths["embedding_view_projection"] = output_dir / "query_embedding_view_projection.png"
+                logger.info("Query embedding analysis written to %s", embedding_path)
     except Exception as exc:
         logger.warning("Query embedding analysis failed; Stage 4 JSON/MD remain valid: %s", exc)
     return paths

@@ -17,6 +17,8 @@ from openreview_pipeline.schemas.schemas_queries import (
     GeneratedQueriesDataset,
     GeneratedQueriesForPaper,
     RetrievalQuery,
+    SeedGenerationBullet,
+    SeedGenerationView,
 )
 from utils import load_json, load_prompt_template, save_json
 from utils.db.golden_query_embeddings import (
@@ -146,11 +148,13 @@ class QueryGenerator:
         bge_device: str = "cuda:2",
         embedding_service_url: Optional[str] = None,
         embedding_service_timeout: float = 120.0,
+        include_multimodal_queries: bool = True,
     ):
         self.llm = llm
         self._prompt_template = prompt_template
         self.max_concurrent_papers = max(1, int(max_concurrent_papers))
         self.golden_examples_k = max(1, int(golden_examples_k))
+        self.include_multimodal_queries = bool(include_multimodal_queries)
         self._raw_queries_per_type_view = queries_per_type_view
         if isinstance(queries_per_type_view, dict):
             self._queries_per_type_view_map = queries_per_type_view
@@ -768,6 +772,7 @@ class QueryGenerator:
         logger.debug("Generating queries for paper: %s", paper_id)
 
         queries: list[RetrievalQuery] = []
+        seed_generation: list[SeedGenerationView] = []
         expected_query_count = 0
         paper_abstract = str(getattr(summary, "abstract", "") or "").strip()
         for view in summary.views:
@@ -780,7 +785,7 @@ class QueryGenerator:
                     continue
 
                 text_bullets = [b for b in raw_bullets if not b[2]]
-                multimodal_bullets = [b for b in raw_bullets if b[2]]
+                multimodal_bullets = [b for b in raw_bullets if b[2]] if self.include_multimodal_queries else []
 
                 text_expected = min(self._get_queries_count(query_type, view_name), len(text_bullets))
                 multimodal_expected = len(multimodal_bullets)
@@ -794,6 +799,22 @@ class QueryGenerator:
                     paper_abstract=paper_abstract,
                     view=view,
                     bullets=all_bullets,
+                )
+                seed_generation.append(
+                    SeedGenerationView(
+                        view_name=view_name,
+                        bullets=[
+                            SeedGenerationBullet(
+                                index=bullet.index,
+                                bullet_text=bullet.text,
+                                query_seed=bullet.query_seed,
+                                multimodal_ref=list(bullet.multimodal_ref),
+                                multimodal_dependency=bullet.multimodal_dependency,
+                                multimodal_dependency_rationale=bullet.multimodal_dependency_rationale or None,
+                            )
+                            for bullet in seeded_bullets
+                        ],
+                    )
                 )
 
                 # Single query prompt context with ALL query-facing seeds — one LLM call per view.
@@ -845,6 +866,7 @@ class QueryGenerator:
             paper_id=paper_id,
             paper_title=paper_title,
             queries_by_view=queries,
+            seed_generation=seed_generation,
         )
 
     def apply(

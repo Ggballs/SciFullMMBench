@@ -5,30 +5,48 @@ import json
 import os
 from typing import Any, Dict, Iterable, List, Optional
 
-from sqlalchemy import (
-    BigInteger,
-    Column,
-    Index,
-    Integer,
-    MetaData,
-    String,
-    Table,
-    Text,
-    TIMESTAMP,
-    UniqueConstraint,
-    create_engine,
-    select,
-    text,
-)
+from sqlalchemy import BigInteger, Column, Index, Integer, MetaData, String, Table, Text, TIMESTAMP, UniqueConstraint, create_engine, select, text
 from sqlalchemy.dialects.postgresql import JSONB, insert as postgres_insert
 from sqlalchemy.engine import Engine
 
 STAGE5_CANDIDATE_QUEUE_TABLE = "stage5_candidate_queue"
 STAGE5_CANDIDATE_QUEUE_CANONICAL_VIEW = "stage5_candidate_queue_canonical"
+STAGE5_QUEUE_TABLE_ENV = "SCIFULL_STAGE5_QUEUE_TABLE"
 
-metadata = MetaData()
+_TABLE_CACHE: dict[str, tuple[MetaData, Table, str]] = {}
 
-_CANONICAL_RANKED_CTE_SQL = f"""
+
+def _normalized_table_name(table_name: Optional[str] = None) -> str:
+    raw = str(table_name or os.getenv(STAGE5_QUEUE_TABLE_ENV) or STAGE5_CANDIDATE_QUEUE_TABLE).strip()
+    if not raw:
+        return STAGE5_CANDIDATE_QUEUE_TABLE
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
+    if raw[0].isdigit() or any(ch not in allowed for ch in raw):
+        raise ValueError(f"Invalid Stage5 queue table name: {raw!r}")
+    return raw
+
+
+def resolve_queue_storage_names(table_name: Optional[str] = None) -> tuple[str, str]:
+    resolved = _normalized_table_name(table_name)
+    if resolved == STAGE5_CANDIDATE_QUEUE_TABLE:
+        return resolved, STAGE5_CANDIDATE_QUEUE_CANONICAL_VIEW
+    canonical = f"{resolved}_canonical"
+    if len(canonical) <= 63:
+        return resolved, canonical
+    digest = hashlib.sha1(resolved.encode("utf-8")).hexdigest()[:8]
+    return resolved, f"{resolved[:63 - len('_canonical_') - len(digest)]}_canonical_{digest}"
+
+
+def _sql_ident(prefix: str, table_name: str) -> str:
+    base = f"{prefix}_{table_name}"
+    if len(base) <= 63:
+        return base
+    digest = hashlib.sha1(base.encode("utf-8")).hexdigest()[:8]
+    return f"{base[:63 - len(digest) - 1]}_{digest}"
+
+
+def _canonical_ranked_cte_sql(table_name: str) -> str:
+    return f"""
 WITH ranked AS (
     SELECT
         q.*,
@@ -53,61 +71,69 @@ WITH ranked AS (
                 q.updated_at DESC,
                 q.id DESC
         ) AS canonical_rank
-    FROM {STAGE5_CANDIDATE_QUEUE_TABLE} AS q
+    FROM {table_name} AS q
 )
 """
 
-stage5_candidate_queue = Table(
-    STAGE5_CANDIDATE_QUEUE_TABLE,
-    metadata,
-    Column("id", BigInteger, primary_key=True, autoincrement=True),
-    Column("candidate_key", String(64), nullable=False),
-    Column("query_key", String(64), nullable=False),
-    Column("paper_id", String(128), nullable=False),
-    Column("paper_title", Text, nullable=False),
-    Column("query_text", Text, nullable=False),
-    Column("query_type", String(32), nullable=False),
-    Column("source_view", String(64), nullable=False),
-    Column("is_multimodal", String(8), nullable=False, server_default=text("'false'")),
-    Column("related_bullet_indice", Integer, nullable=True),
-    Column("related_bullet_justification", Text, nullable=True),
-    Column("multimodal_rationale", Text, nullable=True),
-    Column("keywords_extracted", JSONB, nullable=False, server_default=text("'[]'::jsonb")),
-    Column("search_query", Text, nullable=False),
-    Column("retrieval_rank", Integer, nullable=False),
-    Column("candidate_title", Text, nullable=False),
-    Column("candidate_arxiv_id", String(64), nullable=True),
-    Column("candidate_url", Text, nullable=True),
-    Column("candidate_pdf_url", Text, nullable=True),
-    Column("candidate_venue", String(256), nullable=True),
-    Column("candidate_year", Integer, nullable=True),
-    Column("candidate_authors", JSONB, nullable=False, server_default=text("'[]'::jsonb")),
-    Column("candidate_abstract", Text, nullable=True),
-    Column("candidate_citations", Integer, nullable=True),
-    Column("parse_status", String(32), nullable=False, server_default=text("'pending'")),
-    Column("review_status", String(32), nullable=False, server_default=text("'pending'")),
-    Column("review_label", String(32), nullable=True),
-    Column("review_reason", Text, nullable=True),
-    Column("error_message", Text, nullable=True),
-    Column("review_payload", JSONB, nullable=True),
-    Column(
-        "created_at",
-        TIMESTAMP(timezone=True),
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-    ),
-    Column(
-        "updated_at",
-        TIMESTAMP(timezone=True),
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP"),
-        server_onupdate=text("CURRENT_TIMESTAMP"),
-    ),
-    UniqueConstraint("candidate_key", name="uq_stage5_candidate_queue_candidate_key"),
-    Index("idx_stage5_candidate_queue_query_key", "query_key"),
-    Index("idx_stage5_candidate_queue_review_status", "review_status"),
-    Index("idx_stage5_candidate_queue_parse_status", "parse_status"),
-)
+
+def _get_queue_table(table_name: Optional[str] = None) -> tuple[MetaData, Table, str, str]:
+    resolved_table_name, canonical_view_name = resolve_queue_storage_names(table_name)
+    cached = _TABLE_CACHE.get(resolved_table_name)
+    if cached is not None:
+        metadata, table, cached_view_name = cached
+        return metadata, table, resolved_table_name, cached_view_name
+
+    metadata = MetaData()
+    table = Table(
+        resolved_table_name,
+        metadata,
+        Column("id", BigInteger, primary_key=True, autoincrement=True),
+        Column("candidate_key", String(64), nullable=False),
+        Column("query_key", String(64), nullable=False),
+        Column("paper_id", String(128), nullable=False),
+        Column("paper_title", Text, nullable=False),
+        Column("query_text", Text, nullable=False),
+        Column("query_type", String(32), nullable=False),
+        Column("source_view", String(64), nullable=False),
+        Column("is_multimodal", String(8), nullable=False, server_default=text("'false'")),
+        Column("related_bullet_indice", Integer, nullable=True),
+        Column("related_bullet_justification", Text, nullable=True),
+        Column("multimodal_rationale", Text, nullable=True),
+        Column("keywords_extracted", JSONB, nullable=False, server_default=text("'[]'::jsonb")),
+        Column("search_query", Text, nullable=False),
+        Column("retrieval_rank", Integer, nullable=False),
+        Column("candidate_title", Text, nullable=False),
+        Column("candidate_arxiv_id", String(64), nullable=True),
+        Column("candidate_url", Text, nullable=True),
+        Column("candidate_pdf_url", Text, nullable=True),
+        Column("candidate_venue", String(256), nullable=True),
+        Column("candidate_year", Integer, nullable=True),
+        Column("candidate_authors", JSONB, nullable=False, server_default=text("'[]'::jsonb")),
+        Column("candidate_abstract", Text, nullable=True),
+        Column("candidate_citations", Integer, nullable=True),
+        Column("parse_status", String(32), nullable=False, server_default=text("'pending'")),
+        Column("review_status", String(32), nullable=False, server_default=text("'pending'")),
+        Column("review_label", String(32), nullable=True),
+        Column("review_reason", Text, nullable=True),
+        Column("error_message", Text, nullable=True),
+        Column("review_payload", JSONB, nullable=True),
+        Column("task", String(128), nullable=True),
+        Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
+        Column(
+            "updated_at",
+            TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=text("CURRENT_TIMESTAMP"),
+            server_onupdate=text("CURRENT_TIMESTAMP"),
+        ),
+        UniqueConstraint("candidate_key", name=_sql_ident("uq_stage5_candidate_queue_candidate_key", resolved_table_name)),
+        Index(_sql_ident("idx_stage5_candidate_queue_query_key", resolved_table_name), "query_key"),
+        Index(_sql_ident("idx_stage5_candidate_queue_review_status", resolved_table_name), "review_status"),
+        Index(_sql_ident("idx_stage5_candidate_queue_parse_status", resolved_table_name), "parse_status"),
+        Index(_sql_ident("idx_stage5_candidate_queue_task", resolved_table_name), "task"),
+    )
+    _TABLE_CACHE[resolved_table_name] = (metadata, table, canonical_view_name)
+    return metadata, table, resolved_table_name, canonical_view_name
 
 
 def get_engine(db_url: Optional[str] = None) -> Engine:
@@ -121,18 +147,32 @@ def get_engine(db_url: Optional[str] = None) -> Engine:
         raise ValueError(
             "Set SCIFULL_STAGE5_DB_URL, GOLDEN_EMBEDDING_DB_URL, or DATABASE_URL to use Stage5 queue storage."
         )
-    return create_engine(url, pool_pre_ping=True)
+    pool_size = int(os.environ.get("SCIFULL_DB_POOL_SIZE", "5"))
+    max_overflow = int(os.environ.get("SCIFULL_DB_POOL_OVERFLOW", "5"))
+    for attempt in range(1, 11):
+        try:
+            engine = create_engine(url, pool_pre_ping=True, pool_size=pool_size, max_overflow=max_overflow)
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            return engine
+        except Exception as e:
+            if "too many clients" in str(e) and attempt < 10:
+                import time
+                time.sleep(attempt * 3)
+                continue
+            raise
 
 
 def ensure_schema(*, engine: Optional[Engine] = None, db_url: Optional[str] = None) -> Engine:
     db = engine or get_engine(db_url)
-    metadata.create_all(db, tables=[stage5_candidate_queue])
+    metadata, queue_table, queue_table_name, canonical_view_name = _get_queue_table()
+    metadata.create_all(db, tables=[queue_table])
     with db.begin() as conn:
         conn.execute(
             text(
                 f"""
-                CREATE OR REPLACE VIEW {STAGE5_CANDIDATE_QUEUE_CANONICAL_VIEW} AS
-                {_CANONICAL_RANKED_CTE_SQL}
+                CREATE OR REPLACE VIEW {canonical_view_name} AS
+                {_canonical_ranked_cte_sql(queue_table_name)}
                 SELECT *
                 FROM ranked
                 WHERE canonical_rank = 1
@@ -173,7 +213,8 @@ def upsert_candidates(
         return 0
 
     db = ensure_schema(engine=engine, db_url=db_url)
-    stmt = postgres_insert(stage5_candidate_queue).values(prepared_rows)
+    _, queue_table, _, _ = _get_queue_table()
+    stmt = postgres_insert(queue_table).values(prepared_rows)
     # Retrieval reruns should refresh candidate metadata, but must not clobber
     # review progress already written by the review loop.
     protected_columns = {
@@ -190,7 +231,7 @@ def upsert_candidates(
     }
     update_columns = {
         col.name: stmt.excluded[col.name]
-        for col in stage5_candidate_queue.columns
+        for col in queue_table.columns
         if col.name not in protected_columns
     }
     update_columns["updated_at"] = text("CURRENT_TIMESTAMP")
@@ -206,10 +247,19 @@ def upsert_candidates(
 def claim_pending_candidates(
     limit: int,
     *,
+    task_filter: Optional[str] = None,
+    parse_status_filter: Optional[str] = None,
     engine: Optional[Engine] = None,
     db_url: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     db = ensure_schema(engine=engine, db_url=db_url)
+    _, _, queue_table_name, canonical_view_name = _get_queue_table()
+    clauses = []
+    if task_filter:
+        clauses.append("AND q.task = :task_filter")
+    if parse_status_filter:
+        clauses.append("AND q.parse_status = :parse_status_filter")
+    extra_where = " ".join(clauses)
     claim_sql = text(
         f"""
         WITH
@@ -218,24 +268,23 @@ def claim_pending_candidates(
                 query_key,
                 COUNT(*) FILTER (WHERE review_status = 'completed') AS completed_reviews,
                 COUNT(*) FILTER (WHERE review_status = 'completed' AND review_label = 'hard_negative') AS completed_hard_negatives
-            FROM {STAGE5_CANDIDATE_QUEUE_CANONICAL_VIEW}
+            FROM {queue_table_name}
             GROUP BY query_key
         ),
         claimable AS (
             SELECT q.id
-            FROM {STAGE5_CANDIDATE_QUEUE_TABLE} AS q
-            JOIN {STAGE5_CANDIDATE_QUEUE_CANONICAL_VIEW} AS c
-              ON c.id = q.id
+            FROM {queue_table_name} AS q
             LEFT JOIN query_progress AS qp
               ON qp.query_key = q.query_key
             WHERE q.review_status = 'pending'
               AND COALESCE(qp.completed_hard_negatives, 0) < 10
               AND COALESCE(qp.completed_reviews, 0) < 30
+              {extra_where}
             ORDER BY q.query_key, q.retrieval_rank, q.id
             FOR UPDATE OF q SKIP LOCKED
             LIMIT :limit
         )
-        UPDATE {STAGE5_CANDIDATE_QUEUE_TABLE} AS target
+        UPDATE {queue_table_name} AS target
         SET review_status = 'processing',
             updated_at = CURRENT_TIMESTAMP
         FROM claimable
@@ -243,9 +292,246 @@ def claim_pending_candidates(
         RETURNING target.*
         """
     )
+    params: dict[str, Any] = {"limit": int(limit)}
+    if task_filter:
+        params["task_filter"] = task_filter
+    if parse_status_filter:
+        params["parse_status_filter"] = parse_status_filter
     with db.begin() as conn:
-        rows = conn.execute(claim_sql, {"limit": int(limit)}).mappings().all()
+        rows = conn.execute(claim_sql, params).mappings().all()
     return [dict(row) for row in rows]
+
+
+def claim_parse_candidates(
+    limit: int,
+    *,
+    min_query_candidates: int = 25,
+    task_filter: Optional[str] = None,
+    engine: Optional[Engine] = None,
+    db_url: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    db = engine if engine else ensure_schema(engine=engine, db_url=db_url)
+    _, _, queue_table_name, _ = _get_queue_table()
+    task_clause = "AND q.task = :task_filter" if task_filter else ""
+    claim_sql = text(
+        f"""
+        WITH
+        eligible_queries AS (
+            SELECT query_key
+            FROM {queue_table_name}
+            GROUP BY query_key
+            HAVING COUNT(*) >= :min_query_candidates
+        ),
+        claimable AS (
+            SELECT q.id
+            FROM {queue_table_name} AS q
+            JOIN eligible_queries AS eq
+              ON eq.query_key = q.query_key
+            WHERE q.review_status = 'pending'
+              AND q.parse_status = 'downloaded'
+              {task_clause}
+            ORDER BY q.query_key, q.retrieval_rank, q.id
+            FOR UPDATE OF q SKIP LOCKED
+            LIMIT :limit
+        )
+        UPDATE {queue_table_name} AS target
+        SET parse_status = :processing_status,
+            updated_at = CURRENT_TIMESTAMP
+        FROM claimable
+        WHERE target.id = claimable.id
+        RETURNING target.*
+        """
+    )
+    import os
+    parser_id = os.environ.get("SCIFULL_PARSER_ID", "A")
+    processing_status = f"processing_parser_{parser_id}"
+    params: dict[str, Any] = {
+        "limit": int(limit),
+        "min_query_candidates": max(1, int(min_query_candidates)),
+        "processing_status": processing_status,
+    }
+    if task_filter:
+        params["task_filter"] = task_filter
+    with db.begin() as conn:
+        rows = conn.execute(claim_sql, params).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def claim_download_candidates(
+    limit: int,
+    *,
+    task_filter: str,
+    engine: Optional[Engine] = None,
+    db_url: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Claim rows that need PDF download: pending/downloaded parse_status, no cached PDF on disk."""
+    db = ensure_schema(engine=engine, db_url=db_url)
+    _, _, queue_table_name, _ = _get_queue_table()
+    claim_sql = text(
+        f"""
+        WITH claimable AS (
+            SELECT q.id
+            FROM {queue_table_name} AS q
+            WHERE q.task = :task_filter
+              AND q.review_status = 'pending'
+              AND q.parse_status IN ('pending', 'downloaded')
+              AND q.candidate_pdf_url IS NOT NULL
+              AND (
+                  q.review_payload IS NULL
+                  OR q.review_payload->>'candidate_pdf_path' IS NULL
+              )
+            ORDER BY q.query_key, q.retrieval_rank, q.id
+            FOR UPDATE OF q SKIP LOCKED
+            LIMIT :limit
+        )
+        UPDATE {queue_table_name} AS target
+        SET parse_status = 'downloading',
+            updated_at = CURRENT_TIMESTAMP
+        FROM claimable
+        WHERE target.id = claimable.id
+        RETURNING target.*
+        """
+    )
+    with db.begin() as conn:
+        rows = conn.execute(
+            claim_sql,
+            {"limit": int(limit), "task_filter": str(task_filter)},
+        ).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def batch_update_download_results(
+    results: list[dict[str, Any]],  # list of {"candidate_id": int, "pdf_path": str, "parse_status": str}
+    *,
+    engine: Optional[Engine] = None,
+    db_url: Optional[str] = None,
+) -> int:
+    """Batch update download results for multiple rows."""
+    if not results:
+        return 0
+    db = ensure_schema(engine=engine, db_url=db_url)
+    _, _, queue_table_name, _ = _get_queue_table()
+    updated = 0
+    with db.begin() as conn:
+        for r in results:
+            pdf_path_value = str(r["pdf_path"]).strip() if r.get("pdf_path") else None
+            conn.execute(
+                text(
+                    f"""
+                    UPDATE {queue_table_name}
+                    SET parse_status = :parse_status,
+                        review_payload = jsonb_build_object('candidate_pdf_path', CAST(:pdf_path AS text)),
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = :candidate_id
+                    """
+                ),
+                {
+                    "candidate_id": int(r["candidate_id"]),
+                    "parse_status": str(r.get("parse_status", "downloaded")),
+                    "pdf_path": pdf_path_value,
+                },
+            )
+            updated += 1
+    return updated
+
+
+def claim_pending_query(
+    task_filter: str,
+    *,
+    engine: Optional[Engine] = None,
+    db_url: Optional[str] = None,
+) -> Optional[List[Dict[str, Any]]]:
+    """Claim all pending review rows for a single query_key (query-level concurrency).
+
+    Returns all rows for the claimed query, ordered by retrieval_rank.
+    Returns None if no pending query is available.
+    """
+    db = ensure_schema(engine=engine, db_url=db_url)
+    _, _, queue_table_name, _ = _get_queue_table()
+    with db.begin() as conn:
+        claim_sql = text(
+            f"""
+            WITH picked AS (
+                SELECT q.query_key
+                FROM {queue_table_name} AS q
+                WHERE q.review_status = 'pending'
+                  AND q.task = :task_filter
+                ORDER BY q.query_key, q.retrieval_rank
+                LIMIT 1
+                FOR UPDATE OF q SKIP LOCKED
+            )
+            UPDATE {queue_table_name} AS target
+            SET review_status = 'processing',
+                updated_at = CURRENT_TIMESTAMP
+            FROM picked
+            WHERE target.query_key = picked.query_key
+              AND target.review_status = 'pending'
+            RETURNING target.*
+            """
+        )
+        rows = conn.execute(claim_sql, {"task_filter": str(task_filter)}).mappings().all()
+    if not rows:
+        return None
+    return sorted([dict(row) for row in rows], key=lambda r: int(r.get("retrieval_rank", 0) or 0))
+
+
+def close_query_remaining(
+    query_key: str,
+    *,
+    engine: Optional[Engine] = None,
+    db_url: Optional[str] = None,
+) -> int:
+    """Mark remaining pending rows for a query as skipped after review budget met."""
+    db = ensure_schema(engine=engine, db_url=db_url)
+    _, _, queue_table_name, _ = _get_queue_table()
+    with db.begin() as conn:
+        result = conn.execute(
+            text(
+                f"""
+                UPDATE {queue_table_name}
+                SET review_status = 'completed',
+                    review_label = 'ignored',
+                    review_reason = 'review_budget_exhausted',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE query_key = :query_key
+                  AND review_status = 'pending'
+                """
+            ),
+            {"query_key": str(query_key)},
+        )
+    return int(result.rowcount or 0)
+
+
+def update_download_result(
+    candidate_id: int,
+    *,
+    pdf_path: str,
+    parse_status: str = "downloaded",
+    engine: Optional[Engine] = None,
+    db_url: Optional[str] = None,
+) -> None:
+    """Store downloaded PDF path and set parse_status."""
+    db = ensure_schema(engine=engine, db_url=db_url)
+    _, _, queue_table_name, _ = _get_queue_table()
+    pdf_path_value = str(pdf_path).strip() if pdf_path else None
+    update_sql = text(
+        f"""
+        UPDATE {queue_table_name}
+        SET parse_status = :parse_status,
+            review_payload = jsonb_build_object('candidate_pdf_path', CAST(:pdf_path AS text)),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = :candidate_id
+        """
+    )
+    with db.begin() as conn:
+        conn.execute(
+            update_sql,
+            {
+                "candidate_id": int(candidate_id),
+                "parse_status": str(parse_status),
+                "pdf_path": pdf_path_value,
+            },
+        )
 
 
 def update_candidate_result(
@@ -261,9 +547,10 @@ def update_candidate_result(
     db_url: Optional[str] = None,
 ) -> None:
     db = ensure_schema(engine=engine, db_url=db_url)
+    _, _, queue_table_name, _ = _get_queue_table()
     update_sql = text(
         f"""
-        UPDATE {STAGE5_CANDIDATE_QUEUE_TABLE}
+        UPDATE {queue_table_name}
         SET parse_status = :parse_status,
             review_status = :review_status,
             review_label = :review_label,
@@ -296,6 +583,7 @@ def close_satisfied_query_pending_candidates(
     db_url: Optional[str] = None,
 ) -> int:
     db = ensure_schema(engine=engine, db_url=db_url)
+    _, _, queue_table_name, _ = _get_queue_table()
     close_sql = text(
         f"""
         WITH query_progress AS (
@@ -303,11 +591,11 @@ def close_satisfied_query_pending_candidates(
                 query_key,
                 COUNT(*) FILTER (WHERE review_status = 'completed') AS completed_reviews,
                 COUNT(*) FILTER (WHERE review_status = 'completed' AND review_label = 'hard_negative') AS completed_hard_negatives
-            FROM {STAGE5_CANDIDATE_QUEUE_CANONICAL_VIEW}
+            FROM {queue_table_name}
             WHERE query_key = :query_key
             GROUP BY query_key
         )
-        UPDATE {STAGE5_CANDIDATE_QUEUE_TABLE} AS q
+        UPDATE {queue_table_name} AS q
         SET parse_status = 'skipped',
             review_status = 'completed',
             review_label = 'ignored',
@@ -339,17 +627,16 @@ def reset_stale_processing_candidates(
     db_url: Optional[str] = None,
 ) -> int:
     db = ensure_schema(engine=engine, db_url=db_url)
+    _, _, queue_table_name, _ = _get_queue_table()
     reset_sql = text(
         f"""
         WITH stale_ids AS (
             SELECT q.id
-            FROM {STAGE5_CANDIDATE_QUEUE_TABLE} AS q
-            JOIN {STAGE5_CANDIDATE_QUEUE_CANONICAL_VIEW} AS c
-              ON c.id = q.id
+            FROM {queue_table_name} AS q
             WHERE q.review_status = 'processing'
               AND q.updated_at < (CURRENT_TIMESTAMP - (:stale_after_seconds * INTERVAL '1 second'))
         )
-        UPDATE {STAGE5_CANDIDATE_QUEUE_TABLE} AS target
+        UPDATE {queue_table_name} AS target
         SET review_status = 'pending',
             updated_at = CURRENT_TIMESTAMP
         FROM stale_ids
@@ -371,6 +658,7 @@ def reset_retryable_candidates(
     db_url: Optional[str] = None,
 ) -> int:
     db = ensure_schema(engine=engine, db_url=db_url)
+    _, _, queue_table_name, canonical_view_name = _get_queue_table()
 
     failed_filters: list[str] = []
     params: dict[str, Any] = {}
@@ -399,12 +687,12 @@ def reset_retryable_candidates(
         f"""
         WITH target_ids AS (
             SELECT q.id
-            FROM {STAGE5_CANDIDATE_QUEUE_TABLE} AS q
-            JOIN {STAGE5_CANDIDATE_QUEUE_CANONICAL_VIEW} AS c
+            FROM {queue_table_name} AS q
+            JOIN {canonical_view_name} AS c
               ON c.id = q.id
             WHERE {" OR ".join(target_predicates)}
         )
-        UPDATE {STAGE5_CANDIDATE_QUEUE_TABLE} AS target
+        UPDATE {queue_table_name} AS target
         SET review_status = 'pending',
             parse_status = 'pending',
             review_label = NULL,
@@ -428,7 +716,8 @@ def load_status_summary(
     canonical: bool = True,
 ) -> Dict[str, int]:
     db = ensure_schema(engine=engine, db_url=db_url)
-    source = STAGE5_CANDIDATE_QUEUE_CANONICAL_VIEW if canonical else STAGE5_CANDIDATE_QUEUE_TABLE
+    _, _, queue_table_name, canonical_view_name = _get_queue_table()
+    source = canonical_view_name if canonical else queue_table_name
     stmt = text(
         f"""
         SELECT review_status, COUNT(*) AS count
@@ -449,7 +738,8 @@ def load_label_summary(
     canonical: bool = True,
 ) -> Dict[str, int]:
     db = ensure_schema(engine=engine, db_url=db_url)
-    source = STAGE5_CANDIDATE_QUEUE_CANONICAL_VIEW if canonical else STAGE5_CANDIDATE_QUEUE_TABLE
+    _, _, queue_table_name, canonical_view_name = _get_queue_table()
+    source = canonical_view_name if canonical else queue_table_name
     stmt = text(
         f"""
         SELECT review_label, COUNT(*) AS count
@@ -470,20 +760,19 @@ def load_queue_snapshot(
     db_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     db = ensure_schema(engine=engine, db_url=db_url)
+    _, queue_table, queue_table_name, canonical_view_name = _get_queue_table()
     with db.begin() as conn:
-        raw_total = int(conn.execute(text(f"SELECT COUNT(*) FROM {STAGE5_CANDIDATE_QUEUE_TABLE}")).scalar() or 0)
-        canonical_total = int(
-            conn.execute(text(f"SELECT COUNT(*) FROM {STAGE5_CANDIDATE_QUEUE_CANONICAL_VIEW}")).scalar() or 0
-        )
+        raw_total = int(conn.execute(text(f"SELECT COUNT(*) FROM {queue_table_name}")).scalar() or 0)
+        canonical_total = int(conn.execute(text(f"SELECT COUNT(*) FROM {canonical_view_name}")).scalar() or 0)
         distinct_query_key = int(
-            conn.execute(text(f"SELECT COUNT(DISTINCT query_key) FROM {STAGE5_CANDIDATE_QUEUE_CANONICAL_VIEW}")).scalar()
+            conn.execute(text(f"SELECT COUNT(DISTINCT query_key) FROM {canonical_view_name}")).scalar()
             or 0
         )
         raw_status_rows = conn.execute(
             text(
                 f"""
                 SELECT review_status, COUNT(*) AS count
-                FROM {STAGE5_CANDIDATE_QUEUE_TABLE}
+                FROM {queue_table_name}
                 GROUP BY review_status
                 """
             )
@@ -492,7 +781,7 @@ def load_queue_snapshot(
             text(
                 f"""
                 SELECT review_status, COUNT(*) AS count
-                FROM {STAGE5_CANDIDATE_QUEUE_CANONICAL_VIEW}
+                FROM {canonical_view_name}
                 GROUP BY review_status
                 """
             )
@@ -501,7 +790,7 @@ def load_queue_snapshot(
             text(
                 f"""
                 SELECT review_label, COUNT(*) AS count
-                FROM {STAGE5_CANDIDATE_QUEUE_CANONICAL_VIEW}
+                FROM {canonical_view_name}
                 GROUP BY review_label
                 """
             )
@@ -510,7 +799,7 @@ def load_queue_snapshot(
             text(
                 f"""
                 SELECT id, retrieval_rank, query_text, review_label, candidate_title, updated_at, parse_status
-                FROM {STAGE5_CANDIDATE_QUEUE_CANONICAL_VIEW}
+                FROM {canonical_view_name}
                 WHERE review_status = :status
                 ORDER BY updated_at DESC
                 LIMIT :limit
@@ -522,7 +811,7 @@ def load_queue_snapshot(
             text(
                 f"""
                 SELECT parse_status, COUNT(*) AS count
-                FROM {STAGE5_CANDIDATE_QUEUE_CANONICAL_VIEW}
+                FROM {canonical_view_name}
                 WHERE review_status = :status
                 GROUP BY parse_status
                 """
@@ -534,7 +823,7 @@ def load_queue_snapshot(
                 text(
                     f"""
                     SELECT COUNT(*)
-                    FROM {STAGE5_CANDIDATE_QUEUE_CANONICAL_VIEW}
+                    FROM {canonical_view_name}
                     WHERE review_status = 'processing'
                       AND updated_at < (CURRENT_TIMESTAMP - (:stale_after_seconds * INTERVAL '1 second'))
                     """
@@ -589,11 +878,12 @@ def load_candidates_for_query(
     canonical: bool = False,
 ) -> List[Dict[str, Any]]:
     db = ensure_schema(engine=engine, db_url=db_url)
+    _, queue_table, _, canonical_view_name = _get_queue_table()
     if canonical:
         stmt = text(
             f"""
             SELECT *
-            FROM {STAGE5_CANDIDATE_QUEUE_CANONICAL_VIEW}
+            FROM {canonical_view_name}
             WHERE query_key = :query_key
             ORDER BY retrieval_rank, id
             """
@@ -602,9 +892,9 @@ def load_candidates_for_query(
             rows = conn.execute(stmt, {"query_key": str(query_key)}).mappings().all()
     else:
         stmt = (
-            select(stage5_candidate_queue)
-            .where(stage5_candidate_queue.c.query_key == str(query_key))
-            .order_by(stage5_candidate_queue.c.retrieval_rank, stage5_candidate_queue.c.id)
+            select(queue_table)
+            .where(queue_table.c.query_key == str(query_key))
+            .order_by(queue_table.c.retrieval_rank, queue_table.c.id)
         )
         with db.begin() as conn:
             rows = conn.execute(stmt).mappings().all()

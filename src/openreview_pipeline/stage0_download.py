@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -29,6 +30,13 @@ REVIEW_FIELD_MAPPING = {
     "presentation": "clarity",
     "contribution": "originality",
 }
+
+
+def _openreview_proxy_settings() -> Dict[str, str]:
+    return {
+        "http_proxy": str(os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or "").strip(),
+        "https_proxy": str(os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or "").strip(),
+    }
 
 
 def parse_forum_ids(forum_id: Any) -> List[str]:
@@ -286,6 +294,14 @@ class OpenReviewAPIDownloader:
             from openreview.api import OpenReviewClient as ClientClass
         except ImportError:
             ClientClass = openreview.Client
+
+        proxy_settings = _openreview_proxy_settings()
+        if proxy_settings["http_proxy"] or proxy_settings["https_proxy"]:
+            logger.info(
+                "Stage 0 OpenReview client using proxies http=%r https=%r",
+                proxy_settings["http_proxy"],
+                proxy_settings["https_proxy"],
+            )
 
         if self.token:
             return ClientClass(baseurl=OPENREVIEW_BASEURL, token=self.token)

@@ -137,6 +137,7 @@ class _DoclingPoolSlot:
     parse_count: int = 0
     last_parse_seconds: float = 0.0
     last_error: Optional[str] = None
+    converter: Any = None  # cached per-slot, reused across parses
 
 
 class _DoclingPool:
@@ -222,6 +223,28 @@ class _DoclingPool:
 
 
 _DOCLING_POOL = _DoclingPool(pool_size=_DOCLING_POOL_SIZE)
+
+
+def configure_stage5_runtime(
+    *,
+    docling_pool_size: Optional[int] = None,
+    http_proxy: Optional[str] = None,
+    https_proxy: Optional[str] = None,
+) -> None:
+    global _DOCLING_POOL, _DOCLING_POOL_SIZE
+    if docling_pool_size is not None:
+        new_size = max(1, int(docling_pool_size))
+        if new_size != _DOCLING_POOL_SIZE:
+            logger.info("stage5_runtime_reconfigure_docling_pool old=%s new=%s", _DOCLING_POOL_SIZE, new_size)
+            _DOCLING_POOL_SIZE = new_size
+            _DOCLING_POOL = _DoclingPool(pool_size=_DOCLING_POOL_SIZE)
+            with _WORKER_DOCLING_STATE_LOCK:
+                _WORKER_DOCLING_STATES.clear()
+        os.environ["DOCLING_POOL_SIZE"] = str(new_size)
+    if http_proxy is not None:
+        os.environ["HTTP_PROXY"] = str(http_proxy)
+    if https_proxy is not None:
+        os.environ["HTTPS_PROXY"] = str(https_proxy)
 
 
 def get_docling_runtime_snapshot() -> dict[str, Any]:
@@ -372,10 +395,13 @@ class Stage5RuntimeSupport:
 
         parse_error: Optional[str] = None
         try:
-            slot.initialized = True
+            if not slot.initialized or slot.converter is None:
+                from utils.docling_parse import build_text_only_converter
+                slot.converter = build_text_only_converter(disable_table_structure=False)
+                slot.initialized = True
             _update_worker_docling_state(worker_id, converter_initialized=True)
 
-            payload = parse_pdf_text_only(pdf_path, disable_table_structure=False)
+            payload = parse_pdf_text_only(pdf_path, disable_table_structure=False, converter=slot.converter)
             markdown = str(payload.get("markdown") or "") if payload.get("ok") else None
             page_count = int(payload.get("page_count") or 0)
             parse_error = None if payload.get("ok") else str(payload.get("error") or "docling_parse_failed")
@@ -387,7 +413,7 @@ class Stage5RuntimeSupport:
                     slot.slot_id,
                     parse_error,
                 )
-                fallback_payload = parse_pdf_text_only(pdf_path, disable_table_structure=True)
+                fallback_payload = parse_pdf_text_only(pdf_path, disable_table_structure=True, converter=slot.converter)
                 if fallback_payload.get("ok"):
                     markdown = str(fallback_payload.get("markdown") or "")
                     page_count = int(fallback_payload.get("page_count") or 0)
@@ -447,6 +473,13 @@ class Stage5RuntimeSupport:
             with _DOCLING_INFLIGHT_LOCK:
                 _DOCLING_INFLIGHT = max(0, _DOCLING_INFLIGHT - 1)
 
+    def _persist_full_text_markdown(self, pdf_path: Path, markdown: str) -> Path:
+        full_text_dir = pdf_path.parent / "parsed_full_text"
+        full_text_dir.mkdir(parents=True, exist_ok=True)
+        full_text_path = full_text_dir / f"{pdf_path.stem}.md"
+        full_text_path.write_text(markdown, encoding="utf-8")
+        return full_text_path
+
     def _download_and_parse_pdf(
         self,
         pdf_url: str,
@@ -468,6 +501,7 @@ class Stage5RuntimeSupport:
 
         pdf_name = f"{self._pdf_cache_slug(paper_title)}-{self._pdf_url_hash(pdf_url)}.pdf"
         pdf_path = pdf_dir / pdf_name
+        full_text_path: Optional[Path] = None
         startup_gate_opened = False
 
         def _download_if_needed(*, force_redownload: bool = False) -> Optional[dict[str, Any]]:
@@ -548,6 +582,8 @@ class Stage5RuntimeSupport:
                                 )
                             return {
                                 "markdown": None,
+                                "pdf_path": str(pdf_path),
+                                "full_text_path": None,
                                 "metrics": metrics,
                                 "failure_stage": "download_failed",
                             }
@@ -572,7 +608,14 @@ class Stage5RuntimeSupport:
         markdown, docling_metrics = self._parse_pdf_direct_docling(pdf_path, paper_title)
         metrics.update(docling_metrics)
         if markdown:
-            return {"markdown": markdown, "metrics": metrics, "failure_stage": None}
+            full_text_path = self._persist_full_text_markdown(pdf_path, markdown)
+            return {
+                "markdown": markdown,
+                "pdf_path": str(pdf_path),
+                "full_text_path": str(full_text_path),
+                "metrics": metrics,
+                "failure_stage": None,
+            }
 
         docling_error = str(docling_metrics.get("docling_error") or "").lower()
         if "is not valid" in docling_error:
@@ -591,9 +634,22 @@ class Stage5RuntimeSupport:
             markdown, docling_metrics = self._parse_pdf_direct_docling(pdf_path, paper_title)
             metrics.update(docling_metrics)
             if markdown:
-                return {"markdown": markdown, "metrics": metrics, "failure_stage": None}
+                full_text_path = self._persist_full_text_markdown(pdf_path, markdown)
+                return {
+                    "markdown": markdown,
+                    "pdf_path": str(pdf_path),
+                    "full_text_path": str(full_text_path),
+                    "metrics": metrics,
+                    "failure_stage": None,
+                }
 
-        return {"markdown": None, "metrics": metrics, "failure_stage": "docling_parse_failed"}
+        return {
+            "markdown": None,
+            "pdf_path": str(pdf_path),
+            "full_text_path": None,
+            "metrics": metrics,
+            "failure_stage": "docling_parse_failed",
+        }
 
     def _pdf_cache_slug(self, paper_title: str) -> str:
         raise NotImplementedError
