@@ -30,10 +30,11 @@ def ensure_table(engine) -> None:
                 CREATE TABLE IF NOT EXISTS {PAPER_TEXT_EMBEDDINGS_TABLE} (
                     paper_id TEXT NOT NULL,
                     model_name TEXT NOT NULL,
+                    task TEXT NOT NULL DEFAULT 'legacy',
                     markdown_chars INTEGER NOT NULL DEFAULT 0,
                     embedding vector NOT NULL,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (paper_id, model_name)
+                    PRIMARY KEY (paper_id, model_name, task)
                 )
                 """
             )
@@ -41,10 +42,16 @@ def ensure_table(engine) -> None:
         conn.commit()
 
 
-def existing_embeddings(engine) -> set[tuple[str, str]]:
+def existing_embeddings(engine, task: str | None = None) -> set[tuple[str, str]]:
     pairs: set[tuple[str, str]] = set()
     with engine.connect() as conn:
-        rows = conn.execute(text(f"SELECT paper_id, model_name FROM {PAPER_TEXT_EMBEDDINGS_TABLE}"))
+        if task:
+            rows = conn.execute(
+                text(f"SELECT paper_id, model_name FROM {PAPER_TEXT_EMBEDDINGS_TABLE} WHERE task = :task"),
+                {"task": task},
+            )
+        else:
+            rows = conn.execute(text(f"SELECT paper_id, model_name FROM {PAPER_TEXT_EMBEDDINGS_TABLE}"))
         for row in rows:
             pairs.add((str(row[0]), str(row[1])))
     return pairs
@@ -60,12 +67,13 @@ def insert_embeddings(
     model_name: str,
     embeddings: list[list[float]],
     markdown_chars: dict[str, int],
+    task: str = "legacy",
 ) -> int:
     insert_sql = text(
         f"""
-        INSERT INTO {PAPER_TEXT_EMBEDDINGS_TABLE} (paper_id, model_name, markdown_chars, embedding)
-        VALUES (:paper_id, :model_name, :markdown_chars, CAST(:embedding AS vector))
-        ON CONFLICT (paper_id, model_name) DO NOTHING
+        INSERT INTO {PAPER_TEXT_EMBEDDINGS_TABLE} (paper_id, model_name, task, markdown_chars, embedding)
+        VALUES (:paper_id, :model_name, :task, :markdown_chars, CAST(:embedding AS vector))
+        ON CONFLICT (paper_id, model_name, task) DO NOTHING
         """
     )
     inserted = 0
@@ -76,6 +84,7 @@ def insert_embeddings(
                 {
                     "paper_id": paper_id,
                     "model_name": model_name,
+                    "task": task,
                     "markdown_chars": markdown_chars.get(paper_id, 0),
                     "embedding": _vector_str(embedding),
                 },

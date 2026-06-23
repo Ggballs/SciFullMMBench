@@ -249,6 +249,7 @@ def claim_pending_candidates(
     *,
     task_filter: Optional[str] = None,
     parse_status_filter: Optional[str] = None,
+    skip_budget_check: bool = False,
     engine: Optional[Engine] = None,
     db_url: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
@@ -260,38 +261,60 @@ def claim_pending_candidates(
     if parse_status_filter:
         clauses.append("AND q.parse_status = :parse_status_filter")
     extra_where = " ".join(clauses)
-    claim_sql = text(
-        f"""
-        WITH
-        query_progress AS (
-            SELECT
-                query_key,
-                COUNT(*) FILTER (WHERE review_status = 'completed') AS completed_reviews,
-                COUNT(*) FILTER (WHERE review_status = 'completed' AND review_label = 'hard_negative') AS completed_hard_negatives
-            FROM {queue_table_name}
-            GROUP BY query_key
-        ),
-        claimable AS (
-            SELECT q.id
-            FROM {queue_table_name} AS q
-            LEFT JOIN query_progress AS qp
-              ON qp.query_key = q.query_key
-            WHERE q.review_status = 'pending'
-              AND COALESCE(qp.completed_hard_negatives, 0) < 10
-              AND COALESCE(qp.completed_reviews, 0) < 30
-              {extra_where}
-            ORDER BY q.query_key, q.retrieval_rank, q.id
-            FOR UPDATE OF q SKIP LOCKED
-            LIMIT :limit
+
+    if skip_budget_check:
+        claim_sql = text(
+            f"""
+            WITH claimable AS (
+                SELECT q.id
+                FROM {queue_table_name} AS q
+                WHERE q.review_status = 'pending'
+                  {extra_where}
+                ORDER BY q.query_key, q.retrieval_rank, q.id
+                FOR UPDATE OF q SKIP LOCKED
+                LIMIT :limit
+            )
+            UPDATE {queue_table_name} AS target
+            SET review_status = 'processing',
+                updated_at = CURRENT_TIMESTAMP
+            FROM claimable
+            WHERE target.id = claimable.id
+            RETURNING target.*
+            """
         )
-        UPDATE {queue_table_name} AS target
-        SET review_status = 'processing',
-            updated_at = CURRENT_TIMESTAMP
-        FROM claimable
-        WHERE target.id = claimable.id
-        RETURNING target.*
-        """
-    )
+    else:
+        claim_sql = text(
+            f"""
+            WITH
+            query_progress AS (
+                SELECT
+                    query_key,
+                    COUNT(*) FILTER (WHERE review_status = 'completed') AS completed_reviews,
+                    COUNT(*) FILTER (WHERE review_status = 'completed' AND review_label = 'hard_negative') AS completed_hard_negatives
+                FROM {queue_table_name}
+                GROUP BY query_key
+            ),
+            claimable AS (
+                SELECT q.id
+                FROM {queue_table_name} AS q
+                LEFT JOIN query_progress AS qp
+                  ON qp.query_key = q.query_key
+                WHERE q.review_status = 'pending'
+                  AND COALESCE(qp.completed_hard_negatives, 0) < 10
+                  AND COALESCE(qp.completed_reviews, 0) < 30
+                  {extra_where}
+                ORDER BY q.query_key, q.retrieval_rank, q.id
+                FOR UPDATE OF q SKIP LOCKED
+                LIMIT :limit
+            )
+            UPDATE {queue_table_name} AS target
+            SET review_status = 'processing',
+                updated_at = CURRENT_TIMESTAMP
+            FROM claimable
+            WHERE target.id = claimable.id
+            RETURNING target.*
+            """
+        )
     params: dict[str, Any] = {"limit": int(limit)}
     if task_filter:
         params["task_filter"] = task_filter

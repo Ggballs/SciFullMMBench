@@ -1084,6 +1084,157 @@ def enqueue_stage5_queue_candidates_parallel_search(
     }
 
 
+def _mp_review_worker(
+    worker_id: int,
+    work_queue: "multiprocessing.Queue",
+    stop_event: "multiprocessing.Event",
+    result_queue: "multiprocessing.Queue",
+    config: dict,
+) -> None:
+    """
+    Single review worker in a subprocess (spawn).
+    - Reads markdown from disk, builds prompt, calls LLM, sends result back.
+    - NO DB access, NO GPU, NO Docling.
+    """
+    import json as _json
+    import logging
+    import os as _os
+    import re as _re
+    import time as _time
+    from pathlib import Path
+
+    logger = logging.getLogger(__name__)
+
+    # Build LLM backend from config
+    from utils.llm_base import OpenAICompatibleBackend
+
+    llm_cfg = config.get("llm", {})
+    llm_backend = OpenAICompatibleBackend(
+        model=llm_cfg.get("model", "deepseek-v4-flash"),
+        base_url=llm_cfg.get("base_url", "https://api.deepseek.com"),
+        api_tokens=llm_cfg.get("api_tokens") or [],
+        per_key_max_concurrent_requests=llm_cfg.get("per_key_max_concurrent_requests", 1),
+        per_key_request_interval_seconds=llm_cfg.get("per_key_request_interval_seconds", 0.0),
+        max_retries=llm_cfg.get("max_retries", 3),
+        retry_backoff_seconds=llm_cfg.get("retry_backoff_seconds", 8.0),
+        max_tokens=llm_cfg.get("max_tokens", 4096),
+        temperature=llm_cfg.get("temperature", 0.0),
+    )
+
+    # Load prompt template
+    prompt_template = config.get("review_prompt_template", "")
+    pdf_dir = Path(config.get("pdf_output_dir", "/tmp/hard_negative_pdfs"))
+
+    while not stop_event.is_set():
+        try:
+            row = work_queue.get(timeout=30)
+        except Exception:
+            continue
+
+        cid = int(row["id"])
+        title = str(row.get("candidate_title") or "")
+        query_text = str(row.get("query_text") or "")
+
+        try:
+            # ---- Gather evidence ----
+            rp = row.get("review_payload") or {}
+            if not isinstance(rp, dict):
+                rp = {}
+            full_text_path = str(rp.get("candidate_full_text_path") or "")
+
+            paper_evidence = ""
+            if full_text_path:
+                ft_path = Path(full_text_path)
+                if ft_path.exists():
+                    paper_evidence = ft_path.read_text(encoding="utf-8")[:60000]
+
+            if not paper_evidence:
+                paper_evidence = (
+                    f"Title: {title}\n"
+                    f"Authors: {row.get('candidate_authors', '')}\n"
+                    f"Year: {row.get('candidate_year', '')}\n"
+                    f"Venue: {row.get('candidate_venue', '')}\n"
+                    f"Abstract: {row.get('candidate_abstract', '')}"
+                )[:60000]
+
+            # ---- Build prompt ----
+            prompt = prompt_template
+            replacements = {
+                "query": query_text,
+                "paper_title": title,
+                "authors": str(row.get("candidate_authors") or ""),
+                "year": str(row.get("candidate_year") or ""),
+                "venue": str(row.get("candidate_venue") or ""),
+                "abstract": str(row.get("candidate_abstract") or ""),
+                "paper_evidence": paper_evidence,
+            }
+            for key, value in replacements.items():
+                prompt = prompt.replace(f"{{{{{key}}}}}", value)
+
+            # ---- Call LLM ----
+            llm_started_at = _time.monotonic()
+            response = llm_backend.generate(prompt)
+            llm_request_seconds = _time.monotonic() - llm_started_at
+
+            # ---- Parse JSON ----
+            try:
+                json_match = _re.search(r"\{[\s\S]*\}", response)
+                parsed = _json.loads(json_match.group()) if json_match else {}
+            except Exception:
+                parsed = {}
+
+            if not isinstance(parsed, dict) or not parsed.get("label"):
+                result_queue.put((worker_id, cid, {
+                    "parse_status": "parsed",
+                    "review_status": "failed",
+                    "review_label": "",
+                    "review_reason": "",
+                    "error_message": "response_parse_failed",
+                    "review_payload": None,
+                    "_query_key": str(row.get("query_key") or ""),
+                }))
+                continue
+
+            label = str(parsed.get("label", "") or "")
+            reason = str(parsed.get("reason", "") or "")
+            if label not in ("positive", "hard_negative", "ignored"):
+                label = "ignored"
+
+            payload = {
+                "parse_status": "parsed",
+                "review_status": "completed",
+                "review_label": label,
+                "review_reason": reason,
+                "error_message": None,
+                "_query_key": str(row.get("query_key") or ""),
+                "review_payload": {
+                    "candidate_title": title,
+                    "candidate_arxiv_id": str(row.get("candidate_arxiv_id") or ""),
+                    "candidate_pdf_url": str(row.get("candidate_pdf_url") or ""),
+                    "candidate_pdf_path": str(rp.get("candidate_pdf_path") or ""),
+                    "candidate_full_text_path": full_text_path,
+                    "label": label,
+                    "reason": reason,
+                },
+            }
+            result_queue.put((worker_id, cid, payload))
+
+        except Exception as exc:
+            logger.exception("mp_review_worker_%d_failed id=%s title=%r", worker_id, cid, title)
+            try:
+                result_queue.put((worker_id, cid, {
+                    "parse_status": "parsed",
+                    "review_status": "failed",
+                    "review_label": "",
+                    "review_reason": "",
+                    "error_message": f"worker_exception: {exc}",
+                    "review_payload": None,
+                    "_query_key": str(row.get("query_key") or ""),
+                }))
+            except Exception:
+                pass
+
+
 def run_stage5_review_pass(
     *,
     llm_backend,
@@ -1116,67 +1267,56 @@ def run_stage5_review_pass(
     _counters = {"hn": 0, "pos": 0, "ignored": 0}
     counter_lock = threading.Lock()
 
-    shared_miner = HardNegativeMiner(
-        llm=llm_backend,
-        scholar_client=None,  # type: ignore[arg-type]
-        scholar_max_results=10,
-        review_max_workers=1,
-        pdf_output_dir=pdf_output_dir,
-    )
+    # Load the review prompt template (passed to workers via config)
+    from utils import load_prompt_template
+    from utils.project_paths import resolve_prompt_path
+    _review_prompt = load_prompt_template(resolve_prompt_path("hard_negative_review_candidate.txt"))
 
-    def _process_row(worker_id: int, row: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-        started_at = time.monotonic()
-        candidate = _row_to_candidate(row)
-        try:
-            shared_miner.bind_worker_context(worker_id)
-            review = shared_miner._review_single_candidate(
-                str(row["query_text"]), candidate, on_stage_update=None,
-            )
-        except Exception as exc:
-            logger.exception("stage5_queue_row_failed id=%s error=%s", row.get("id"), exc)
-            return int(row["id"]), {
-                "parse_status": "parsed", "review_status": "failed",
-                "review_label": "", "review_reason": "", "error_message": f"review_exception: {exc}",
-                "review_payload": None, "timings": {"total_row_seconds": time.monotonic() - started_at},
-            }
-        if not review:
-            return int(row["id"]), {
-                "parse_status": "parsed", "review_status": "failed",
-                "review_label": "", "review_reason": "", "error_message": "response_parse_failed",
-                "review_payload": None, "timings": {"total_row_seconds": time.monotonic() - started_at},
-            }
-        timings = dict(review.get("timings") or {})
-        timings.setdefault("total_row_seconds", time.monotonic() - started_at)
-        return int(row["id"]), {
-            "parse_status": "parsed",
-            "review_status": str(review.get("review_status") or "completed"),
-            "review_label": str(review.get("label") or ""),
-            "review_reason": str(review.get("reason") or ""),
-            "error_message": str(review.get("error_message")) if review.get("error_message") else None,
-            "review_payload": {
-                "candidate_title": candidate.paper_title,
-                "candidate_arxiv_id": candidate.arxiv_id,
-                "candidate_pdf_url": candidate.pdf_url,
-                "candidate_pdf_path": candidate.pdf_path,
-                "candidate_full_text_path": candidate.full_text_path,
-                "label": review.get("label"),
-                "reason": review.get("reason"),
-            },
-            "timings": timings,
-        }
+    # Build LLM config dict for workers (avoids serializing LLMBackend)
+    # Extract api_tokens from the existing backend's request_manager slots
+    _rm = getattr(llm_backend, "request_manager", None)
+    _api_tokens = []
+    if _rm is not None:
+        for _slot in getattr(_rm, "_slots", []):
+            _client = getattr(_slot, "client", None)
+            _key = getattr(_client, "api_key", None)
+            if _key:
+                _api_tokens.append(_key)
+    # Fallback: read from env vars
+    if not _api_tokens:
+        import os as _os2
+        _env_tokens = _os2.environ.get("DEEPSEEK_API_KEY") or _os2.environ.get("SCIFULL_HARD_NEGATIVE_LLM_API_TOKENS") or ""
+        _api_tokens = [t.strip() for t in _env_tokens.replace(",", " ").split() if t.strip()]
 
-    # Batch fetcher + in-memory queue (same pattern as parse)
+    _llm_cfg = {
+        "model": getattr(llm_backend, "model", "deepseek-v4-flash"),
+        "base_url": getattr(llm_backend, "base_url", "https://api.deepseek.com"),
+        "api_tokens": _api_tokens,
+        "per_key_max_concurrent_requests": getattr(_rm, "per_key_max_concurrent_requests", 1) if _rm else 1,
+        "per_key_request_interval_seconds": getattr(_rm, "per_key_request_interval_seconds", 0.0) if _rm else 0.0,
+        "max_retries": getattr(_rm, "max_retries", 3) if _rm else 3,
+        "retry_backoff_seconds": getattr(_rm, "retry_backoff_seconds", 8.0) if _rm else 8.0,
+        "max_tokens": getattr(llm_backend, "max_tokens", 4096),
+        "temperature": getattr(llm_backend, "temperature", 0.0),
+    }
+
     import queue as queue_module
-    review_queue: queue_module.Queue = queue_module.Queue(maxsize=1000)
+    import multiprocessing
+
+    ctx = multiprocessing.get_context("spawn")
+    review_queue = ctx.Queue(maxsize=1000)
+    result_queue = ctx.Queue()
+    stop_event = ctx.Event()
+
     fetched_count = 0
 
     def review_batch_fetcher():
         nonlocal fetched_count
         while not stop_event.is_set():
             try:
-                free = review_queue.maxsize - review_queue.qsize()
+                free = 1000 - review_queue.qsize()
                 claim_n = min(500, max(10, free))
-                rows = claim_pending_candidates(claim_n, engine=db, task_filter=task_filter or None, parse_status_filter="parsed")
+                rows = claim_pending_candidates(claim_n, engine=db, task_filter=task_filter or None, parse_status_filter="parsed", skip_budget_check=True)
                 if rows:
                     for row in rows:
                         review_queue.put(row, timeout=60)
@@ -1187,42 +1327,53 @@ def run_stage5_review_pass(
                 logger.warning("review_batch_fetcher_error: %s", exc)
                 time.sleep(5)
 
-    def worker_loop(worker_id: int) -> WorkerSummary:
-        summary = WorkerSummary(worker_id=worker_id)
-        try:
-            while not stop_event.is_set():
-                try:
-                    row = review_queue.get(timeout=30)
-                except queue_module.Empty:
-                    continue
-                candidate_id, payload = _process_row(worker_id, row)
+    def result_collector():
+        while not stop_event.is_set():
+            try:
+                worker_id, candidate_id, payload = result_queue.get(timeout=5)
                 update_candidate_result(candidate_id, engine=db, **{
-                    k: v for k, v in payload.items() if k not in {"timings", "_worker_id"}
+                    k: v for k, v in payload.items() if k not in {"timings", "_worker_id", "_query_key"}
                 })
-                close_satisfied_query_pending_candidates(str(row.get("query_key") or ""), engine=db)
-                review_queue.task_done()
-                summary.processed_rows += 1
+                query_key = str(payload.get("_query_key") or "")
+                if query_key:
+                    close_satisfied_query_pending_candidates(query_key, engine=db)
                 label = payload.get("review_label", "")
                 with counter_lock:
                     if label == "hard_negative": _counters["hn"] += 1
                     elif label == "positive": _counters["pos"] += 1
                     elif label == "ignored": _counters["ignored"] += 1
-        finally:
-            shared_miner.unbind_worker_context()
-        return summary
+            except queue_module.Empty:
+                continue
+            except Exception as exc:
+                logger.warning("review_result_collector_error: %s", exc)
 
-    stop_event = threading.Event()
     fetcher_thread = threading.Thread(target=review_batch_fetcher, daemon=True)
     fetcher_thread.start()
+    result_thread = threading.Thread(target=result_collector, daemon=True)
+    result_thread.start()
 
-    worker_count = max_workers
-    with ThreadPoolExecutor(max_workers=worker_count) as executor:
-        futures = [executor.submit(worker_loop, wid) for wid in range(1, worker_count + 1)]
-        for future in as_completed(futures):
-            future.result()
+    worker_config = {
+        "llm": _llm_cfg,
+        "review_prompt_template": _review_prompt,
+        "pdf_output_dir": str(pdf_output_dir),
+    }
+
+    procs: list[multiprocessing.Process] = []
+    for wid in range(1, max_workers + 1):
+        p = ctx.Process(
+            target=_mp_review_worker,
+            args=(wid, review_queue, stop_event, result_queue, worker_config),
+            daemon=True,
+        )
+        p.start()
+        procs.append(p)
+
+    for p in procs:
+        p.join()
 
     stop_event.set()
     fetcher_thread.join(timeout=1.0)
+    result_thread.join(timeout=1.0)
 
     final_snapshot = load_queue_snapshot(engine=db, stale_processing_seconds=max(1, int(stale_processing_seconds)))
     final_counts = dict(final_snapshot.get("canonical_counts") or {})
@@ -1320,6 +1471,137 @@ def _run_download_pass(
     return summary
 
 
+def _mp_parse_worker(
+    worker_id: int,
+    work_queue: "multiprocessing.Queue",
+    stop_event: "multiprocessing.Event",
+    result_queue: "multiprocessing.Queue",
+    config: dict,
+) -> None:
+    """
+    Single parse worker in a subprocess (spawn).
+    - 1 converter, lazily created on first use
+    - Parses PDF via Docling, saves markdown to disk
+    - Sends result back via result_queue
+    - NO DB access, NO PDF download (rows are already 'downloaded')
+    """
+    import logging
+    import os as _os
+    from pathlib import Path
+
+    logger = logging.getLogger(__name__)
+
+    # Thread limits BEFORE any library import that spawns threads
+    for _var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+        _os.environ.setdefault(_var, _os.environ.get("TORCH_NUM_THREADS", "2"))
+
+    from utils.docling_parse import build_text_only_converter, parse_pdf_text_only
+
+    converter = None
+    pdf_dir = Path(config["pdf_output_dir"])
+    full_text_dir = pdf_dir / "parsed_full_text"
+    full_text_dir.mkdir(parents=True, exist_ok=True)
+
+    while not stop_event.is_set():
+        try:
+            row = work_queue.get(timeout=30)
+        except Exception:
+            continue
+
+        cid = int(row["id"])
+        title = str(row.get("candidate_title") or "")
+
+        # pdf_path is stored inside the review_payload JSONB column
+        rp = row.get("review_payload") or {}
+        if not isinstance(rp, dict):
+            rp = {}
+        pdf_path_str = str(rp.get("candidate_pdf_path") or "")
+        existing_full_text = str(rp.get("candidate_full_text_path") or "")
+
+        try:
+            # ---- No PDF path → fail (preserve existing review_payload) ----
+            if not pdf_path_str:
+                result_queue.put((worker_id, cid, {
+                    "parse_status": "failed",
+                    "review_status": "pending",
+                    "error_message": "no_pdf_path",
+                    "review_payload": rp if rp else None,
+                }))
+                continue
+
+            pdf_path = Path(pdf_path_str)
+            md_path = full_text_dir / f"{pdf_path.stem}.md"
+
+            # ---- MD already exists → skip ----
+            if md_path.exists() and md_path.stat().st_size > 0:
+                result_queue.put((worker_id, cid, {
+                    "parse_status": "parsed",
+                    "review_status": "pending",
+                    "error_message": None,
+                    "review_payload": {
+                        "candidate_title": title,
+                        "candidate_pdf_path": pdf_path_str,
+                        "candidate_full_text_path": str(md_path),
+                        "parse_status": "parsed",
+                        "parse_only": True,
+                    },
+                }))
+                continue
+
+            # ---- Lazy init converter (once per process) ----
+            if converter is None:
+                converter = build_text_only_converter(disable_table_structure=False)
+
+            # ---- Parse with fallback ----
+            result = parse_pdf_text_only(pdf_path, converter=converter)
+            if not result["ok"]:
+                result = parse_pdf_text_only(
+                    pdf_path, disable_table_structure=True, converter=converter
+                )
+
+            if result["ok"]:
+                md_path.write_text(result["markdown"] or "", encoding="utf-8")
+                payload = {
+                    "parse_status": "parsed",
+                    "review_status": "pending",
+                    "error_message": None,
+                    "review_payload": {
+                        "candidate_title": title,
+                        "candidate_pdf_path": pdf_path_str,
+                        "candidate_full_text_path": str(md_path),
+                        "parse_status": "parsed",
+                        "parse_only": True,
+                    },
+                }
+            else:
+                payload = {
+                    "parse_status": "metadata_only",
+                    "review_status": "pending",
+                    "error_message": str(result.get("error") or "parse_failed"),
+                    "review_payload": {
+                        "candidate_title": title,
+                        "candidate_pdf_path": pdf_path_str,
+                        "candidate_full_text_path": None,
+                        "parse_status": "metadata_only",
+                        "parse_only": True,
+                    },
+                }
+
+            result_queue.put((worker_id, cid, payload))
+
+        except Exception as exc:
+            logger.exception("mp_worker_%d_failed id=%s title=%r", worker_id, cid, title)
+            try:
+                result_queue.put((worker_id, cid, {
+                    "parse_status": "failed",
+                    "review_status": "pending",
+                    "error_message": f"worker_exception: {exc}",
+                    "review_payload": rp if rp else None,
+                }))
+            except Exception:
+                pass
+
+
 def run_stage5_parse_pass(
     *,
     llm_backend,
@@ -1335,13 +1617,6 @@ def run_stage5_parse_pass(
         db = get_engine()
     queue_table_name, canonical_view_name = resolve_queue_storage_names()
     max_workers = max(1, int(parse_max_workers))
-    miner = HardNegativeMiner(
-        llm=llm_backend,
-        scholar_client=None,  # type: ignore[arg-type]
-        scholar_max_results=10,
-        review_max_workers=max_workers,
-        pdf_output_dir=pdf_output_dir,
-    )
 
     logger.info(
         "stage5_queue_parse_start max_workers=%s min_query_candidates=%s queue_table=%s canonical_view=%s",
@@ -1372,142 +1647,17 @@ def run_stage5_parse_pass(
         if result.rowcount:
             logger.info("stage5_parse_reset_%s count=%s", _processing_status, result.rowcount)
 
-    stop_event = threading.Event()
-    processed_counter = 0
-    processed_lock = threading.Lock()
-
-    def claim_next_row() -> Optional[dict[str, Any]]:
-        nonlocal processed_counter
-        rows = claim_parse_candidates(
-            1,
-            engine=db,
-            min_query_candidates=max(1, int(min_query_candidates)),
-            task_filter=task_filter,
-        )
-        if not rows:
-            return None
-        with processed_lock:
-            processed_counter += 1
-        row = rows[0]
-        logger.info(
-            "stage5_queue_parse_row_claimed id=%s query_key=%s retrieval_rank=%s title=%r processed_counter=%s",
-            row.get("id"),
-            row.get("query_key"),
-            row.get("retrieval_rank"),
-            row.get("candidate_title"),
-            processed_counter,
-        )
-        return row
-
-    def process_row(worker_id: int, row: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-        started_at = time.monotonic()
-        candidate = _row_to_candidate(row)
-        monitor.worker_stage(worker_id, "parsing", row=row)
-
-        def on_stage_update(stage: str, metadata: dict[str, Any]) -> None:
-            if stage == "download_wait":
-                monitor.worker_stage(worker_id, "download_wait", row=row)
-            elif stage == "download":
-                monitor.worker_stage(worker_id, "download", row=row)
-            elif stage == "download_cooldown":
-                monitor.worker_stage(worker_id, "download_cooldown", row=row)
-            elif stage in {"docling", "docling_fallback"}:
-                monitor.worker_stage(worker_id, "docling", row=row)
-
-        try:
-            miner.bind_worker_context(worker_id)
-            if candidate.full_text_path and Path(candidate.full_text_path).exists():
-                return int(row["id"]), {
-                    "parse_status": "parsed",
-                    "review_status": "pending",
-                    "error_message": None,
-                    "review_payload": {
-                        "candidate_title": candidate.paper_title,
-                        "candidate_arxiv_id": candidate.arxiv_id,
-                        "candidate_pdf_url": candidate.pdf_url,
-                        "candidate_pdf_path": candidate.pdf_path,
-                        "candidate_full_text_path": candidate.full_text_path,
-                        "parse_status": "parsed",
-                        "parse_only": True,
-                    },
-                    "timings": {"total_row_seconds": time.monotonic() - started_at},
-                }
-
-            pdf_url = candidate.pdf_url
-            if not pdf_url:
-                return int(row["id"]), {
-                    "parse_status": "no_pdf",
-                    "review_status": "pending",
-                    "error_message": None,
-                    "review_payload": {
-                        "candidate_title": candidate.paper_title,
-                        "candidate_arxiv_id": candidate.arxiv_id,
-                        "candidate_pdf_url": None,
-                        "candidate_pdf_path": None,
-                        "candidate_full_text_path": None,
-                        "parse_status": "no_pdf",
-                        "parse_only": True,
-                    },
-                    "timings": {"total_row_seconds": time.monotonic() - started_at},
-                }
-
-            pdf_result = miner._download_and_parse_pdf(
-                pdf_url,
-                candidate.paper_title,
-                worker_id=worker_id,
-                on_stage_update=on_stage_update,
-            )
-            candidate.pdf_path = str(pdf_result.get("pdf_path") or "") or candidate.pdf_path
-            candidate.full_text_path = str(pdf_result.get("full_text_path") or "") or candidate.full_text_path
-            timings = dict(pdf_result.get("metrics") or {})
-            failure_stage = str(pdf_result.get("failure_stage") or "")
-            parse_status = "parsed" if candidate.full_text_path else ("failed" if failure_stage else "metadata_only")
-            error_message = str(timings.get("docling_error") or failure_stage) if failure_stage else None
-            return int(row["id"]), {
-                "parse_status": parse_status,
-                "review_status": "pending",
-                "error_message": error_message,
-                "review_payload": {
-                    "candidate_title": candidate.paper_title,
-                    "candidate_arxiv_id": candidate.arxiv_id,
-                    "candidate_pdf_url": candidate.pdf_url,
-                    "candidate_pdf_path": candidate.pdf_path,
-                    "candidate_full_text_path": candidate.full_text_path,
-                    "parse_status": parse_status,
-                    "parse_only": True,
-                },
-                "timings": {
-                    **timings,
-                    "total_row_seconds": time.monotonic() - started_at,
-                },
-            }
-        except Exception as exc:
-            logger.exception("stage5_queue_parse_row_failed id=%s error=%s", row.get("id"), exc)
-            return int(row["id"]), {
-                "parse_status": "failed",
-                "review_status": "pending",
-                "error_message": f"parse_exception: {exc}",
-                "review_payload": None,
-                "timings": {"total_row_seconds": time.monotonic() - started_at},
-            }
-
-    def persist_row_result(worker_id: int, candidate_id: int, payload: dict[str, Any]) -> None:
-        update_candidate_result(
-            candidate_id,
-            engine=db,
-            parse_status=str(payload.get("parse_status") or "pending"),
-            review_status=str(payload.get("review_status") or "pending"),
-            error_message=str(payload.get("error_message")) if payload.get("error_message") else None,
-            review_payload=payload.get("review_payload"),
-        )
-        monitor.worker_completed_row(worker_id, payload)
-
     import queue as queue_module
-    work_queue: queue_module.Queue = queue_module.Queue(maxsize=2000)
+    import multiprocessing
+
+    ctx = multiprocessing.get_context("spawn")
+    work_queue = ctx.Queue(maxsize=2000)
+    result_queue = ctx.Queue()
+    stop_event = ctx.Event()
+
     fetched_count = 0
     parsed_count = 0
     counter_lock = threading.Lock()
-    stop_event = threading.Event()
 
     # --- DEBUG: signal handler to dump queue state ---
     def _debug_queue_state(_signum, _frame):
@@ -1526,9 +1676,13 @@ def run_stage5_parse_pass(
                 ).scalar()
         except Exception as _e:
             db_count = f"err:{type(_e).__name__}:{_e}"
+        try:
+            _qs = work_queue.qsize()
+        except Exception:
+            _qs = -1
         logger.warning(
-            "DEBUG_QUEUE qsize=%d qmax=%d db_processing=%s parsed=%d fetched=%d",
-            work_queue.qsize(), work_queue.maxsize, str(db_count), parsed_count, fetched_count,
+            "DEBUG_QUEUE qsize=%s qmax=%d db_processing=%s parsed=%d fetched=%d",
+            str(_qs), 2000, str(db_count), parsed_count, fetched_count,
         )
     import signal as _signal
     _signal.signal(_signal.SIGUSR1, _debug_queue_state)
@@ -1538,7 +1692,7 @@ def run_stage5_parse_pass(
         nonlocal fetched_count
         while not stop_event.is_set():
             try:
-                free = work_queue.maxsize - work_queue.qsize()
+                free = 2000 - work_queue.qsize()
                 claim_n = min(500, max(10, free))
                 rows = claim_parse_candidates(claim_n, engine=db, task_filter=task_filter, min_query_candidates=1)
                 if rows:
@@ -1553,26 +1707,26 @@ def run_stage5_parse_pass(
                 logger.warning("fetcher_error: %s", exc)
                 time.sleep(5)
 
-    def worker_loop(worker_id: int) -> WorkerSummary:
+    def result_collector():
         nonlocal parsed_count
-        summary = WorkerSummary(worker_id=worker_id)
-        monitor.worker_started(worker_id)
-        try:
-            while not stop_event.is_set():
-                try:
-                    row = work_queue.get(timeout=30)
-                except queue_module.Empty:
-                    continue
-                candidate_id, payload = process_row(worker_id, row)
-                persist_row_result(worker_id, candidate_id, payload)
-                work_queue.task_done()
-                summary.processed_rows += 1
+        while not stop_event.is_set():
+            try:
+                worker_id, candidate_id, payload = result_queue.get(timeout=5)
+                update_candidate_result(
+                    candidate_id,
+                    engine=db,
+                    parse_status=str(payload.get("parse_status") or "pending"),
+                    review_status=str(payload.get("review_status") or "pending"),
+                    error_message=str(payload.get("error_message")) if payload.get("error_message") else None,
+                    review_payload=payload.get("review_payload"),
+                )
                 with counter_lock:
                     parsed_count += 1
-        finally:
-            miner.unbind_worker_context()
-            monitor.worker_exited(worker_id, summary.processed_rows)
-        return summary
+                monitor.worker_completed_row(worker_id, payload)
+            except queue_module.Empty:
+                continue
+            except Exception as exc:
+                logger.warning("result_collector_error: %s", exc)
 
     def summary_loop() -> None:
         interval = max(1, int(monitor_interval))
@@ -1597,21 +1751,37 @@ def run_stage5_parse_pass(
     summary_thread.start()
     fetcher_thread = threading.Thread(target=batch_fetcher_loop, daemon=True)
     fetcher_thread.start()
+    result_thread = threading.Thread(target=result_collector, daemon=True)
+    result_thread.start()
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(worker_loop, wid) for wid in range(1, max_workers + 1)]
-        for future in as_completed(futures):
-            future.result()
+    worker_config = {
+        "pdf_output_dir": str(pdf_output_dir),
+    }
+
+    procs: list[multiprocessing.Process] = []
+    for wid in range(1, max_workers + 1):
+        p = ctx.Process(
+            target=_mp_parse_worker,
+            args=(wid, work_queue, stop_event, result_queue, worker_config),
+            daemon=True,
+        )
+        p.start()
+        procs.append(p)
+        time.sleep(0.5)  # stagger GPU model loading
+
+    for p in procs:
+        p.join()
 
     stop_event.set()
     summary_thread.join(timeout=1.0)
     fetcher_thread.join(timeout=1.0)
+    result_thread.join(timeout=1.0)
     final_snapshot = load_queue_snapshot(engine=db)
     final_counts = dict(final_snapshot.get("canonical_counts") or {})
     final_counts["stale_processing"] = int(final_snapshot.get("stale_processing_count", 0) or 0)
     monitor.update_summary(
         queue_counts=final_counts,
-        latest_summary={"rows_processed": processed_counter},
+        latest_summary={"rows_processed": parsed_count},
         docling_runtime=get_docling_runtime_snapshot(),
         pdf_runtime=get_pdf_download_runtime_snapshot(),
         process_runtime=_read_process_runtime(),
@@ -1619,7 +1789,7 @@ def run_stage5_parse_pass(
     )
     monitor.write_snapshot()
     return {
-        "processed_rows": int(sum(summary.processed_rows for summary in (future.result() for future in futures))),
+        "processed_rows": parsed_count,
         "queue_drained": False,
     }
 
@@ -1848,7 +2018,7 @@ def run_stage5_queue_mode(
                 break
             run_stage5_review_pass(
                 llm_backend=llm_backend,
-                review_max_workers=review_max_workers,
+                review_max_workers=max(1, int(review_workers)),
                 scheduler_mode=scheduler_mode,
                 batch_size=batch_size,
                 pdf_output_dir=paths.pdf_output_dir,

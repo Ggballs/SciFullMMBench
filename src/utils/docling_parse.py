@@ -120,20 +120,31 @@ def build_text_only_converter(*, disable_table_structure: bool) -> Any:
     from docling.datamodel.pipeline_options import PdfPipelineOptions
     from docling.document_converter import DocumentConverter, PdfFormatOption
 
-    # Limit internal thread pools to prevent thread explosion under concurrency
+    # Limit internal thread pools to prevent thread explosion under concurrency.
+    # Configurable via env vars for multi-process deployments:
+    #   TORCH_NUM_THREADS (default 2)   — torch intra-op parallelism
+    #   TORCH_INTEROP_THREADS (default 1) — torch inter-op parallelism
+    #   ONNX_NUM_THREADS (default 1)    — onnxruntime thread count
+    # Also sets OMP_NUM_THREADS / MKL_NUM_THREADS if not already set.
+    import os as _os
     try:
         import torch
-        torch.set_num_threads(32)
-        torch.set_num_interop_threads(2)
+        _torch_threads = int(_os.environ.get("TORCH_NUM_THREADS", "2"))
+        torch.set_num_threads(_torch_threads)
+        torch.set_num_interop_threads(int(_os.environ.get("TORCH_INTEROP_THREADS", "1")))
     except Exception:
         pass
     try:
         import onnxruntime
+        _onnx_threads = int(_os.environ.get("ONNX_NUM_THREADS", "1"))
         opts = onnxruntime.SessionOptions()
-        opts.intra_op_num_threads = 2
-        opts.inter_op_num_threads = 2
+        opts.intra_op_num_threads = _onnx_threads
+        opts.inter_op_num_threads = _onnx_threads
     except Exception:
         pass
+    for _var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+        if _var not in _os.environ:
+            _os.environ[_var] = _os.environ.get("TORCH_NUM_THREADS", "2")
 
     pipeline_options = PdfPipelineOptions()
     pipeline_options.do_table_structure = not disable_table_structure
